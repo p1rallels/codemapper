@@ -1,7 +1,9 @@
 use crate::models::{FileInfo, Symbol, SymbolType};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+#[derive(Serialize, Deserialize)]
 pub struct CodeIndex {
     files: HashMap<PathBuf, FileInfo>,
     symbols: Vec<Symbol>,
