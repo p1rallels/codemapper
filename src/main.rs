@@ -1,3 +1,4 @@
+mod cache;
 mod fast_search;
 mod index;
 mod indexer;
@@ -23,20 +24,44 @@ WHAT IT DOES:
   Instantly analyze codebases by parsing source files into symbols (functions, classes, methods)
   using tree-sitter AST parsing. Works entirely in-memory with no database overhead.
 
-GETTING STARTED:
-  1. Understand your codebase    → cm stats .
-  2. Get a high-level overview   → cm map . --level 1
-  3. Find specific symbols       → cm query MyFunction --fuzzy
-  4. Explore a single file       → cm inspect ./src/main.rs
-  5. Analyze dependencies        → cm deps MyClass --direction used-by
+=== QUICKSTART FOR LLMs (Step-by-Step to Orient Yourself) ===
 
-WHEN TO USE EACH COMMAND:
-  stats   - First look at a new codebase (file counts, symbol breakdown)
-  map     - Visualize project structure (overview → files → symbols)
-  query   - Find symbols by name (exact or fuzzy search)
-  inspect - Deep dive into a single file's symbols
-  deps    - Track imports and usage relationships
-  index   - Validate indexing (mostly for testing)
+STEP 1: Get the lay of the land (10 seconds)
+  $ cm stats . --format ai
+  → See: How many files, what languages, symbol counts
+  → Tells you: Project size and composition
+
+STEP 2: Map the project structure (15 seconds)
+  $ cm map . --level 2 --format ai
+  → See: All files with symbol counts per file
+  → Tells you: Where the code lives, which files are important
+
+STEP 3: Find what you're looking for (5 seconds)
+  $ cm query <symbol_name> . --fuzzy --format ai
+  → See: All functions/classes matching your search
+  → Tells you: Exact locations (file:line)
+
+STEP 4 (Optional): Deep dive into specific files
+  $ cm inspect ./path/to/file.py --format ai
+  → See: All symbols in that file with signatures
+
+STEP 5 (Optional): Understand dependencies
+  $ cm deps <symbol_or_file> . --direction used-by --format ai
+  → See: Where a symbol/file is used across the codebase
+
+PRO TIPS FOR LLMs:
+  • Always use --format ai (most token-efficient, easy to parse)
+  • Use --fuzzy for flexible searches (auth finds authenticate, Authorization, etc.)
+  • Results are cached - subsequent runs are instant (< 10ms)
+  • Start with stats → map → query workflow for any new codebase
+
+COMMAND REFERENCE:
+  stats   - File counts, symbol breakdown (START HERE)
+  map     - Project structure at different detail levels (1-3)
+  query   - Find symbols by name (use --fuzzy for flexibility)
+  inspect - See all symbols in a specific file
+  deps    - Track imports and find usage locations
+  index   - Validate indexing (rarely needed)
 
 OUTPUT FORMATS:
   --format default  → Markdown (readable, structured)
@@ -47,9 +72,16 @@ SUPPORTED LANGUAGES:
   Python, JavaScript, TypeScript, Rust, Java, Go, C, Markdown
 
 PERFORMANCE:
-  • Small projects (< 100 files): < 20ms
+  • Small projects (< 100 files): < 20ms cold start
   • Large projects (1000+ files): Auto-enables fast mode (10-100x speedup)
   • Example: 18,457 files in 1.2s vs 76s (63x faster)
+
+SMART CACHING:
+  • Automatic caching after first run (stored in .codemapper/cache/)
+  • Hash-based validation detects any file changes (byte-level accuracy)
+  • Near-instant loading on cache hit (< 10ms for most projects)
+  • Cache persists forever until files change or you delete .codemapper/
+  • Use --no-cache to disable or --rebuild-cache to force refresh
 
 EXAMPLES:
   cm stats /my/project              # Quick codebase overview
@@ -77,17 +109,19 @@ enum Commands {
   • See how many files and what languages are present
   • Understand symbol distribution (functions vs classes vs methods)
   • Verify that files are being indexed correctly
+  • Results are cached for instant loading on subsequent runs
 
 TIP: Fastest way to understand codebase size and composition"
     )]
     #[command(after_help = "EXAMPLES:
-  cm stats                           # Analyze current directory
+  cm stats                           # Analyze current directory (cached after first run)
   cm stats /path/to/project          # Analyze specific project
   cm stats . --format human          # Pretty tables for terminal
   cm stats . --extensions py,rs      # Only Python and Rust files
+  cm stats . --rebuild-cache         # Force rebuild cache
 
 TYPICAL WORKFLOW:
-  1. Run 'cm stats .' first to understand the codebase
+  1. Run 'cm stats .' first to understand the codebase (auto-cached)
   2. Then use 'cm map' for structure or 'cm query' to find symbols")]
     Stats {
         /// Directory path to analyze
@@ -97,6 +131,14 @@ TYPICAL WORKFLOW:
         /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,md')
         #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,md")]
         extensions: String,
+
+        /// Disable cache (always reindex)
+        #[arg(long, default_value_t = false)]
+        no_cache: bool,
+
+        /// Force rebuild cache (invalidate and reindex)
+        #[arg(long, default_value_t = false)]
+        rebuild_cache: bool,
     },
 
     /// [DISCOVERY] Hierarchical project structure - from overview to detailed symbol listings
@@ -106,6 +148,7 @@ TYPICAL WORKFLOW:
   • Level 1: High-level overview (languages, totals) - START HERE
   • Level 2: File listing with symbol counts per file
   • Level 3: Complete catalog with all symbol signatures
+  • Results are cached for instant loading on subsequent runs
 
 WHEN TO USE WHICH LEVEL:
   Level 1 → Getting oriented in a new project
@@ -137,6 +180,14 @@ TYPICAL WORKFLOW:
         /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,md')
         #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,md")]
         extensions: String,
+
+        /// Disable cache (always reindex)
+        #[arg(long, default_value_t = false)]
+        no_cache: bool,
+
+        /// Force rebuild cache (invalidate and reindex)
+        #[arg(long, default_value_t = false)]
+        rebuild_cache: bool,
     },
 
     /// [SEARCH] Find symbols by name - the main workhorse for code exploration
@@ -146,6 +197,7 @@ TYPICAL WORKFLOW:
   • Exact search: Find 'authenticate' (case-sensitive)
   • Fuzzy search: Find 'auth' matches 'authenticate', 'Authorization', etc.
   • Fast mode: Auto-enables for 1000+ files (10-100x speedup)
+  • Results are cached for instant loading (< 10ms for most projects)
 
 SEARCH MODES:
   Exact   → cm query MyClass              (case-sensitive, precise)
@@ -219,6 +271,14 @@ WHEN TO USE:
         /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,md')
         #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,md")]
         extensions: String,
+
+        /// Disable cache (always reindex)
+        #[arg(long, default_value_t = false)]
+        no_cache: bool,
+
+        /// Force rebuild cache (invalidate and reindex)
+        #[arg(long, default_value_t = false)]
+        rebuild_cache: bool,
     },
 
     /// [SEARCH] Explore a single file in detail - see all symbols with their signatures
@@ -327,6 +387,14 @@ WHEN TO USE:
         /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,md')
         #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,md")]
         extensions: String,
+
+        /// Disable cache (always reindex)
+        #[arg(long, default_value_t = false)]
+        no_cache: bool,
+
+        /// Force rebuild cache (invalidate and reindex)
+        #[arg(long, default_value_t = false)]
+        rebuild_cache: bool,
     },
 
     /// [UTILITY] Validate indexing - mostly for testing and debugging
@@ -374,20 +442,20 @@ fn main() -> Result<()> {
     });
 
     match cli.command {
-        Commands::Stats { path, extensions } => {
-            cmd_stats(path, extensions, format)?;
+        Commands::Stats { path, extensions, no_cache, rebuild_cache } => {
+            cmd_stats(path, extensions, no_cache, rebuild_cache, format)?;
         }
-        Commands::Map { path, level, extensions } => {
-            cmd_map(path, level, extensions, format)?;
+        Commands::Map { path, level, extensions, no_cache, rebuild_cache } => {
+            cmd_map(path, level, extensions, no_cache, rebuild_cache, format)?;
         }
-        Commands::Query { symbol, path, fuzzy, context, show_body, fast, extensions } => {
-            cmd_query(symbol, path, context, fuzzy, fast, show_body, extensions, format)?;
+        Commands::Query { symbol, path, fuzzy, context, show_body, fast, extensions, no_cache, rebuild_cache } => {
+            cmd_query(symbol, path, context, fuzzy, fast, show_body, extensions, no_cache, rebuild_cache, format)?;
         }
         Commands::Inspect { file_path, show_body } => {
             cmd_inspect(file_path, show_body, format)?;
         }
-        Commands::Deps { target, path, direction, extensions } => {
-            cmd_deps(target, path, direction, extensions, format)?;
+        Commands::Deps { target, path, direction, extensions, no_cache, rebuild_cache } => {
+            cmd_deps(target, path, direction, extensions, no_cache, rebuild_cache, format)?;
         }
         Commands::Index { path, extensions } => {
             cmd_index(path, extensions)?;
@@ -395,6 +463,85 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Auto-rebuild wrapper: Try cache first, rebuild if needed
+fn try_load_or_rebuild(
+    path: &PathBuf,
+    extensions: &[&str],
+    no_cache: bool,
+    rebuild_cache: bool,
+) -> Result<index::CodeIndex> {
+    use cache::CacheManager;
+
+    // Skip cache if flags set
+    if no_cache || rebuild_cache {
+        if rebuild_cache {
+            eprintln!("{} Rebuilding cache (--rebuild-cache)", "→".cyan());
+            CacheManager::invalidate(path, extensions).ok(); // Ignore errors
+        }
+        let start = Instant::now();
+        let index = indexer::index_directory(path, extensions)?;
+        let elapsed_ms = start.elapsed().as_millis();
+
+        // Save to cache unless --no-cache
+        if !no_cache {
+            match CacheManager::save(&index, path, extensions) {
+                Ok(_) => eprintln!("{} Cached index for future use ({}ms)",
+                    "✓".green(), elapsed_ms),
+                Err(e) => eprintln!("{} Warning: Failed to save cache: {}",
+                    "⚠".yellow(), e),
+            }
+        }
+
+        return Ok(index);
+    }
+
+    // Try to load from cache
+    match CacheManager::load(path, extensions) {
+        Ok(Some((index, metadata))) => {
+            eprintln!("{} Loaded from cache - {} files, {} symbols",
+                "✓".green(),
+                metadata.file_count.to_string().bold(),
+                metadata.symbol_count.to_string().bold()
+            );
+            Ok(index)
+        }
+        Ok(None) => {
+            // Cache miss or invalid
+            eprintln!("{} Cache miss, indexing...", "→".cyan());
+            let start = Instant::now();
+            let index = indexer::index_directory(path, extensions)?;
+            let elapsed_ms = start.elapsed().as_millis();
+
+            // Save to cache
+            match CacheManager::save(&index, path, extensions) {
+                Ok(_) => eprintln!("{} Indexed and cached ({} files, {}ms)",
+                    "✓".green(),
+                    index.total_files().to_string().bold(),
+                    elapsed_ms),
+                Err(e) => eprintln!("{} Warning: Failed to save cache: {}",
+                    "⚠".yellow(), e),
+            }
+
+            Ok(index)
+        }
+        Err(e) => {
+            // Cache error - fallback to rebuild
+            eprintln!("{} Cache error: {}. Rebuilding...", "⚠".yellow(), e);
+            let start = Instant::now();
+            let index = indexer::index_directory(path, extensions)?;
+            let elapsed_ms = start.elapsed().as_millis();
+
+            eprintln!("{} Indexed ({} files, {}ms)",
+                "✓".green(),
+                index.total_files().to_string().bold(),
+                elapsed_ms
+            );
+
+            Ok(index)
+        }
+    }
 }
 
 fn cmd_index(path: PathBuf, extensions: String) -> Result<()> {
@@ -419,21 +566,21 @@ fn cmd_index(path: PathBuf, extensions: String) -> Result<()> {
     Ok(())
 }
 
-fn cmd_map(path: PathBuf, level: u8, extensions: String, format: OutputFormat) -> Result<()> {
+fn cmd_map(path: PathBuf, level: u8, extensions: String, no_cache: bool, rebuild_cache: bool, format: OutputFormat) -> Result<()> {
     if level < 1 || level > 3 {
         eprintln!("{} Level must be between 1 and 3", "Error:".red());
         std::process::exit(1);
     }
 
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
-    
-    let index = indexer::index_directory(&path, &ext_list)?;
-    
+
+    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
+
     let formatter = OutputFormatter::new(format);
     let output = formatter.format_map(&index, level);
-    
+
     println!("{}", output);
-    
+
     Ok(())
 }
 
@@ -445,6 +592,8 @@ fn cmd_query(
     fast: bool,
     show_body: bool,
     extensions: String,
+    no_cache: bool,
+    rebuild_cache: bool,
     format: OutputFormat
 ) -> Result<()> {
     use fast_search::GrepFilter;
@@ -472,8 +621,8 @@ fn cmd_query(
 
         if candidates.is_empty() {
             eprintln!("{} No text matches found, falling back to full AST scan", "→".yellow());
-            // Fallback: Use normal mode
-            let index = indexer::index_directory(&path, &ext_list)?;
+            // Fallback: Use normal mode with cache
+            let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
             let symbols = if fuzzy {
                 index.fuzzy_search(&symbol)
             } else {
@@ -508,8 +657,8 @@ fn cmd_query(
             println!("{}", output);
         }
     } else {
-        // Normal mode for small codebases
-        let index = indexer::index_directory(&path, &ext_list)?;
+        // Normal mode for small codebases with cache
+        let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
         let symbols = if fuzzy {
             index.fuzzy_search(&symbol)
         } else {
@@ -567,13 +716,15 @@ fn cmd_deps(
     path: PathBuf,
     direction: String,
     extensions: String,
+    no_cache: bool,
+    rebuild_cache: bool,
     format: OutputFormat
 ) -> Result<()> {
     use std::fs;
     use std::path::Path;
 
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
-    let index = indexer::index_directory(&path, &ext_list)?;
+    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
 
     // Detect if target is a file path or symbol name
     let target_path = Path::new(&target);
@@ -716,18 +867,15 @@ fn cmd_deps_symbol(
     Ok(())
 }
 
-fn cmd_stats(path: PathBuf, extensions: String, format: OutputFormat) -> Result<()> {
+fn cmd_stats(path: PathBuf, extensions: String, no_cache: bool, rebuild_cache: bool, format: OutputFormat) -> Result<()> {
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
 
-    let start = Instant::now();
-    let index = indexer::index_directory(&path, &ext_list)?;
-    let elapsed_ms = start.elapsed().as_millis();
+    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
 
     let formatter = OutputFormatter::new(format);
     let output = formatter.format_stats(&index);
 
     println!("{}", output);
-    println!("{} Parse time: {}ms", "→".cyan(), elapsed_ms.to_string().bold());
 
     Ok(())
 }
