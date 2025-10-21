@@ -29,9 +29,20 @@ fn read_file_content(path: &Path) -> Result<String> {
         .with_context(|| format!("Failed to read file: {}", path.display()))
 }
 
-pub fn index_file(path: &Path, content: &str, language: Language) -> Result<FileInfo> {
+fn hash_content_blake3(content: &str) -> String {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(content.as_bytes());
+    format!("blake3:{}", hasher.finalize().to_hex())
+}
+
+pub fn index_file(
+    path: &Path,
+    content: &str,
+    language: Language,
+    prehashed: Option<&str>,
+) -> Result<FileInfo> {
     let size = content.len() as u64;
-    let hash = format!("{:x}", md5::compute(content.as_bytes()));
+    let hash = prehashed.map(|h| h.to_string()).unwrap_or_else(|| hash_content_blake3(content));
     let mut file_info = FileInfo::new(path.to_path_buf(), language, size, hash);
 
     match language {
@@ -146,7 +157,7 @@ pub fn index_directory(path: &Path, extensions: &[&str]) -> Result<CodeIndex> {
                 Err(_) => return None,
             };
 
-            match index_file(file_path, &content, language) {
+            match index_file(file_path, &content, language, None) {
                 Ok(info) => Some(info),
                 Err(_) => None,
             }
