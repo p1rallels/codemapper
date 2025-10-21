@@ -10,7 +10,14 @@ use std::time::SystemTime;
 
 const CACHE_DIR_NAME: &str = ".codemapper";
 const CACHE_SUBDIR: &str = "cache";
-const CACHE_VERSION: &str = "1.1";
+const CACHE_VERSION: &str = "1.2";
+
+#[derive(Debug)]
+pub enum ValidationResult {
+    Valid,
+    Invalid,
+    NeedsUpdate(Vec<PathBuf>), // Files that changed
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileMetadata {
@@ -233,11 +240,13 @@ impl CacheManager {
         Ok(())
     }
 
-    /// Load CodeIndex from cache if valid
+    /// Load CodeIndex from cache with validation
+    /// Returns (index, metadata, changed_files)
+    /// changed_files is empty if cache is valid, or contains files that need updating
     pub fn load(
         root: &Path,
         extensions: &[&str],
-    ) -> Result<Option<(CodeIndex, CacheMetadata)>> {
+    ) -> Result<Option<(CodeIndex, CacheMetadata, Vec<PathBuf>)>> {
         let (cache_file, meta_file) = Self::get_cache_paths(root, extensions)?;
 
         // Check if cache files exist
@@ -257,76 +266,110 @@ impl CacheManager {
         }
 
         // Validate with hashes
-        if !Self::validate_with_hashes(&metadata, root)? {
-            return Ok(None);
+        let validation_result = Self::validate_with_hashes(&metadata, root)?;
+
+        match validation_result {
+            ValidationResult::Invalid => {
+                // Too many changes, full rebuild needed
+                return Ok(None);
+            }
+            ValidationResult::Valid => {
+                // Load cache as-is
+                let cache_reader = BufReader::new(
+                    File::open(&cache_file).context("Failed to open cache file")?
+                );
+                let index: CodeIndex = bincode::deserialize_from(cache_reader)
+                    .context("Failed to deserialize index")?;
+
+                Ok(Some((index, metadata, Vec::new())))
+            }
+            ValidationResult::NeedsUpdate(changed_files) => {
+                // Load cache but needs incremental update
+                let cache_reader = BufReader::new(
+                    File::open(&cache_file).context("Failed to open cache file")?
+                );
+                let index: CodeIndex = bincode::deserialize_from(cache_reader)
+                    .context("Failed to deserialize index")?;
+
+                Ok(Some((index, metadata, changed_files)))
+            }
         }
-
-        // Load cache
-        let cache_reader = BufReader::new(
-            File::open(&cache_file).context("Failed to open cache file")?
-        );
-        let index: CodeIndex = bincode::deserialize_from(cache_reader)
-            .context("Failed to deserialize index")?;
-
-        Ok(Some((index, metadata)))
     }
 
     /// Validate cache using size + mtime pre-filter (git's approach)
-    pub fn validate_with_hashes(metadata: &CacheMetadata, root: &Path) -> Result<bool> {
+    /// Returns ValidationResult indicating if cache is valid, invalid, or needs incremental update
+    pub fn validate_with_hashes(metadata: &CacheMetadata, root: &Path) -> Result<ValidationResult> {
         // Step 1: Collect current file stats (size + mtime) - FAST (no file I/O)
         let current_stats = Self::collect_file_stats(root, &metadata.extensions)?;
 
-        // Quick rejection: file count mismatch
-        if current_stats.len() != metadata.file_metadata.len() {
-            return Ok(false);
-        }
+        // Check for new/deleted files
+        let mut new_files = Vec::new();
+        let mut deleted_files = Vec::new();
 
-        // Step 2: Check for new/deleted files
         for path in metadata.file_metadata.keys() {
             if !current_stats.contains_key(path) {
-                // File was deleted
-                return Ok(false);
+                deleted_files.push(path.clone());
             }
         }
 
         for path in current_stats.keys() {
             if !metadata.file_metadata.contains_key(path) {
-                // New file added
-                return Ok(false);
+                new_files.push(path.clone());
             }
         }
 
-        // Step 3: Check each file with size + mtime pre-filter
+        // Step 2: Check each existing file with size + mtime pre-filter
         let mut files_to_hash = Vec::new();
 
         for (path, (current_size, current_mtime)) in &current_stats {
-            let cached = &metadata.file_metadata[path];
+            if let Some(cached) = metadata.file_metadata.get(path) {
+                // TWO-SIGNAL CHECK (like git):
+                // If both size AND mtime unchanged → skip hash
+                // If either changed → need to verify with hash
+                if current_size == &cached.size && current_mtime <= &metadata.created_at {
+                    // Both signals agree: file definitely unchanged
+                    continue;
+                }
 
-            // TWO-SIGNAL CHECK (like git):
-            // If both size AND mtime unchanged → skip hash
-            // If either changed → need to verify with hash
-            if current_size == &cached.size && current_mtime <= &metadata.created_at {
-                // Both signals agree: file definitely unchanged
-                continue;
+                // Something looks suspicious, need to hash
+                files_to_hash.push(path);
             }
-
-            // Something looks suspicious, need to hash
-            files_to_hash.push(path);
         }
 
-        // Step 4: Only hash files that look changed
+        // Step 3: Hash files that look changed
+        let mut changed_files = Vec::new();
+
         for path in files_to_hash {
             let current_hash = Self::compute_file_hash(path)?;
             let cached_hash = &metadata.file_metadata[path].hash;
 
             if &current_hash != cached_hash {
                 // Content actually changed
-                return Ok(false);
+                changed_files.push(path.clone());
             }
             // else: false alarm (mtime changed but content same)
         }
 
-        Ok(true)
+        // Step 4: Determine result
+        let total_changes = new_files.len() + deleted_files.len() + changed_files.len();
+
+        if total_changes == 0 {
+            return Ok(ValidationResult::Valid);
+        }
+
+        // If too many files changed (>10% of codebase or >100 files), full rebuild
+        let threshold = metadata.file_metadata.len().max(1000) / 10;
+        if total_changes > threshold || total_changes > 100 {
+            return Ok(ValidationResult::Invalid);
+        }
+
+        // Incremental update: collect all affected files
+        let mut all_changed = Vec::new();
+        all_changed.extend(new_files);
+        all_changed.extend(deleted_files);
+        all_changed.extend(changed_files);
+
+        Ok(ValidationResult::NeedsUpdate(all_changed))
     }
 
     /// Invalidate (delete) cache for a project
