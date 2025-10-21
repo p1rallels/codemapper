@@ -552,10 +552,8 @@ fn try_load_or_rebuild(
         }
         Ok(Some((mut index, metadata, changed_files))) => {
             // Incremental update needed
-            eprintln!("{} Updating {} changed file{}...",
-                "→".cyan(),
-                changed_files.len().to_string().bold(),
-                if changed_files.len() == 1 { "" } else { "s" }
+            eprintln!("{} Indexing, changes detected",
+                "→".cyan()
             );
 
             let start = Instant::now();
@@ -616,8 +614,7 @@ fn try_load_or_rebuild(
             Ok(index)
         }
         Ok(None) => {
-            // Cache miss or invalid
-            eprintln!("{} Cache miss, indexing...", "→".cyan());
+            // Cache miss or invalid - index from scratch
             let start = Instant::now();
             let index = indexer::index_directory(path, extensions)?;
             let elapsed_ms = start.elapsed().as_millis();
@@ -625,7 +622,7 @@ fn try_load_or_rebuild(
             // Save to cache only if indexing took >= 300ms
             if elapsed_ms >= 300 {
                 match CacheManager::save(&index, path, extensions) {
-                    Ok(_) => eprintln!("{} Indexed and cached ({} files, {}ms)",
+                    Ok(_) => eprintln!("{} Indexed - cache not found (.codemapper), created new cache ({} files, {}ms)",
                         "✓".green(),
                         index.total_files().to_string().bold(),
                         elapsed_ms),
@@ -633,7 +630,8 @@ fn try_load_or_rebuild(
                         "⚠".yellow(), e),
                 }
             } else {
-                eprintln!("{} Indexed ({} files, {}ms) - no cache needed for small repos",
+                // Small repo - no message during indexing, just final result
+                eprintln!("{} Indexed ({} files, {}ms)",
                     "✓".green(),
                     index.total_files().to_string().bold(),
                     elapsed_ms);
