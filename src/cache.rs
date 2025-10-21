@@ -10,7 +10,14 @@ use std::time::SystemTime;
 
 const CACHE_DIR_NAME: &str = ".codemapper";
 const CACHE_SUBDIR: &str = "cache";
-const CACHE_VERSION: &str = "1.0";
+const CACHE_VERSION: &str = "1.1";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileMetadata {
+    pub hash: String,
+    pub size: u64,
+    pub mtime: SystemTime,
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CacheMetadata {
@@ -21,7 +28,7 @@ pub struct CacheMetadata {
     pub file_count: usize,
     pub symbol_count: usize,
     pub cache_key: String,
-    pub file_hashes: HashMap<PathBuf, String>,
+    pub file_metadata: HashMap<PathBuf, FileMetadata>,
 }
 
 impl CacheMetadata {
@@ -31,7 +38,7 @@ impl CacheMetadata {
         file_count: usize,
         symbol_count: usize,
         cache_key: String,
-        file_hashes: HashMap<PathBuf, String>,
+        file_metadata: HashMap<PathBuf, FileMetadata>,
     ) -> Self {
         Self {
             version: CACHE_VERSION.to_string(),
@@ -41,7 +48,7 @@ impl CacheMetadata {
             file_count,
             symbol_count,
             cache_key,
-            file_hashes,
+            file_metadata,
         }
     }
 }
@@ -91,14 +98,14 @@ impl CacheManager {
         Ok(format!("blake3:{}", hash.to_hex()))
     }
 
-    /// Compute hashes for all files in directory matching extensions
-    pub fn compute_directory_hashes(
+    /// Collect file metadata (hash, size, mtime) for all files in directory
+    pub fn collect_file_metadata(
         root: &Path,
         extensions: &[&str],
-    ) -> Result<HashMap<PathBuf, String>> {
+    ) -> Result<HashMap<PathBuf, FileMetadata>> {
         use walkdir::WalkDir;
 
-        let mut hashes = HashMap::new();
+        let mut metadata_map = HashMap::new();
 
         for entry in WalkDir::new(root)
             .follow_links(false)
@@ -113,9 +120,9 @@ impl CacheManager {
             if let Some(ext) = path.extension() {
                 let ext_str = ext.to_string_lossy();
                 if extensions.iter().any(|&e| e == ext_str) {
-                    match Self::compute_file_hash(path) {
-                        Ok(hash) => {
-                            hashes.insert(path.to_path_buf(), hash);
+                    match Self::compute_file_metadata_single(path) {
+                        Ok(metadata) => {
+                            metadata_map.insert(path.to_path_buf(), metadata);
                         }
                         Err(_) => {
                             // Skip files we can't read
@@ -126,7 +133,56 @@ impl CacheManager {
             }
         }
 
-        Ok(hashes)
+        Ok(metadata_map)
+    }
+
+    /// Compute metadata for a single file (hash, size, mtime)
+    fn compute_file_metadata_single(path: &Path) -> Result<FileMetadata> {
+        let fs_metadata = fs::metadata(path).context("Failed to read file metadata")?;
+        let size = fs_metadata.len();
+        let mtime = fs_metadata
+            .modified()
+            .context("Failed to get modification time")?;
+        let hash = Self::compute_file_hash(path)?;
+
+        Ok(FileMetadata { hash, size, mtime })
+    }
+
+    /// Collect file stats (size, mtime) without hashing - fast path for validation
+    fn collect_file_stats(
+        root: &Path,
+        extensions: &[String],
+    ) -> Result<HashMap<PathBuf, (u64, SystemTime)>> {
+        use walkdir::WalkDir;
+
+        let mut stats = HashMap::new();
+
+        for entry in WalkDir::new(root)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+
+            if let Some(ext) = path.extension() {
+                let ext_str = ext.to_string_lossy();
+                if extensions.iter().any(|e| e == &ext_str) {
+                    match fs::metadata(path) {
+                        Ok(metadata) => {
+                            let size = metadata.len();
+                            let mtime = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+                            stats.insert(path.to_path_buf(), (size, mtime));
+                        }
+                        Err(_) => continue,
+                    }
+                }
+            }
+        }
+
+        Ok(stats)
     }
 
     /// Save CodeIndex to cache with metadata
@@ -142,8 +198,8 @@ impl CacheManager {
             fs::create_dir_all(parent).context("Failed to create cache directory")?;
         }
 
-        // Compute file hashes
-        let file_hashes = Self::compute_directory_hashes(root, extensions)?;
+        // Collect file metadata (hash + size + mtime)
+        let file_metadata = Self::collect_file_metadata(root, extensions)?;
 
         // Create metadata
         let cache_key = Self::compute_cache_key(root, extensions)?;
@@ -153,7 +209,7 @@ impl CacheManager {
             index.total_files(),
             index.total_symbols(),
             cache_key,
-            file_hashes,
+            file_metadata,
         );
 
         // Save binary cache
@@ -215,41 +271,59 @@ impl CacheManager {
         Ok(Some((index, metadata)))
     }
 
-    /// Validate cache using hybrid timestamp + hash approach
+    /// Validate cache using size + mtime pre-filter (git's approach)
     pub fn validate_with_hashes(metadata: &CacheMetadata, root: &Path) -> Result<bool> {
-        let current_hashes = Self::compute_directory_hashes(
-            root,
-            &metadata.extensions.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
-        )?;
+        // Step 1: Collect current file stats (size + mtime) - FAST (no file I/O)
+        let current_stats = Self::collect_file_stats(root, &metadata.extensions)?;
 
-        // Check file count first (quick check)
-        if current_hashes.len() != metadata.file_hashes.len() {
+        // Quick rejection: file count mismatch
+        if current_stats.len() != metadata.file_metadata.len() {
             return Ok(false);
         }
 
-        // Check each file with timestamp pre-filter
-        for (path, cached_hash) in &metadata.file_hashes {
-            // Check if file still exists
-            match current_hashes.get(path) {
-                Some(current_hash) => {
-                    if current_hash != cached_hash {
-                        // Content changed
-                        return Ok(false);
-                    }
-                }
-                None => {
-                    // File was deleted
-                    return Ok(false);
-                }
+        // Step 2: Check for new/deleted files
+        for path in metadata.file_metadata.keys() {
+            if !current_stats.contains_key(path) {
+                // File was deleted
+                return Ok(false);
             }
         }
 
-        // Check for new files
-        for path in current_hashes.keys() {
-            if !metadata.file_hashes.contains_key(path) {
+        for path in current_stats.keys() {
+            if !metadata.file_metadata.contains_key(path) {
                 // New file added
                 return Ok(false);
             }
+        }
+
+        // Step 3: Check each file with size + mtime pre-filter
+        let mut files_to_hash = Vec::new();
+
+        for (path, (current_size, current_mtime)) in &current_stats {
+            let cached = &metadata.file_metadata[path];
+
+            // TWO-SIGNAL CHECK (like git):
+            // If both size AND mtime unchanged → skip hash
+            // If either changed → need to verify with hash
+            if current_size == &cached.size && current_mtime <= &metadata.created_at {
+                // Both signals agree: file definitely unchanged
+                continue;
+            }
+
+            // Something looks suspicious, need to hash
+            files_to_hash.push(path);
+        }
+
+        // Step 4: Only hash files that look changed
+        for path in files_to_hash {
+            let current_hash = Self::compute_file_hash(path)?;
+            let cached_hash = &metadata.file_metadata[path].hash;
+
+            if &current_hash != cached_hash {
+                // Content actually changed
+                return Ok(false);
+            }
+            // else: false alarm (mtime changed but content same)
         }
 
         Ok(true)
