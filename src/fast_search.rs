@@ -163,19 +163,6 @@ impl GrepFilter {
             name == query
         }
     }
-
-    /// Full pipeline: prefilter + validate
-    pub fn fast_query(&self, root: &Path, query: &str, fuzzy: bool) -> Result<Vec<Symbol>> {
-        // Stage 1: Fast text search
-        let candidates = self.prefilter(root)?;
-
-        if candidates.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        // Stage 2: AST validation
-        self.validate(candidates, query, fuzzy)
-    }
 }
 
 #[cfg(test)]
