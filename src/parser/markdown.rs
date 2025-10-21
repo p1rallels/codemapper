@@ -1,5 +1,5 @@
 use super::{Parser as ParserTrait, ParseResult};
-use crate::models::{Dependency, Symbol, SymbolType};
+use crate::models::{Symbol, SymbolType};
 use anyhow::{Context, Result};
 use std::path::Path;
 use tree_sitter::{Node, Parser};

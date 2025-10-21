@@ -181,16 +181,8 @@ impl CodeIndex {
         self.dependencies.get(path)
     }
 
-    pub fn get_file(&self, path: &Path) -> Option<&FileInfo> {
-        self.files.get(path)
-    }
-
     pub fn files(&self) -> impl Iterator<Item = &FileInfo> {
         self.files.values()
-    }
-
-    pub fn symbols(&self) -> &[Symbol] {
-        &self.symbols
     }
 
     pub fn total_files(&self) -> usize {
