@@ -1,0 +1,40 @@
+[package]
+name = "codemapcli-rs"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "cm"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+tree-sitter = "0.24"
+tree-sitter-python = "0.23"
+tree-sitter-javascript = "0.23"
+tree-sitter-rust = "0.23"
+tree-sitter-java = "0.23"
+tree-sitter-md = "0.3"
+tree-sitter-go = "0.23"
+tree-sitter-c = "0.23"
+walkdir = "2.5"
+rayon = "1.10"
+md5 = "0.7"
+serde = { version = "1.0", features = ["derive"] }
+anyhow = "1.0"
+colored = "2.1"
+comfy-table = "7.1"
+streaming-iterator = "0.1.9"
+grep = "0.3"
+grep-matcher = "0.1"
+grep-regex = "0.1"
+grep-searcher = "0.1"
+ignore = "0.4"
+regex = "1.10"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "abort"
