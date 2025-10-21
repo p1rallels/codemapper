@@ -127,11 +127,16 @@ impl MarkdownParser {
 
             let mut child_cursor = node.walk();
             if child_cursor.goto_first_child() {
+                let mut children = Vec::new();
                 loop {
-                    stack.push(child_cursor.node());
+                    children.push(child_cursor.node());
                     if !child_cursor.goto_next_sibling() {
                         break;
                     }
+                }
+                // Push in reverse order so they're popped in document order
+                for child in children.into_iter().rev() {
+                    stack.push(child);
                 }
             }
         }
@@ -200,11 +205,16 @@ impl MarkdownParser {
 
             let mut child_cursor = node.walk();
             if child_cursor.goto_first_child() {
+                let mut children = Vec::new();
                 loop {
-                    stack.push(child_cursor.node());
+                    children.push(child_cursor.node());
                     if !child_cursor.goto_next_sibling() {
                         break;
                     }
+                }
+                // Push in reverse order so they're popped in document order
+                for child in children.into_iter().rev() {
+                    stack.push(child);
                 }
             }
         }

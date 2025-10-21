@@ -137,7 +137,7 @@ impl GrepFilter {
 
             // Detect language and parse
             let language = detect_language(&path);
-            let file_info = match index_file(&path, &content, language) {
+            let file_info = match index_file(&path, &content, language, None) {
                 Ok(info) => info,
                 Err(_) => continue, // Skip files we can't parse
             };

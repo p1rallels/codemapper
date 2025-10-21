@@ -9,8 +9,10 @@ mod parser;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use colored::*;
+use cache::{FileChange, FileChangeKind};
 use models::Symbol;
 use output::{OutputFormat, OutputFormatter};
+use rayon::prelude::*;
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -546,7 +548,7 @@ fn try_load_or_rebuild(
             );
             Ok(index)
         }
-        Ok(Some((mut index, _metadata, changed_files))) => {
+        Ok(Some((mut index, metadata, changed_files))) => {
             // Incremental update needed
             eprintln!("{} Updating {} changed file{}...",
                 "→".cyan(),
@@ -556,40 +558,44 @@ fn try_load_or_rebuild(
 
             let start = Instant::now();
 
-            // Remove old versions of changed files
-            for file_path in &changed_files {
-                index.remove_file(file_path);
+            for change in &changed_files {
+                index.remove_file(&change.path);
             }
 
-            // Re-index changed files
-            for file_path in &changed_files {
-                if file_path.exists() {
-                    // File exists - parse and add
-                    match std::fs::read_to_string(file_path) {
+            let new_file_infos: Vec<_> = changed_files
+                .par_iter()
+                .filter(|change| change.kind != FileChangeKind::Deleted)
+                .filter_map(|change| {
+                    let path = change.path.clone();
+                    match std::fs::read_to_string(&path) {
                         Ok(content) => {
                             let language = models::Language::from_extension(
-                                file_path.extension()
+                                path.extension()
                                     .and_then(|e| e.to_str())
                                     .unwrap_or("")
                             );
 
-                            match indexer::index_file(file_path, &content, language) {
-                                Ok(file_info) => {
-                                    index.add_file(file_info);
-                                }
+                            match indexer::index_file(&path, &content, language, change.hash.as_deref()) {
+                                Ok(file_info) => Some((change.clone(), file_info)),
                                 Err(e) => {
                                     eprintln!("{} Warning: Failed to parse {}: {}",
-                                        "⚠".yellow(), file_path.display(), e);
+                                        "⚠".yellow(), path.display(), e);
+                                    None
                                 }
                             }
                         }
                         Err(e) => {
                             eprintln!("{} Warning: Failed to read {}: {}",
-                                "⚠".yellow(), file_path.display(), e);
+                                "⚠".yellow(), path.display(), e);
+                            None
                         }
                     }
-                }
-                // If file doesn't exist, it was deleted (already removed above)
+                })
+                .collect();
+
+            for (change, file_info) in new_file_infos {
+                index.remove_file(&change.path);
+                index.add_file(file_info);
             }
 
             // Compact the index to remove deleted symbols
@@ -598,7 +604,7 @@ fn try_load_or_rebuild(
             let elapsed_ms = start.elapsed().as_millis();
 
             // Always save updated cache for incremental updates (cache already exists)
-            match CacheManager::save(&index, path, extensions) {
+            match CacheManager::save_with_changes(&index, path, extensions, &metadata, &changed_files) {
                 Ok(_) => eprintln!("{} Cache updated ({}ms)",
                     "✓".green(), elapsed_ms),
                 Err(e) => eprintln!("{} Warning: Failed to save cache: {}",
@@ -1005,7 +1011,7 @@ fn cmd_inspect(file_path: PathBuf, show_body: bool, format: OutputFormat) -> Res
 
     let content = fs::read_to_string(&file_path)?;
     let start = Instant::now();
-    let file_info = indexer::index_file(&file_path, &content, language)?;
+    let file_info = indexer::index_file(&file_path, &content, language, None)?;
     let elapsed_ms = start.elapsed().as_millis();
 
     if file_info.symbols.is_empty() {

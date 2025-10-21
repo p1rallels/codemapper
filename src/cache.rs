@@ -1,5 +1,5 @@
 use crate::index::CodeIndex;
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -16,7 +16,23 @@ const CACHE_VERSION: &str = "1.2";
 pub enum ValidationResult {
     Valid,
     Invalid,
-    NeedsUpdate(Vec<PathBuf>), // Files that changed
+    NeedsUpdate(Vec<FileChange>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileChangeKind {
+    Modified,
+    Added,
+    Deleted,
+}
+
+#[derive(Debug, Clone)]
+pub struct FileChange {
+    pub path: PathBuf,
+    pub kind: FileChangeKind,
+    pub size: Option<u64>,
+    pub mtime: Option<SystemTime>,
+    pub hash: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -112,11 +128,29 @@ impl CacheManager {
     ) -> Result<HashMap<PathBuf, FileMetadata>> {
         use walkdir::WalkDir;
 
+        const IGNORED_DIRS: &[&str] = &[
+            ".codemapper",
+            ".git",
+            "node_modules",
+            "__pycache__",
+            "target",
+            "dist",
+            "build",
+        ];
+
         let mut metadata_map = HashMap::new();
 
         for entry in WalkDir::new(root)
             .follow_links(false)
             .into_iter()
+            .filter_entry(|e| {
+                if e.file_type().is_dir() {
+                    let dir_name = e.file_name().to_string_lossy();
+                    !IGNORED_DIRS.contains(&dir_name.as_ref())
+                } else {
+                    true
+                }
+            })
             .filter_map(|e| e.ok())
         {
             let path = entry.path();
@@ -155,6 +189,40 @@ impl CacheManager {
         Ok(FileMetadata { hash, size, mtime })
     }
 
+    fn file_metadata_for_change(change: &FileChange) -> Result<FileMetadata> {
+        let hash = match &change.hash {
+            Some(hash) => hash.clone(),
+            None => {
+                if let FileChangeKind::Modified | FileChangeKind::Added = change.kind {
+                    let path = &change.path;
+                    Self::compute_file_metadata_single(path)?.hash
+                } else {
+                    return Err(anyhow::anyhow!("Deleted files cannot produce metadata"));
+                }
+            }
+        };
+
+        let size = change.size.or_else(|| {
+            if let FileChangeKind::Modified | FileChangeKind::Added = change.kind {
+                fs::metadata(&change.path).map(|m| m.len()).ok()
+            } else {
+                None
+            }
+        }).ok_or_else(|| anyhow::anyhow!("Missing size for change: {}", change.path.display()))?;
+
+        let mtime = change.mtime.or_else(|| {
+            if let FileChangeKind::Modified | FileChangeKind::Added = change.kind {
+                fs::metadata(&change.path)
+                    .and_then(|m| m.modified())
+                    .ok()
+            } else {
+                None
+            }
+        }).ok_or_else(|| anyhow::anyhow!("Missing mtime for change: {}", change.path.display()))?;
+
+        Ok(FileMetadata { hash, size, mtime })
+    }
+
     /// Collect file stats (size, mtime) without hashing - fast path for validation
     fn collect_file_stats(
         root: &Path,
@@ -162,11 +230,29 @@ impl CacheManager {
     ) -> Result<HashMap<PathBuf, (u64, SystemTime)>> {
         use walkdir::WalkDir;
 
+        const IGNORED_DIRS: &[&str] = &[
+            ".codemapper",
+            ".git",
+            "node_modules",
+            "__pycache__",
+            "target",
+            "dist",
+            "build",
+        ];
+
         let mut stats = HashMap::new();
 
         for entry in WalkDir::new(root)
             .follow_links(false)
             .into_iter()
+            .filter_entry(|e| {
+                if e.file_type().is_dir() {
+                    let dir_name = e.file_name().to_string_lossy();
+                    !IGNORED_DIRS.contains(&dir_name.as_ref())
+                } else {
+                    true
+                }
+            })
             .filter_map(|e| e.ok())
         {
             let path = entry.path();
@@ -197,20 +283,56 @@ impl CacheManager {
         index: &CodeIndex,
         root: &Path,
         extensions: &[&str],
-    ) -> Result<()> {
+    ) -> Result<CacheMetadata> {
+        Self::save_internal(index, root, extensions, None, None)
+    }
+
+    pub fn save_with_changes(
+        index: &CodeIndex,
+        root: &Path,
+        extensions: &[&str],
+        previous: &CacheMetadata,
+        changes: &[FileChange],
+    ) -> Result<CacheMetadata> {
+        Self::save_internal(index, root, extensions, Some(previous), Some(changes))
+    }
+
+    fn save_internal(
+        index: &CodeIndex,
+        root: &Path,
+        extensions: &[&str],
+        previous: Option<&CacheMetadata>,
+        changes: Option<&[FileChange]>,
+    ) -> Result<CacheMetadata> {
         let (cache_file, meta_file) = Self::get_cache_paths(root, extensions)?;
 
-        // Create cache directory
         if let Some(parent) = cache_file.parent() {
             fs::create_dir_all(parent).context("Failed to create cache directory")?;
         }
 
-        // Collect file metadata (hash + size + mtime)
-        let file_metadata = Self::collect_file_metadata(root, extensions)?;
+        let mut file_metadata = match previous {
+            Some(prev) => prev.file_metadata.clone(),
+            None => Self::collect_file_metadata(root, extensions)?,
+        };
 
-        // Create metadata
+        if let Some(changes) = changes {
+            for change in changes {
+                match change.kind {
+                    FileChangeKind::Deleted => {
+                        file_metadata.remove(&change.path);
+                    }
+                    FileChangeKind::Modified | FileChangeKind::Added => {
+                        let entry = Self::file_metadata_for_change(change)?;
+                        file_metadata.insert(change.path.clone(), entry);
+                    }
+                }
+            }
+        }
+
+        Self::assert_metadata_consistency(index, &file_metadata)?;
+
         let cache_key = Self::compute_cache_key(root, extensions)?;
-        let metadata = CacheMetadata::new(
+        let mut metadata = CacheMetadata::new(
             root.to_path_buf(),
             extensions.iter().map(|&s| s.to_string()).collect(),
             index.total_files(),
@@ -219,7 +341,9 @@ impl CacheManager {
             file_metadata,
         );
 
-        // Save binary cache
+        metadata.file_count = index.total_files();
+        metadata.symbol_count = index.total_symbols();
+
         let cache_data = bincode::serialize(index).context("Failed to serialize index")?;
         let mut cache_writer = BufWriter::new(
             File::create(&cache_file).context("Failed to create cache file")?
@@ -229,13 +353,42 @@ impl CacheManager {
             .context("Failed to write cache data")?;
         cache_writer.flush()?;
 
-        // Save metadata
         let meta_data = serde_json::to_string_pretty(&metadata)
             .context("Failed to serialize metadata")?;
         fs::write(&meta_file, meta_data).context("Failed to write metadata file")?;
 
-        // Create .gitignore if it doesn't exist
         Self::ensure_gitignore(root)?;
+
+        Ok(metadata)
+    }
+
+    fn assert_metadata_consistency(
+        index: &CodeIndex,
+        file_metadata: &HashMap<PathBuf, FileMetadata>,
+    ) -> Result<()> {
+        let expected_files = index.total_files();
+        if file_metadata.len() != expected_files {
+            return Err(anyhow!(
+                "file metadata count mismatch: expected {} entries, found {}",
+                expected_files,
+                file_metadata.len()
+            ));
+        }
+
+        for file in index.files() {
+            if !file_metadata.contains_key(&file.path) {
+                return Err(anyhow!(
+                    "missing metadata for {}",
+                    file.path.display()
+                ));
+            }
+        }
+
+        for (path, metadata) in file_metadata {
+            if metadata.hash.is_empty() {
+                return Err(anyhow!("empty hash for {}", path.display()));
+            }
+        }
 
         Ok(())
     }
@@ -246,7 +399,7 @@ impl CacheManager {
     pub fn load(
         root: &Path,
         extensions: &[&str],
-    ) -> Result<Option<(CodeIndex, CacheMetadata, Vec<PathBuf>)>> {
+    ) -> Result<Option<(CodeIndex, CacheMetadata, Vec<FileChange>)>> {
         let (cache_file, meta_file) = Self::get_cache_paths(root, extensions)?;
 
         // Check if cache files exist
@@ -299,77 +452,58 @@ impl CacheManager {
     /// Validate cache using size + mtime pre-filter (git's approach)
     /// Returns ValidationResult indicating if cache is valid, invalid, or needs incremental update
     pub fn validate_with_hashes(metadata: &CacheMetadata, root: &Path) -> Result<ValidationResult> {
-        // Step 1: Collect current file stats (size + mtime) - FAST (no file I/O)
         let current_stats = Self::collect_file_stats(root, &metadata.extensions)?;
 
-        // Check for new/deleted files
-        let mut new_files = Vec::new();
-        let mut deleted_files = Vec::new();
+        let mut changes = Vec::new();
 
         for path in metadata.file_metadata.keys() {
             if !current_stats.contains_key(path) {
-                deleted_files.push(path.clone());
+                changes.push(FileChange {
+                    path: path.clone(),
+                    kind: FileChangeKind::Deleted,
+                    size: None,
+                    mtime: None,
+                    hash: None,
+                });
             }
         }
-
-        for path in current_stats.keys() {
-            if !metadata.file_metadata.contains_key(path) {
-                new_files.push(path.clone());
-            }
-        }
-
-        // Step 2: Check each existing file with size + mtime pre-filter
-        let mut files_to_hash = Vec::new();
 
         for (path, (current_size, current_mtime)) in &current_stats {
             if let Some(cached) = metadata.file_metadata.get(path) {
-                // TWO-SIGNAL CHECK (like git):
-                // If both size AND mtime unchanged → skip hash
-                // If either changed → need to verify with hash
-                if current_size == &cached.size && current_mtime == &cached.mtime {
-                    // Both signals agree: file definitely unchanged
-                    continue;
+                if current_size != &cached.size || current_mtime != &cached.mtime {
+                    let hash = Self::compute_file_hash(path)?;
+                    if hash != cached.hash {
+                        changes.push(FileChange {
+                            path: path.clone(),
+                            kind: FileChangeKind::Modified,
+                            size: Some(*current_size),
+                            mtime: Some(*current_mtime),
+                            hash: Some(hash),
+                        });
+                    }
                 }
-
-                // Something looks suspicious, need to hash
-                files_to_hash.push(path);
+            } else {
+                changes.push(FileChange {
+                    path: path.clone(),
+                    kind: FileChangeKind::Added,
+                    size: Some(*current_size),
+                    mtime: Some(*current_mtime),
+                    hash: Some(Self::compute_file_hash(path)?),
+                });
             }
         }
 
-        // Step 3: Hash files that look changed
-        let mut changed_files = Vec::new();
-
-        for path in files_to_hash {
-            let current_hash = Self::compute_file_hash(path)?;
-            let cached_hash = &metadata.file_metadata[path].hash;
-
-            if &current_hash != cached_hash {
-                // Content actually changed
-                changed_files.push(path.clone());
-            }
-            // else: false alarm (mtime changed but content same)
-        }
-
-        // Step 4: Determine result
-        let total_changes = new_files.len() + deleted_files.len() + changed_files.len();
-
-        if total_changes == 0 {
+        if changes.is_empty() {
             return Ok(ValidationResult::Valid);
         }
 
-        // If too many files changed (>10% of codebase or >100 files), full rebuild
+        let total_changes = changes.len();
         let threshold = metadata.file_metadata.len().max(1000) / 10;
         if total_changes > threshold || total_changes > 100 {
             return Ok(ValidationResult::Invalid);
         }
 
-        // Incremental update: collect all affected files
-        let mut all_changed = Vec::new();
-        all_changed.extend(new_files);
-        all_changed.extend(deleted_files);
-        all_changed.extend(changed_files);
-
-        Ok(ValidationResult::NeedsUpdate(all_changed))
+        Ok(ValidationResult::NeedsUpdate(changes))
     }
 
     /// Invalidate (delete) cache for a project
