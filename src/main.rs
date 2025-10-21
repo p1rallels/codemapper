@@ -499,12 +499,74 @@ fn try_load_or_rebuild(
 
     // Try to load from cache
     match CacheManager::load(path, extensions) {
-        Ok(Some((index, metadata))) => {
+        Ok(Some((mut index, metadata, changed_files))) if changed_files.is_empty() => {
+            // Cache hit - no changes
             eprintln!("{} Loaded from cache - {} files, {} symbols",
                 "✓".green(),
                 metadata.file_count.to_string().bold(),
                 metadata.symbol_count.to_string().bold()
             );
+            Ok(index)
+        }
+        Ok(Some((mut index, _metadata, changed_files))) => {
+            // Incremental update needed
+            eprintln!("{} Updating {} changed file{}...",
+                "→".cyan(),
+                changed_files.len().to_string().bold(),
+                if changed_files.len() == 1 { "" } else { "s" }
+            );
+
+            let start = Instant::now();
+
+            // Remove old versions of changed files
+            for file_path in &changed_files {
+                index.remove_file(file_path);
+            }
+
+            // Re-index changed files
+            for file_path in &changed_files {
+                if file_path.exists() {
+                    // File exists - parse and add
+                    match std::fs::read_to_string(file_path) {
+                        Ok(content) => {
+                            let language = models::Language::from_extension(
+                                file_path.extension()
+                                    .and_then(|e| e.to_str())
+                                    .unwrap_or("")
+                            );
+
+                            match indexer::index_file(file_path, &content, language) {
+                                Ok(file_info) => {
+                                    index.add_file(file_info);
+                                }
+                                Err(e) => {
+                                    eprintln!("{} Warning: Failed to parse {}: {}",
+                                        "⚠".yellow(), file_path.display(), e);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("{} Warning: Failed to read {}: {}",
+                                "⚠".yellow(), file_path.display(), e);
+                        }
+                    }
+                }
+                // If file doesn't exist, it was deleted (already removed above)
+            }
+
+            // Compact the index to remove deleted symbols
+            index.compact();
+
+            let elapsed_ms = start.elapsed().as_millis();
+
+            // Save updated cache
+            match CacheManager::save(&index, path, extensions) {
+                Ok(_) => eprintln!("{} Cache updated ({}ms)",
+                    "✓".green(), elapsed_ms),
+                Err(e) => eprintln!("{} Warning: Failed to save cache: {}",
+                    "⚠".yellow(), e),
+            }
+
             Ok(index)
         }
         Ok(None) => {
