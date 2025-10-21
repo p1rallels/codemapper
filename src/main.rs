@@ -513,14 +513,17 @@ fn try_load_or_rebuild(
         let index = indexer::index_directory(path, extensions)?;
         let elapsed_ms = start.elapsed().as_millis();
 
-        // Save to cache unless --no-cache
-        if !no_cache {
+        // Save to cache only if indexing took >= 300ms (unless --no-cache)
+        if !no_cache && elapsed_ms >= 300 {
             match CacheManager::save(&index, path, extensions) {
                 Ok(_) => eprintln!("{} Cached index for future use ({}ms)",
                     "✓".green(), elapsed_ms),
                 Err(e) => eprintln!("{} Warning: Failed to save cache: {}",
                     "⚠".yellow(), e),
             }
+        } else if !no_cache && elapsed_ms < 300 {
+            eprintln!("{} Indexed in {}ms (no cache needed for small repos)",
+                "✓".green(), elapsed_ms);
         }
 
         return Ok(index);
@@ -588,7 +591,7 @@ fn try_load_or_rebuild(
 
             let elapsed_ms = start.elapsed().as_millis();
 
-            // Save updated cache
+            // Always save updated cache for incremental updates (cache already exists)
             match CacheManager::save(&index, path, extensions) {
                 Ok(_) => eprintln!("{} Cache updated ({}ms)",
                     "✓".green(), elapsed_ms),
@@ -605,14 +608,21 @@ fn try_load_or_rebuild(
             let index = indexer::index_directory(path, extensions)?;
             let elapsed_ms = start.elapsed().as_millis();
 
-            // Save to cache
-            match CacheManager::save(&index, path, extensions) {
-                Ok(_) => eprintln!("{} Indexed and cached ({} files, {}ms)",
+            // Save to cache only if indexing took >= 300ms
+            if elapsed_ms >= 300 {
+                match CacheManager::save(&index, path, extensions) {
+                    Ok(_) => eprintln!("{} Indexed and cached ({} files, {}ms)",
+                        "✓".green(),
+                        index.total_files().to_string().bold(),
+                        elapsed_ms),
+                    Err(e) => eprintln!("{} Warning: Failed to save cache: {}",
+                        "⚠".yellow(), e),
+                }
+            } else {
+                eprintln!("{} Indexed ({} files, {}ms) - no cache needed for small repos",
                     "✓".green(),
                     index.total_files().to_string().bold(),
-                    elapsed_ms),
-                Err(e) => eprintln!("{} Warning: Failed to save cache: {}",
-                    "⚠".yellow(), e),
+                    elapsed_ms);
             }
 
             Ok(index)
