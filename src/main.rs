@@ -52,8 +52,10 @@ STEP 5 (Optional): Understand dependencies
 PRO TIPS FOR LLMs:
   • Always use --format ai (most token-efficient, easy to parse)
   • Use --fuzzy for flexible searches (auth finds authenticate, Authorization, etc.)
-  • Results are cached - subsequent runs are instant (< 10ms)
+  • First run on a project builds cache (~10s for large repos), then < 1s forever
+  • Cache validates automatically - no need to manually invalidate
   • Start with stats → map → query workflow for any new codebase
+  • Use --no-cache only if you suspect stale data (rare - validation is automatic)
 
 COMMAND REFERENCE:
   stats   - File counts, symbol breakdown (START HERE)
@@ -76,12 +78,30 @@ PERFORMANCE:
   • Large projects (1000+ files): Auto-enables fast mode (10-100x speedup)
   • Example: 18,457 files in 1.2s vs 76s (63x faster)
 
-SMART CACHING:
+SMART CACHING (Git-style validation):
   • Automatic caching after first run (stored in .codemapper/cache/)
-  • Hash-based validation detects any file changes (byte-level accuracy)
-  • Near-instant loading on cache hit (< 10ms for most projects)
-  • Cache persists forever until files change or you delete .codemapper/
-  • Use --no-cache to disable or --rebuild-cache to force refresh
+  • Cache location: <project_root>/.codemapper/cache/ (auto-added to .gitignore)
+
+  CACHE BEHAVIOR:
+  ✓ First run: Parses all files, builds cache (~10-15s for 20k files)
+  ✓ Cache hit (no changes): Instant load < 1s (validates all file mtimes + sizes)
+  ✓ Incremental update (1-10 files changed): ~2s (validates all, re-parses changed only)
+  ✓ Major changes (>10% files): Auto-rebuilds entire cache for consistency
+
+  VALIDATION STRATEGY:
+  • Uses mtime + size pre-filter (like git) - only hashes files that look changed
+  • Detects new files, deleted files, and modified files
+  • Smart enough to skip false alarms (mtime changed but content didn't)
+  • Large codebases (20k+ files): ~2s validation overhead on any run
+
+  CACHE FLAGS:
+  --no-cache        Skip cache entirely, always reindex (useful for benchmarking)
+  --rebuild-cache   Force rebuild cache from scratch (use after git operations)
+
+  WHY 2s VALIDATION?:
+  Even with cache, cm must stat() all files to detect changes. For 20k+ files,
+  this filesystem I/O takes ~2s. This is normal and comparable to 'git status'
+  on large repos. Small projects (< 1000 files) see < 100ms validation.
 
 EXAMPLES:
   cm stats /my/project              # Quick codebase overview
@@ -111,18 +131,27 @@ enum Commands {
   • Verify that files are being indexed correctly
   • Results are cached for instant loading on subsequent runs
 
+CACHE BEHAVIOR:
+  • First run: Parses all files and builds cache (10-15s for large repos)
+  • Subsequent runs: Validates cache in ~1s, loads instantly if no changes
+  • File changes: Auto-detects and re-parses only modified files (~2s)
+  • Cache location: .codemapper/cache/ in project root
+
 TIP: Fastest way to understand codebase size and composition"
     )]
     #[command(after_help = "EXAMPLES:
-  cm stats                           # Analyze current directory (cached after first run)
-  cm stats /path/to/project          # Analyze specific project
+  cm stats                           # Analyze current directory (auto-cached)
+  cm stats /path/to/project          # Analyze specific project (builds cache)
   cm stats . --format human          # Pretty tables for terminal
   cm stats . --extensions py,rs      # Only Python and Rust files
-  cm stats . --rebuild-cache         # Force rebuild cache
+  cm stats . --rebuild-cache         # Force fresh rebuild (clears cache)
+  cm stats . --no-cache              # Skip cache, always reindex (benchmarking)
 
 TYPICAL WORKFLOW:
   1. Run 'cm stats .' first to understand the codebase (auto-cached)
-  2. Then use 'cm map' for structure or 'cm query' to find symbols")]
+  2. Subsequent runs < 1s if no files changed
+  3. Changed files? Auto-detected and re-parsed (~2s validation overhead)
+  4. Then use 'cm map' for structure or 'cm query' to find symbols")]
     Stats {
         /// Directory path to analyze
         #[arg(default_value = ".")]
