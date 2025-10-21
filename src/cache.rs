@@ -326,7 +326,7 @@ impl CacheManager {
                 // TWO-SIGNAL CHECK (like git):
                 // If both size AND mtime unchanged → skip hash
                 // If either changed → need to verify with hash
-                if current_size == &cached.size && current_mtime <= &metadata.created_at {
+                if current_size == &cached.size && current_mtime == &cached.mtime {
                     // Both signals agree: file definitely unchanged
                     continue;
                 }
