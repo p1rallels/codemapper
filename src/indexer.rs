@@ -2,9 +2,11 @@ use crate::index::CodeIndex;
 use crate::models::{FileInfo, Language};
 use crate::parser::{c::CParser, go::GoParser, java::JavaParser, javascript::JavaScriptParser, markdown::MarkdownParser, python::PythonParser, rust::RustParser, Parser};
 use anyhow::{Context, Result};
+use indicatif::ProgressBar;
 use rayon::prelude::*;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use walkdir::WalkDir;
 
 const IGNORED_DIRS: &[&str] = &[
@@ -109,6 +111,14 @@ pub fn index_file(
 }
 
 pub fn index_directory(path: &Path, extensions: &[&str]) -> Result<CodeIndex> {
+    index_directory_with_progress(path, extensions, None)
+}
+
+pub fn index_directory_with_progress(
+    path: &Path,
+    extensions: &[&str],
+    progress: Option<ProgressBar>,
+) -> Result<CodeIndex> {
     if !path.exists() {
         anyhow::bail!("Directory does not exist: {}", path.display());
     }
@@ -143,26 +153,59 @@ pub fn index_directory(path: &Path, extensions: &[&str]) -> Result<CodeIndex> {
         .map(|e| e.into_path())
         .collect();
 
+    let total_files = entries.len();
+    let progress_wrapper = progress.map(|pb| {
+        pb.set_length(total_files as u64);
+        Arc::new(Mutex::new(pb))
+    });
+
     let file_infos: Vec<FileInfo> = entries
         .par_iter()
         .filter_map(|file_path| {
             let language = detect_language(file_path);
-            
+
             if language == Language::Unknown {
+                if let Some(ref pb) = progress_wrapper {
+                    if let Ok(pb) = pb.lock() {
+                        pb.inc(1);
+                    }
+                }
                 return None;
             }
 
             let content = match read_file_content(file_path) {
                 Ok(c) => c,
-                Err(_) => return None,
+                Err(_) => {
+                    if let Some(ref pb) = progress_wrapper {
+                        if let Ok(pb) = pb.lock() {
+                            pb.inc(1);
+                        }
+                    }
+                    return None;
+                }
             };
 
-            match index_file(file_path, &content, language, None) {
+            let result = match index_file(file_path, &content, language, None) {
                 Ok(info) => Some(info),
                 Err(_) => None,
+            };
+
+            if let Some(ref pb) = progress_wrapper {
+                if let Ok(pb) = pb.lock() {
+                    pb.inc(1);
+                }
             }
+
+            result
         })
         .collect();
+
+    if let Some(pb) = progress_wrapper {
+        if let Ok(pb) = pb.lock() {
+            pb.finish_with_message("Done");
+            eprintln!(); // Add newline after progress bar
+        }
+    }
 
     let mut index = CodeIndex::new();
     for file_info in file_infos {

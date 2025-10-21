@@ -10,6 +10,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use colored::*;
 use cache::FileChangeKind;
+use indicatif::{ProgressBar, ProgressStyle};
 use models::Symbol;
 use output::{OutputFormat, OutputFormatter};
 use rayon::prelude::*;
@@ -556,18 +557,30 @@ fn try_load_or_rebuild(
                 "→".cyan()
             );
 
+            // Create progress bar
+            let pb = ProgressBar::new(changed_files.len() as u64);
+            pb.set_style(
+                ProgressStyle::default_bar()
+                    .template("{spinner:.cyan} [{bar:40.cyan/blue}] {percent}% ({pos}/{len} files)")
+                    .unwrap()
+                    .progress_chars("=>-")
+            );
+
             let start = Instant::now();
 
             for change in &changed_files {
                 index.remove_file(&change.path);
             }
 
+            use std::sync::{Arc, Mutex};
+            let pb_wrapper = Arc::new(Mutex::new(pb));
+
             let new_file_infos: Vec<_> = changed_files
                 .par_iter()
                 .filter(|change| change.kind != FileChangeKind::Deleted)
                 .filter_map(|change| {
                     let path = change.path.clone();
-                    match std::fs::read_to_string(&path) {
+                    let result = match std::fs::read_to_string(&path) {
                         Ok(content) => {
                             let language = models::Language::from_extension(
                                 path.extension()
@@ -589,9 +602,20 @@ fn try_load_or_rebuild(
                                 "⚠".yellow(), path.display(), e);
                             None
                         }
+                    };
+
+                    if let Ok(pb) = pb_wrapper.lock() {
+                        pb.inc(1);
                     }
+
+                    result
                 })
                 .collect();
+
+            if let Ok(pb) = pb_wrapper.lock() {
+                pb.finish_with_message("Done");
+                eprintln!(); // Add newline after progress bar
+            }
 
             for (change, file_info) in new_file_infos {
                 index.remove_file(&change.path);
@@ -615,14 +639,25 @@ fn try_load_or_rebuild(
         }
         Ok(None) => {
             // Cache miss or invalid - index from scratch
+            eprintln!("{} Indexing...", "→".cyan());
+
+            // Create progress bar
+            let pb = ProgressBar::new(0);
+            pb.set_style(
+                ProgressStyle::default_bar()
+                    .template("{spinner:.cyan} [{bar:40.cyan/blue}] {percent}% ({pos}/{len} files)")
+                    .unwrap()
+                    .progress_chars("=>-")
+            );
+
             let start = Instant::now();
-            let index = indexer::index_directory(path, extensions)?;
+            let index = indexer::index_directory_with_progress(path, extensions, Some(pb))?;
             let elapsed_ms = start.elapsed().as_millis();
 
             // Save to cache only if indexing took >= 300ms
             if elapsed_ms >= 300 {
                 match CacheManager::save(&index, path, extensions) {
-                    Ok(_) => eprintln!("{} Indexed - cache not found (.codemapper), created new cache ({} files, {}ms)",
+                    Ok(_) => eprintln!("{} Cache not found (.codemapper), created new cache ({} files, {}ms)",
                         "✓".green(),
                         index.total_files().to_string().bold(),
                         elapsed_ms),
@@ -630,7 +665,7 @@ fn try_load_or_rebuild(
                         "⚠".yellow(), e),
                 }
             } else {
-                // Small repo - no message during indexing, just final result
+                // Small repo - simple completion message
                 eprintln!("{} Indexed ({} files, {}ms)",
                     "✓".green(),
                     index.total_files().to_string().bold(),
