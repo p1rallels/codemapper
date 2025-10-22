@@ -296,6 +296,10 @@ WHEN TO USE:
         #[arg(long, default_value = "false")]
         fuzzy: bool,
 
+        /// Filter by symbol type: 'function', 'class', 'method', 'enum', 'static', 'heading', 'code_block'
+        #[arg(long)]
+        r#type: Option<String>,
+
         /// Context level: 'minimal' (signatures only) or 'full' (includes docstrings)
         #[arg(long, default_value = "minimal")]
         context: String,
@@ -488,8 +492,8 @@ fn main() -> Result<()> {
         Commands::Map { path, level, extensions, no_cache, rebuild_cache } => {
             cmd_map(path, level, extensions, no_cache, rebuild_cache, format)?;
         }
-        Commands::Query { symbol, path, fuzzy, context, show_body, fast, extensions, no_cache, rebuild_cache } => {
-            cmd_query(symbol, path, context, fuzzy, fast, show_body, extensions, no_cache, rebuild_cache, format)?;
+        Commands::Query { symbol, path, fuzzy, r#type, context, show_body, fast, extensions, no_cache, rebuild_cache } => {
+            cmd_query(symbol, path, context, fuzzy, fast, show_body, r#type, extensions, no_cache, rebuild_cache, format)?;
         }
         Commands::Inspect { file_path, show_body } => {
             cmd_inspect(file_path, show_body, format)?;
@@ -739,20 +743,50 @@ fn cmd_query(
     fuzzy: bool,
     fast: bool,
     show_body: bool,
+    symbol_type_filter: Option<String>,
     extensions: String,
     no_cache: bool,
     rebuild_cache: bool,
     format: OutputFormat
 ) -> Result<()> {
     use fast_search::GrepFilter;
+    use models::SymbolType;
 
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
+
+    // Check if symbol is a plural form of a symbol type (e.g., "functions", "classes")
+    let (symbol, symbol_type_filter) = if symbol_type_filter.is_none() {
+        if let Some(plural_type) = SymbolType::from_plural(&symbol) {
+            // Convert plural form to empty symbol + type filter
+            (String::new(), Some(plural_type.as_str().to_string()))
+        } else {
+            (symbol, symbol_type_filter)
+        }
+    } else {
+        (symbol, symbol_type_filter)
+    };
+
+    // Parse symbol type filter if provided
+    let type_filter = if let Some(ref type_str) = symbol_type_filter {
+        match SymbolType::from_str(type_str) {
+            Some(t) => Some(t),
+            None => {
+                eprintln!("{} Invalid symbol type '{}', valid types: function, class, method, enum, static, heading, code_block", "Error:".red(), type_str);
+                return Ok(());
+            }
+        }
+    } else {
+        None
+    };
+
+    // Check if user wants all symbols of a specific type (empty symbol name with type filter)
+    let search_all = symbol.trim().is_empty() && type_filter.is_some();
 
     // Count files for auto-detection
     let file_count = count_indexable_files(&path, &ext_list)?;
 
-    // Auto-enable fast mode for large codebases (1000+ files)
-    let use_fast_mode = fast || file_count >= 1000;
+    // Auto-enable fast mode for large codebases (1000+ files), but not when searching for all symbols
+    let use_fast_mode = !search_all && (fast || file_count >= 1000);
 
     if use_fast_mode {
         if fast {
@@ -771,11 +805,18 @@ fn cmd_query(
             eprintln!("{} No text matches found, falling back to full AST scan", "→".yellow());
             // Fallback: Use normal mode with cache
             let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
-            let symbols = if fuzzy {
+            let mut symbols = if search_all {
+                index.all_symbols()
+            } else if fuzzy {
                 index.fuzzy_search(&symbol)
             } else {
                 index.query_symbol(&symbol)
             };
+
+            // Apply type filter if specified
+            if let Some(filter_type) = type_filter {
+                symbols.retain(|s| s.symbol_type == filter_type);
+            }
 
             if symbols.is_empty() {
                 println!("{} No symbols found matching '{}'", "✗".red(), symbol.bold());
@@ -790,7 +831,12 @@ fn cmd_query(
             eprintln!("{} Found {} candidate files, validating with AST...", "→".cyan(), candidates.len());
 
             // Stage 2: AST validation
-            let owned_symbols = filter.validate(candidates, &symbol, fuzzy)?;
+            let mut owned_symbols = filter.validate(candidates, &symbol, fuzzy)?;
+
+            // Apply type filter if specified
+            if let Some(filter_type) = type_filter {
+                owned_symbols.retain(|s| s.symbol_type == filter_type);
+            }
 
             if owned_symbols.is_empty() {
                 println!("{} No symbols found matching '{}'", "✗".red(), symbol.bold());
@@ -807,11 +853,19 @@ fn cmd_query(
     } else {
         // Normal mode for small codebases with cache
         let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
-        let symbols = if fuzzy {
+        let mut symbols = if search_all {
+            // Get all symbols when searching for all of a specific type
+            index.all_symbols()
+        } else if fuzzy {
             index.fuzzy_search(&symbol)
         } else {
             index.query_symbol(&symbol)
         };
+
+        // Apply type filter if specified
+        if let Some(filter_type) = type_filter {
+            symbols.retain(|s| s.symbol_type == filter_type);
+        }
 
         if symbols.is_empty() {
             println!("{} No symbols found matching '{}'", "✗".red(), symbol.bold());
