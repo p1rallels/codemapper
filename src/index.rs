@@ -199,6 +199,11 @@ impl CodeIndex {
             .filter(|s| s.symbol_type == symbol_type)
             .count()
     }
+
+    /// Get all symbols (for use with type filtering)
+    pub fn all_symbols(&self) -> Vec<&Symbol> {
+        self.symbols.iter().collect()
+    }
 }
 
 fn levenshtein_distance(s1: &str, s2: &str) -> i32 {

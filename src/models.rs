@@ -67,6 +67,32 @@ impl SymbolType {
             SymbolType::CodeBlock => "code_block",
         }
     }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "function" | "func" | "fn" => Some(SymbolType::Function),
+            "class" => Some(SymbolType::Class),
+            "method" => Some(SymbolType::Method),
+            "enum" => Some(SymbolType::Enum),
+            "static" | "staticfield" => Some(SymbolType::StaticField),
+            "heading" | "header" => Some(SymbolType::Heading),
+            "code_block" | "codeblock" => Some(SymbolType::CodeBlock),
+            _ => None,
+        }
+    }
+
+    pub fn from_plural(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "functions" | "funcs" | "fns" => Some(SymbolType::Function),
+            "classes" => Some(SymbolType::Class),
+            "methods" => Some(SymbolType::Method),
+            "enums" => Some(SymbolType::Enum),
+            "statics" | "staticfields" => Some(SymbolType::StaticField),
+            "headings" | "headers" => Some(SymbolType::Heading),
+            "code_blocks" | "codeblocks" => Some(SymbolType::CodeBlock),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
