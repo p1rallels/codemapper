@@ -182,6 +182,104 @@ pub struct ChangedFiles {
     pub modified: Vec<PathBuf>,
 }
 
+#[derive(Debug, Clone)]
+pub struct CommitInfo {
+    pub hash: String,
+    pub short_hash: String,
+    pub author: String,
+    pub date: String,
+    pub message: String,
+}
+
+pub fn get_commits_for_file(repo_path: &Path, file_path: &Path, limit: Option<usize>) -> Result<Vec<CommitInfo>> {
+    let repo_root = get_repo_root(repo_path)?;
+    
+    let relative_path = if file_path.is_absolute() {
+        file_path.strip_prefix(&repo_root).unwrap_or(file_path)
+    } else {
+        file_path
+    };
+    
+    let limit_arg = limit.map(|n| format!("-{}", n)).unwrap_or_default();
+    
+    let mut args = vec![
+        "-C".to_string(),
+        repo_root.to_string_lossy().to_string(),
+        "log".to_string(),
+        "--format=%H|%h|%an|%ai|%s".to_string(),
+        "--follow".to_string(),
+    ];
+    
+    if !limit_arg.is_empty() {
+        args.push(limit_arg);
+    }
+    
+    args.push("--".to_string());
+    args.push(relative_path.to_string_lossy().to_string());
+    
+    let output = Command::new("git")
+        .args(&args)
+        .output()
+        .context("Failed to execute git log")?;
+    
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git log failed: {}", stderr.trim());
+    }
+    
+    let commits: Vec<CommitInfo> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| {
+            let parts: Vec<&str> = line.splitn(5, '|').collect();
+            if parts.len() >= 5 {
+                Some(CommitInfo {
+                    hash: parts[0].to_string(),
+                    short_hash: parts[1].to_string(),
+                    author: parts[2].to_string(),
+                    date: parts[3].to_string(),
+                    message: parts[4].to_string(),
+                })
+            } else {
+                None
+            }
+        })
+        .collect();
+    
+    Ok(commits)
+}
+
+pub fn get_commit_info(repo_path: &Path, commit_ref: &str) -> Result<CommitInfo> {
+    let output = Command::new("git")
+        .args([
+            "-C", repo_path.to_string_lossy().as_ref(),
+            "log", "-1",
+            "--format=%H|%h|%an|%ai|%s",
+            commit_ref,
+        ])
+        .output()
+        .context("Failed to execute git log")?;
+    
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git log failed for '{}': {}", commit_ref, stderr.trim());
+    }
+    
+    let line = String::from_utf8_lossy(&output.stdout);
+    let parts: Vec<&str> = line.trim().splitn(5, '|').collect();
+    
+    if parts.len() < 5 {
+        anyhow::bail!("Failed to parse commit info for '{}'", commit_ref);
+    }
+    
+    Ok(CommitInfo {
+        hash: parts[0].to_string(),
+        short_hash: parts[1].to_string(),
+        author: parts[2].to_string(),
+        date: parts[3].to_string(),
+        message: parts[4].to_string(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
