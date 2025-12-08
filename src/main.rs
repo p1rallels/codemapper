@@ -1,5 +1,8 @@
 mod cache;
+mod callgraph;
+mod diff;
 mod fast_search;
+mod git;
 mod index;
 mod indexer;
 mod models;
@@ -475,6 +478,260 @@ NOTE: For normal usage, use 'cm stats' or 'cm map' instead")]
         #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,md")]
         extensions: String,
     },
+
+    /// [ANALYSIS] Symbol-level diff between current code and a git commit
+    #[command(
+        about = "Show symbol-level changes between current code and a git commit",
+        long_about = "USE CASE: Understand what symbols changed between commits
+  • See which functions/classes were added, deleted, or modified
+  • Detect signature changes (parameter/return type modifications)
+  • Review changes at symbol granularity instead of line-by-line
+
+CHANGE TYPES:
+  ADDED            → New symbols that didn't exist in the commit
+  DELETED          → Symbols that were removed since the commit
+  MODIFIED         → Symbols with body/line changes (same signature)
+  SIGNATURE_CHANGED → Symbols with parameter or return type changes
+
+REQUIREMENTS:
+  • Must be run inside a git repository
+  • Commit reference can be: HEAD~1, abc123, branch-name, tag-name
+
+TIP: Great for code review and understanding PR impact"
+    )]
+    #[command(after_help = "EXAMPLES:
+  cm diff HEAD~1                        # Compare to previous commit
+  cm diff HEAD~3 ./src                  # Compare src/ to 3 commits ago
+  cm diff main                          # Compare to main branch
+  cm diff abc1234 --format human        # Pretty table output
+  cm diff HEAD~5 --extensions py,rs     # Only Python and Rust files
+
+TYPICAL WORKFLOW:
+  1. Before PR review: cm diff main --format human
+  2. Check recent changes: cm diff HEAD~1
+  3. Impact analysis: cm diff release-v1.0 ./src
+
+WHEN TO USE:
+  ✓ \"What functions changed in this PR?\"
+  ✓ \"Did any signatures change since last release?\"
+  ✓ \"What was added/removed in the last 5 commits?\"")]
+    Diff {
+        /// Git commit reference (e.g., HEAD~1, abc123, main, v1.0)
+        commit: String,
+
+        /// Directory or file path to analyze (optional, defaults to entire repo)
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,md')
+        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,md")]
+        extensions: String,
+    },
+
+    /// [ANALYSIS] Find all call sites of a function (reverse call graph)
+    #[command(
+        about = "Find all places where a function/method is called",
+        long_about = "USE CASE: Understand who calls a function
+  • Find all call sites of a specific function
+  • Useful for impact analysis before refactoring
+  • Shows the enclosing function/method making each call
+  • Uses AST-based call detection (not text search)
+
+SUPPORTED LANGUAGES:
+  Python, JavaScript, TypeScript, Rust, Go, Java, C
+
+TIP: Great for understanding function usage patterns"
+    )]
+    #[command(after_help = "EXAMPLES:
+  cm callers parse_file                    # Find all callers of parse_file
+  cm callers parse ./src --fuzzy           # Fuzzy match 'parse' in src/
+  cm callers validate --format human       # Pretty table output
+  cm callers process_data . --format ai    # Token-efficient output
+
+TYPICAL WORKFLOW:
+  1. Find the function: cm query my_func --fuzzy
+  2. See who calls it: cm callers my_func
+  3. Understand the call chain before refactoring")]
+    Callers {
+        /// Symbol name to find callers for
+        symbol: String,
+
+        /// Directory path to search in
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Enable fuzzy matching for symbol lookup
+        #[arg(long, default_value = "false")]
+        fuzzy: bool,
+
+        /// Comma-separated file extensions to include
+        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,md")]
+        extensions: String,
+
+        /// Disable cache (always reindex)
+        #[arg(long, default_value_t = false)]
+        no_cache: bool,
+
+        /// Force rebuild cache
+        #[arg(long, default_value_t = false)]
+        rebuild_cache: bool,
+    },
+
+    /// [ANALYSIS] Find all functions called by a symbol (forward call graph)
+    #[command(
+        about = "Find all functions/methods that a symbol calls",
+        long_about = "USE CASE: Understand what a function depends on
+  • See all functions called within a symbol's body
+  • Useful for understanding code dependencies
+  • Links to definitions when found in codebase
+  • Marks external/built-in functions separately
+
+SUPPORTED LANGUAGES:
+  Python, JavaScript, TypeScript, Rust, Go, Java, C
+
+TIP: Great for understanding function complexity and dependencies"
+    )]
+    #[command(after_help = "EXAMPLES:
+  cm callees main                          # What does main() call?
+  cm callees process_data --fuzzy          # Fuzzy match
+  cm callees cmd_query --format human      # Pretty table output
+  cm callees validate . --format ai        # Token-efficient output
+
+TYPICAL WORKFLOW:
+  1. Find the function: cm query my_func --fuzzy
+  2. See what it calls: cm callees my_func
+  3. Understand the dependency graph")]
+    Callees {
+        /// Symbol name to find callees for
+        symbol: String,
+
+        /// Directory path to search in
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Enable fuzzy matching for symbol lookup
+        #[arg(long, default_value = "false")]
+        fuzzy: bool,
+
+        /// Comma-separated file extensions to include
+        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,md")]
+        extensions: String,
+
+        /// Disable cache (always reindex)
+        #[arg(long, default_value_t = false)]
+        no_cache: bool,
+
+        /// Force rebuild cache
+        #[arg(long, default_value_t = false)]
+        rebuild_cache: bool,
+    },
+
+    /// [ANALYSIS] Find tests that call a symbol
+    #[command(
+        about = "Find test functions that call a given symbol",
+        long_about = "USE CASE: Find tests covering a specific function or method
+  • Identifies test files by naming convention (_test.rs, test_*.py, *.test.js)
+  • Detects test functions by attributes (#[test], @Test) or naming (test_*, Test*)
+  • Shows where in the test the symbol is called
+
+TEST DETECTION:
+  Rust     → #[test] attribute, _test.rs files, tests/ directory
+  Python   → test_*.py files, functions starting with test_
+  Go       → *_test.go files, functions starting with Test
+  JS/TS    → *.test.js, *.spec.ts, __tests__/ directory
+  Java     → @Test annotation, *Test.java files
+
+TIP: Use before refactoring to understand test coverage"
+    )]
+    #[command(after_help = "EXAMPLES:
+  cm tests parse_file                     # Find tests calling parse_file
+  cm tests authenticate --fuzzy           # Fuzzy match test discovery
+  cm tests validate ./src --format human  # Pretty table output
+  cm tests process_payment --format ai    # Token-efficient for LLMs
+
+TYPICAL WORKFLOW:
+  1. Identify function to refactor: cm query my_function
+  2. Find tests: cm tests my_function
+  3. Run tests, make changes, verify")]
+    Tests {
+        /// Symbol name to find tests for
+        symbol: String,
+
+        /// Directory path to search in
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Enable fuzzy matching for flexible search
+        #[arg(long, default_value = "false")]
+        fuzzy: bool,
+
+        /// Comma-separated file extensions to include
+        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,md")]
+        extensions: String,
+
+        /// Disable cache (always reindex)
+        #[arg(long, default_value_t = false)]
+        no_cache: bool,
+
+        /// Force rebuild cache
+        #[arg(long, default_value_t = false)]
+        rebuild_cache: bool,
+    },
+
+    /// [ANALYSIS] List breaking changes since a known-good commit
+    #[command(
+        about = "Show breaking API changes since a git commit (removed symbols, signature changes)",
+        long_about = "USE CASE: Identify breaking changes that could affect callers
+  • Removed symbols (DELETED) - definitely breaks callers
+  • Signature changes (params/return type modified) - breaks callers
+  • Filters out non-breaking changes (internal body modifications)
+
+BREAKING CHANGES:
+  DELETED          → Symbol was removed (callers will fail)
+  SIGNATURE_CHANGED → Function signature modified (callers may need updates)
+
+NON-BREAKING (filtered out with --breaking):
+  ADDED            → New symbols (safe)
+  MODIFIED         → Body changes only (internal, safe for callers)
+
+REQUIREMENTS:
+  • Must be run inside a git repository
+  • Commit reference can be: HEAD~1, abc123, branch-name, tag-name
+
+TIP: Use before releases to identify API-breaking changes"
+    )]
+    #[command(after_help = "EXAMPLES:
+  cm since HEAD~10 --breaking              # Breaking changes in last 10 commits
+  cm since main --breaking                 # Breaking changes since main branch
+  cm since v1.0 --breaking --format human  # Breaking changes since v1.0 tag
+  cm since HEAD~5 src/ --breaking          # Breaking changes in src/ directory
+  cm since abc1234                         # All changes (not just breaking)
+
+TYPICAL WORKFLOW:
+  1. Before release: cm since last-release --breaking
+  2. Check PR impact: cm since main --breaking --format human
+  3. Full changelog: cm since v1.0 (without --breaking)
+
+WHEN TO USE:
+  ✓ \"What breaks if I upgrade from v1.0?\"
+  ✓ \"Did this PR introduce breaking changes?\"
+  ✓ \"Is it safe to merge this into main?\"")]
+    Since {
+        /// Git commit reference (e.g., HEAD~1, abc123, main, v1.0)
+        commit: String,
+
+        /// Directory or file path to analyze (optional, defaults to entire repo)
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,md')
+        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,md")]
+        extensions: String,
+
+        /// Show only breaking changes (deleted symbols, signature changes)
+        #[arg(long, default_value_t = false)]
+        breaking: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -503,6 +760,21 @@ fn main() -> Result<()> {
         }
         Commands::Index { path, extensions } => {
             cmd_index(path, extensions)?;
+        }
+        Commands::Diff { commit, path, extensions } => {
+            cmd_diff(commit, path, extensions, format)?;
+        }
+        Commands::Callers { symbol, path, fuzzy, extensions, no_cache, rebuild_cache } => {
+            cmd_callers(symbol, path, fuzzy, extensions, no_cache, rebuild_cache, format)?;
+        }
+        Commands::Callees { symbol, path, fuzzy, extensions, no_cache, rebuild_cache } => {
+            cmd_callees(symbol, path, fuzzy, extensions, no_cache, rebuild_cache, format)?;
+        }
+        Commands::Tests { symbol, path, fuzzy, extensions, no_cache, rebuild_cache } => {
+            cmd_tests(symbol, path, fuzzy, extensions, no_cache, rebuild_cache, format)?;
+        }
+        Commands::Since { commit, path, extensions, breaking } => {
+            cmd_since(commit, path, extensions, breaking, format)?;
         }
     }
 
@@ -1144,6 +1416,188 @@ fn cmd_inspect(file_path: PathBuf, show_body: bool, format: OutputFormat) -> Res
     }
 
     println!("\n{} Parse time: {}ms", "→".cyan(), elapsed_ms.to_string().bold());
+
+    Ok(())
+}
+
+fn cmd_diff(commit: String, path: PathBuf, extensions: String, format: OutputFormat) -> Result<()> {
+    use std::time::Instant;
+    
+    let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
+    
+    eprintln!("{} Computing symbol diff against {}...", "→".cyan(), commit.bold());
+    
+    let start = Instant::now();
+    
+    let subpath = if path == PathBuf::from(".") {
+        None
+    } else {
+        Some(path.as_path())
+    };
+    
+    let result = diff::compute_diff(&std::env::current_dir()?, &commit, subpath, &ext_list)?;
+    let elapsed_ms = start.elapsed().as_millis();
+    
+    eprintln!("{} Analyzed {} files in {}ms\n", 
+        "✓".green(), 
+        result.files_analyzed.to_string().bold(),
+        elapsed_ms.to_string().bold()
+    );
+    
+    let formatter = OutputFormatter::new(format);
+    let output = formatter.format_diff(&result);
+    println!("{}", output);
+    
+    Ok(())
+}
+
+fn cmd_since(commit: String, path: PathBuf, extensions: String, breaking: bool, format: OutputFormat) -> Result<()> {
+    use diff::ChangeType;
+    use std::time::Instant;
+    
+    let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
+    
+    let label = if breaking { "breaking changes" } else { "changes" };
+    eprintln!("{} Finding {} since {}...", "→".cyan(), label, commit.bold());
+    
+    let start = Instant::now();
+    
+    let subpath = if path == PathBuf::from(".") {
+        None
+    } else {
+        Some(path.as_path())
+    };
+    
+    let mut result = diff::compute_diff(&std::env::current_dir()?, &commit, subpath, &ext_list)?;
+    let elapsed_ms = start.elapsed().as_millis();
+    
+    if breaking {
+        result.symbols.retain(|s| {
+            matches!(s.change_type, ChangeType::Deleted | ChangeType::SignatureChanged)
+        });
+    }
+    
+    eprintln!("{} Analyzed {} files in {}ms\n", 
+        "✓".green(), 
+        result.files_analyzed.to_string().bold(),
+        elapsed_ms.to_string().bold()
+    );
+    
+    let formatter = OutputFormatter::new(format);
+    let output = if breaking {
+        formatter.format_breaking(&result)
+    } else {
+        formatter.format_diff(&result)
+    };
+    println!("{}", output);
+    
+    Ok(())
+}
+
+fn cmd_callers(
+    symbol: String,
+    path: PathBuf,
+    fuzzy: bool,
+    extensions: String,
+    no_cache: bool,
+    rebuild_cache: bool,
+    format: OutputFormat,
+) -> Result<()> {
+    let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
+    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
+
+    eprintln!("{} Finding callers of '{}'...", "→".cyan(), symbol.bold());
+
+    let start = Instant::now();
+    let callers = callgraph::find_callers(&index, &symbol, fuzzy)?;
+    let elapsed_ms = start.elapsed().as_millis();
+
+    if callers.is_empty() {
+        println!("{} No call sites found for '{}'", "✗".yellow(), symbol.bold());
+        return Ok(());
+    }
+
+    eprintln!("{} Found {} call site(s) in {}ms\n",
+        "✓".green(),
+        callers.len().to_string().bold(),
+        elapsed_ms.to_string().bold()
+    );
+
+    let formatter = OutputFormatter::new(format);
+    let output = formatter.format_callers(&callers, &symbol);
+    println!("{}", output);
+
+    Ok(())
+}
+
+fn cmd_callees(
+    symbol: String,
+    path: PathBuf,
+    fuzzy: bool,
+    extensions: String,
+    no_cache: bool,
+    rebuild_cache: bool,
+    format: OutputFormat,
+) -> Result<()> {
+    let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
+    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
+
+    eprintln!("{} Finding callees of '{}'...", "→".cyan(), symbol.bold());
+
+    let start = Instant::now();
+    let callees = callgraph::find_callees(&index, &symbol, fuzzy)?;
+    let elapsed_ms = start.elapsed().as_millis();
+
+    if callees.is_empty() {
+        println!("{} No function calls found in '{}'", "✗".yellow(), symbol.bold());
+        return Ok(());
+    }
+
+    eprintln!("{} Found {} callee(s) in {}ms\n",
+        "✓".green(),
+        callees.len().to_string().bold(),
+        elapsed_ms.to_string().bold()
+    );
+
+    let formatter = OutputFormatter::new(format);
+    let output = formatter.format_callees(&callees, &symbol);
+    println!("{}", output);
+
+    Ok(())
+}
+
+fn cmd_tests(
+    symbol: String,
+    path: PathBuf,
+    fuzzy: bool,
+    extensions: String,
+    no_cache: bool,
+    rebuild_cache: bool,
+    format: OutputFormat,
+) -> Result<()> {
+    let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
+    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
+
+    eprintln!("{} Finding tests for '{}'...", "→".cyan(), symbol.bold());
+
+    let start = Instant::now();
+    let tests = callgraph::find_tests(&index, &symbol, fuzzy)?;
+    let elapsed_ms = start.elapsed().as_millis();
+
+    if tests.is_empty() {
+        println!("{} No tests found for '{}'", "✗".yellow(), symbol.bold());
+        return Ok(());
+    }
+
+    eprintln!("{} Found {} test(s) in {}ms\n",
+        "✓".green(),
+        tests.len().to_string().bold(),
+        elapsed_ms.to_string().bold()
+    );
+
+    let formatter = OutputFormatter::new(format);
+    let output = formatter.format_tests(&tests, &symbol);
+    println!("{}", output);
 
     Ok(())
 }
