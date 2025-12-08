@@ -1,13 +1,16 @@
+mod blame;
 mod cache;
 mod callgraph;
 mod diff;
 mod fast_search;
 mod git;
+mod implements;
 mod index;
 mod indexer;
 mod models;
 mod output;
 mod parser;
+mod types;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -678,6 +681,52 @@ TYPICAL WORKFLOW:
         rebuild_cache: bool,
     },
 
+    /// [ANALYSIS] Find symbols with no test coverage
+    #[command(
+        about = "Find functions and methods that are not called by any test",
+        long_about = "USE CASE: Identify code without test coverage
+  • Finds symbols not called from any test file or test function
+  • Excludes test functions themselves from the output
+  • Excludes private/internal helpers (leading underscore in Python)
+  • Shows coverage percentage and untested symbol count
+
+TEST DETECTION:
+  Rust     → #[test] attribute, _test.rs files, tests/ directory
+  Python   → test_*.py files, functions starting with test_
+  Go       → *_test.go files, functions starting with Test
+  JS/TS    → *.test.js, *.spec.ts, __tests__/ directory
+  Java     → @Test annotation, *Test.java files
+
+TIP: Use to identify areas needing test coverage"
+    )]
+    #[command(after_help = "EXAMPLES:
+  cm untested                           # Find untested symbols in current dir
+  cm untested ./src                     # Check specific directory
+  cm untested . --format human          # Pretty table output
+  cm untested . --format ai             # Token-efficient for LLMs
+
+TYPICAL WORKFLOW:
+  1. Check coverage: cm untested .
+  2. Pick symbol to test: identify critical untested code
+  3. Write tests for high-priority symbols")]
+    Untested {
+        /// Directory path to analyze
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Comma-separated file extensions to include
+        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,md")]
+        extensions: String,
+
+        /// Disable cache (always reindex)
+        #[arg(long, default_value_t = false)]
+        no_cache: bool,
+
+        /// Force rebuild cache
+        #[arg(long, default_value_t = false)]
+        rebuild_cache: bool,
+    },
+
     /// [ANALYSIS] List breaking changes since a known-good commit
     #[command(
         about = "Show breaking API changes since a git commit (removed symbols, signature changes)",
@@ -732,6 +781,360 @@ WHEN TO USE:
         #[arg(long, default_value_t = false)]
         breaking: bool,
     },
+
+    /// [ANALYSIS] Find exported/public symbols with no internal callers (API surface)
+    #[command(
+        about = "Find entrypoints: exported symbols that are not called internally",
+        long_about = "USE CASE: Identify API surface and potentially unused code
+  • Finds public/exported functions that have no callers within the codebase
+  • Useful for identifying: main entry points, exported APIs, dead code
+  • Groups by: Main Entrypoints, API Functions, Possibly Unused
+
+EXPORT DETECTION BY LANGUAGE:
+  Rust     → pub fn, pub struct (excluding pub(crate), pub(super))
+  Python   → No leading underscore, or in __all__
+  JS/TS    → export function, export default, module.exports
+  Go       → Capitalized function names
+  Java     → public modifier
+  C        → No leading underscore
+
+CATEGORIES:
+  Main Entrypoint → main, run, start, init, execute, cli, app
+  API Function    → get*, post*, handle*, create*, process*, classes, enums
+  Possibly Unused → Other exported symbols with no callers
+
+TIP: Use to identify dead code or document your public API"
+    )]
+    #[command(after_help = "EXAMPLES:
+  cm entrypoints                         # Find entrypoints in current dir
+  cm entrypoints ./src                   # Check specific directory
+  cm entrypoints . --format human        # Pretty table output
+  cm entrypoints . --format ai           # Token-efficient for LLMs
+
+TYPICAL WORKFLOW:
+  1. Check entrypoints: cm entrypoints .
+  2. Review 'Possibly Unused' - candidates for removal
+  3. Document 'API Functions' as your public interface
+
+WHEN TO USE:
+  ✓ \"What's our public API surface?\"
+  ✓ \"Is this function used anywhere?\"
+  ✓ \"Find dead code candidates\"
+  ✓ \"What are the entry points to this codebase?\"")]
+    Entrypoints {
+        /// Directory path to analyze
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Comma-separated file extensions to include
+        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,md")]
+        extensions: String,
+
+        /// Disable cache (always reindex)
+        #[arg(long, default_value_t = false)]
+        no_cache: bool,
+
+        /// Force rebuild cache
+        #[arg(long, default_value_t = false)]
+        rebuild_cache: bool,
+    },
+
+    /// [ANALYSIS] Trace the call path between two symbols
+    #[command(
+        about = "Show the shortest call path from symbol A to symbol B",
+        long_about = "USE CASE: Understand how code flows between two symbols
+  • Find the call chain: A calls X, X calls Y, Y calls B
+  • Uses BFS to find the shortest path
+  • Supports fuzzy matching for flexible symbol lookup
+
+ALGORITHM:
+  • Breadth-first search from source symbol
+  • Follows call edges (function/method calls)
+  • Maximum depth: 10 levels to avoid infinite loops
+  • Returns shortest path found
+
+OUTPUT:
+  • Shows each step in the call chain
+  • Includes symbol type and file location for each step
+
+TIP: Use --fuzzy if you're not sure of exact symbol names"
+    )]
+    #[command(after_help = "EXAMPLES:
+  cm trace main parse_file                   # Trace from main to parse_file
+  cm trace authenticate validate --fuzzy    # Fuzzy match both symbols
+  cm trace handler response ./src           # Trace within specific path
+  cm trace cmd_query format_output --format human  # Pretty table
+
+TYPICAL WORKFLOW:
+  1. Find symbols: cm query func_a --fuzzy
+  2. Trace path: cm trace func_a func_b
+  3. Review the call chain to understand code flow
+
+WHEN TO USE:
+  ✓ \"How does data flow from A to B?\"
+  ✓ \"What's the call path from main to this function?\"
+  ✓ \"Understanding control flow in unfamiliar code\"")]
+    Trace {
+        /// Source symbol name (start of the path)
+        from: String,
+
+        /// Target symbol name (end of the path)
+        to: String,
+
+        /// Directory path to search in
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Enable fuzzy matching for symbol names
+        #[arg(long, default_value = "false")]
+        fuzzy: bool,
+
+        /// Comma-separated file extensions to include
+        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,md")]
+        extensions: String,
+
+        /// Disable cache (always reindex)
+        #[arg(long, default_value_t = false)]
+        no_cache: bool,
+
+        /// Force rebuild cache
+        #[arg(long, default_value_t = false)]
+        rebuild_cache: bool,
+    },
+
+    /// [ANALYSIS] Show what production symbols a test file calls
+    #[command(
+        about = "List production (non-test) symbols called by a test file",
+        long_about = "USE CASE: Understand test scope and coverage
+  • Parse a test file to find all function/method calls
+  • Filter to only show production code (not test helpers)
+  • Useful for understanding what a test actually tests
+
+FILTERS OUT:
+  • Calls to other test functions/files
+  • Calls to symbols in the same test file
+  • External/built-in functions not in codebase
+
+TIP: Great for reviewing test scope before refactoring"
+    )]
+    #[command(after_help = "EXAMPLES:
+  cm test-deps ./tests/test_auth.py              # Show production deps
+  cm test-deps ./src/parser_test.rs --format ai  # Token-efficient output
+  cm test-deps ./auth.test.ts --format human     # Pretty table
+
+TYPICAL WORKFLOW:
+  1. Find test file: cm map . --level 2 (look for test files)
+  2. Check test scope: cm test-deps ./path/to/test_file.py
+  3. Ensure test covers intended functionality")]
+    TestDeps {
+        /// Path to the test file to analyze
+        test_file: PathBuf,
+
+        /// Directory path to search for production symbols
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Comma-separated file extensions to include
+        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,md")]
+        extensions: String,
+
+        /// Disable cache (always reindex)
+        #[arg(long, default_value_t = false)]
+        no_cache: bool,
+
+        /// Force rebuild cache
+        #[arg(long, default_value_t = false)]
+        rebuild_cache: bool,
+    },
+
+    /// [GIT] Find when a symbol was last modified
+    #[command(
+        about = "Show who last modified a symbol and when",
+        long_about = "USE CASE: Git blame for symbols, not lines
+  • Find the commit that last modified a specific function/class/method
+  • See author, date, and commit message
+  • Compare old vs new signature if it changed
+
+REQUIREMENTS:
+  • Must be run inside a git repository
+  • File must have git history
+
+TIP: Use with 'cm history' to see full evolution of a symbol"
+    )]
+    #[command(after_help = "EXAMPLES:
+  cm blame parse_file ./src/parser.rs          # Blame for parse_file function
+  cm blame MyClass ./src/models.py --format ai # Token-efficient output
+  cm blame validate ./utils.go --format human  # Pretty table
+
+TYPICAL WORKFLOW:
+  1. Find symbol: cm query my_func --fuzzy
+  2. See last change: cm blame my_func ./path/to/file.rs
+  3. See full history: cm history my_func ./path/to/file.rs")]
+    Blame {
+        /// Symbol name to blame
+        symbol: String,
+
+        /// Path to the file containing the symbol
+        file: PathBuf,
+    },
+
+    /// [GIT] Show all commits that touched a symbol
+    #[command(
+        about = "Show the evolution of a symbol across git history",
+        long_about = "USE CASE: Track how a symbol evolved over time
+  • See all commits where a symbol was added, modified, or deleted
+  • Track signature changes across versions
+  • Understand when and why a function changed
+
+REQUIREMENTS:
+  • Must be run inside a git repository
+  • File must have git history
+
+CHANGE TRACKING:
+  • Detects signature changes (parameter/return type modifications)
+  • Detects body size changes (function grew or shrunk)
+  • Shows when symbol was created or deleted
+
+TIP: Combine with 'cm blame' for quick last-change info"
+    )]
+    #[command(after_help = "EXAMPLES:
+  cm history parse_file ./src/parser.rs           # Full history
+  cm history authenticate ./auth.py --format ai   # Token-efficient
+  cm history MyClass ./models.go --format human   # Pretty table
+
+TYPICAL WORKFLOW:
+  1. Find symbol: cm query my_func --fuzzy
+  2. See history: cm history my_func ./path/to/file.rs
+  3. Compare specific versions using git diff")]
+    History {
+        /// Symbol name to track
+        symbol: String,
+
+        /// Path to the file containing the symbol
+        file: PathBuf,
+    },
+
+    /// [ANALYSIS] Find all implementations of an interface/trait/protocol
+    #[command(
+        about = "Find all classes/structs that implement a given interface or trait",
+        long_about = "USE CASE: Discover all implementors of an interface
+  • Rust: Find `impl Trait for Type` patterns
+  • Python: Find class inheritance `class Foo(Interface):`
+  • TypeScript/JavaScript: Find `class Foo implements Interface`
+  • Java: Find `implements` and `extends` clauses
+  • Go: Find structs that embed interfaces
+
+LANGUAGE PATTERNS:
+  Rust     → impl Trait for Type, impl Type
+  Python   → class Name(Interface):
+  TS/JS    → class Name implements Interface, extends Parent
+  Java     → class Name implements Interface, extends Parent
+  Go       → type Name struct { Interface }
+
+TIP: Use --fuzzy to find partial matches"
+    )]
+    #[command(after_help = "EXAMPLES:
+  cm implements Iterator                    # Find all Iterator implementations
+  cm implements Repository --fuzzy          # Fuzzy match implementations
+  cm implements Handler ./src --format ai   # Search in src/, AI format
+  cm implements Serializable --format human # Pretty table output
+
+TYPICAL WORKFLOW:
+  1. cm implements MyInterface --fuzzy
+  2. Review which types implement the interface
+  3. cm inspect <file> to see the implementation details
+
+WHEN TO USE:
+  ✓ \"What types implement this trait?\"
+  ✓ \"Find all subclasses of this base class\"
+  ✓ \"Which structs satisfy this interface?\"")]
+    Implements {
+        /// Interface, trait, or protocol name to search for
+        interface: String,
+
+        /// Directory path to search in
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Enable fuzzy matching for interface name
+        #[arg(long, default_value = "false")]
+        fuzzy: bool,
+
+        /// Comma-separated file extensions to include
+        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,md")]
+        extensions: String,
+
+        /// Disable cache (always reindex)
+        #[arg(long, default_value_t = false)]
+        no_cache: bool,
+
+        /// Force rebuild cache
+        #[arg(long, default_value_t = false)]
+        rebuild_cache: bool,
+    },
+
+    /// [ANALYSIS] Show type information for a symbol's parameters and return type
+    #[command(
+        about = "Analyze types used in a symbol's signature and locate their definitions",
+        long_about = "USE CASE: Understand types flowing through a function/method
+  • Extract parameter types and return type from signature
+  • Locate where each custom type is defined in the codebase
+  • Support for Rust, Python, TypeScript, Go, Java, and C
+
+LANGUAGE SUPPORT:
+  Rust     → fn name(x: Type) -> RetType
+  Python   → def name(x: Type) -> RetType (type hints)
+  TS/JS    → function name(x: Type): RetType
+  Go       → func name(x Type) RetType
+  Java     → RetType name(Type x)
+  C        → RetType name(Type x)
+
+OUTPUT:
+  • Symbol signature
+  • Table of parameter names, types, and where each type is defined
+  • Return type with its definition location
+
+TIP: Useful for understanding API boundaries and type dependencies"
+    )]
+    #[command(after_help = "EXAMPLES:
+  cm types process_payment                    # Analyze types in process_payment
+  cm types authenticate --fuzzy               # Fuzzy search for symbol
+  cm types parse ./src --format human         # Pretty table output
+  cm types validate_input --format ai         # Token-efficient for LLMs
+
+TYPICAL WORKFLOW:
+  1. Find function: cm query my_func --fuzzy
+  2. Analyze types: cm types my_func
+  3. Inspect type definition: cm query TypeName to see implementation
+
+WHEN TO USE:
+  ✓ \"What types does this function accept?\"
+  ✓ \"Where is this parameter type defined?\"
+  ✓ \"What's the return type and its definition?\"")]
+    Types {
+        /// Symbol name to analyze
+        symbol: String,
+
+        /// Directory path to search in
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Enable fuzzy matching for symbol name
+        #[arg(long, default_value = "false")]
+        fuzzy: bool,
+
+        /// Comma-separated file extensions to include
+        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,md")]
+        extensions: String,
+
+        /// Disable cache (always reindex)
+        #[arg(long, default_value_t = false)]
+        no_cache: bool,
+
+        /// Force rebuild cache
+        #[arg(long, default_value_t = false)]
+        rebuild_cache: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -773,8 +1176,32 @@ fn main() -> Result<()> {
         Commands::Tests { symbol, path, fuzzy, extensions, no_cache, rebuild_cache } => {
             cmd_tests(symbol, path, fuzzy, extensions, no_cache, rebuild_cache, format)?;
         }
+        Commands::Untested { path, extensions, no_cache, rebuild_cache } => {
+            cmd_untested(path, extensions, no_cache, rebuild_cache, format)?;
+        }
         Commands::Since { commit, path, extensions, breaking } => {
             cmd_since(commit, path, extensions, breaking, format)?;
+        }
+        Commands::Entrypoints { path, extensions, no_cache, rebuild_cache } => {
+            cmd_entrypoints(path, extensions, no_cache, rebuild_cache, format)?;
+        }
+        Commands::Trace { from, to, path, fuzzy, extensions, no_cache, rebuild_cache } => {
+            cmd_trace(from, to, path, fuzzy, extensions, no_cache, rebuild_cache, format)?;
+        }
+        Commands::TestDeps { test_file, path, extensions, no_cache, rebuild_cache } => {
+            cmd_test_deps(test_file, path, extensions, no_cache, rebuild_cache, format)?;
+        }
+        Commands::Blame { symbol, file } => {
+            cmd_blame(symbol, file, format)?;
+        }
+        Commands::History { symbol, file } => {
+            cmd_history(symbol, file, format)?;
+        }
+        Commands::Implements { interface, path, fuzzy, extensions, no_cache, rebuild_cache } => {
+            cmd_implements(interface, path, fuzzy, extensions, no_cache, rebuild_cache, format)?;
+        }
+        Commands::Types { symbol, path, fuzzy, extensions, no_cache, rebuild_cache } => {
+            cmd_types(symbol, path, fuzzy, extensions, no_cache, rebuild_cache, format)?;
         }
     }
 
@@ -1597,6 +2024,307 @@ fn cmd_tests(
 
     let formatter = OutputFormatter::new(format);
     let output = formatter.format_tests(&tests, &symbol);
+    println!("{}", output);
+
+    Ok(())
+}
+
+fn cmd_untested(
+    path: PathBuf,
+    extensions: String,
+    no_cache: bool,
+    rebuild_cache: bool,
+    format: OutputFormat,
+) -> Result<()> {
+    let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
+    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
+
+    eprintln!("{} Finding untested symbols...", "→".cyan());
+
+    let start = Instant::now();
+    let untested = callgraph::find_untested(&index)?;
+    let elapsed_ms = start.elapsed().as_millis();
+
+    let total_symbols = index.total_symbols();
+    let tested_count = total_symbols.saturating_sub(untested.len());
+    let coverage_pct = if total_symbols > 0 {
+        (tested_count as f64 / total_symbols as f64) * 100.0
+    } else {
+        100.0
+    };
+
+    eprintln!("{} Analyzed {} symbols in {}ms (coverage: {:.1}%)\n",
+        "✓".green(),
+        total_symbols.to_string().bold(),
+        elapsed_ms.to_string().bold(),
+        coverage_pct
+    );
+
+    let formatter = OutputFormatter::new(format);
+    let output = formatter.format_untested(&untested, total_symbols);
+    println!("{}", output);
+
+    Ok(())
+}
+
+fn cmd_entrypoints(
+    path: PathBuf,
+    extensions: String,
+    no_cache: bool,
+    rebuild_cache: bool,
+    format: OutputFormat,
+) -> Result<()> {
+    let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
+    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
+
+    eprintln!("{} Finding entrypoints (uncalled exported symbols)...", "→".cyan());
+
+    let start = Instant::now();
+    let entrypoints = callgraph::find_entrypoints(&index)?;
+    let elapsed_ms = start.elapsed().as_millis();
+
+    if entrypoints.is_empty() {
+        println!("{} No entrypoints found (all exported symbols have internal callers)", "✓".green());
+        return Ok(());
+    }
+
+    let main_count = entrypoints.iter()
+        .filter(|e| e.category == callgraph::EntrypointCategory::MainEntry)
+        .count();
+    let api_count = entrypoints.iter()
+        .filter(|e| e.category == callgraph::EntrypointCategory::ApiFunction)
+        .count();
+    let unused_count = entrypoints.iter()
+        .filter(|e| e.category == callgraph::EntrypointCategory::PossiblyUnused)
+        .count();
+
+    eprintln!("{} Found {} entrypoint(s) in {}ms ({} main, {} API, {} possibly unused)\n",
+        "✓".green(),
+        entrypoints.len().to_string().bold(),
+        elapsed_ms.to_string().bold(),
+        main_count,
+        api_count,
+        unused_count
+    );
+
+    let formatter = OutputFormatter::new(format);
+    let output = formatter.format_entrypoints(&entrypoints);
+    println!("{}", output);
+
+    Ok(())
+}
+
+fn cmd_trace(
+    from: String,
+    to: String,
+    path: PathBuf,
+    fuzzy: bool,
+    extensions: String,
+    no_cache: bool,
+    rebuild_cache: bool,
+    format: OutputFormat,
+) -> Result<()> {
+    let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
+    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
+
+    let match_type = if fuzzy { " (fuzzy)" } else { "" };
+    eprintln!("{} Tracing call path from '{}' to '{}'{}...", 
+        "→".cyan(), 
+        from.bold(), 
+        to.bold(),
+        match_type
+    );
+
+    let start = Instant::now();
+    let trace = callgraph::trace_path(&index, &from, &to, fuzzy)?;
+    let elapsed_ms = start.elapsed().as_millis();
+
+    if !trace.found {
+        println!("{} No call path found from '{}' to '{}'",
+            "✗".yellow(),
+            from.bold(),
+            to.bold()
+        );
+        return Ok(());
+    }
+
+    eprintln!("{} Found path with {} step(s) in {}ms\n",
+        "✓".green(),
+        trace.steps.len().to_string().bold(),
+        elapsed_ms.to_string().bold()
+    );
+
+    let formatter = OutputFormatter::new(format);
+    let output = formatter.format_trace(&trace, &from, &to);
+    println!("{}", output);
+
+    Ok(())
+}
+
+fn cmd_test_deps(
+    test_file: PathBuf,
+    path: PathBuf,
+    extensions: String,
+    no_cache: bool,
+    rebuild_cache: bool,
+    format: OutputFormat,
+) -> Result<()> {
+    let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
+    
+    let abs_test_file = if test_file.is_absolute() {
+        test_file.clone()
+    } else {
+        std::env::current_dir()?.join(&test_file)
+    };
+    
+    if !abs_test_file.exists() {
+        anyhow::bail!("Test file not found: {}", test_file.display());
+    }
+    
+    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
+
+    eprintln!("{} Analyzing test file '{}'...", "→".cyan(), test_file.display().to_string().bold());
+
+    let start = Instant::now();
+    let deps = callgraph::find_test_deps(&index, &abs_test_file)?;
+    let elapsed_ms = start.elapsed().as_millis();
+
+    if deps.is_empty() {
+        println!("{} No production symbols found in '{}'",
+            "✗".yellow(),
+            test_file.display().to_string().bold()
+        );
+        return Ok(());
+    }
+
+    eprintln!("{} Found {} production symbol(s) in {}ms\n",
+        "✓".green(),
+        deps.len().to_string().bold(),
+        elapsed_ms.to_string().bold()
+    );
+
+    let formatter = OutputFormatter::new(format);
+    let output = formatter.format_test_deps(&deps, &test_file.display().to_string());
+    println!("{}", output);
+
+    Ok(())
+}
+
+fn cmd_blame(symbol: String, file: PathBuf, format: OutputFormat) -> Result<()> {
+    eprintln!("{} Finding last modification of '{}'...", "→".cyan(), symbol.bold());
+
+    let start = Instant::now();
+    let cwd = std::env::current_dir()?;
+    let result = blame::blame_symbol(&cwd, &file, &symbol)?;
+    let elapsed_ms = start.elapsed().as_millis();
+
+    eprintln!("{} Found blame info in {}ms\n",
+        "✓".green(),
+        elapsed_ms.to_string().bold()
+    );
+
+    let formatter = OutputFormatter::new(format);
+    let output = formatter.format_blame(&result);
+    println!("{}", output);
+
+    Ok(())
+}
+
+fn cmd_history(symbol: String, file: PathBuf, format: OutputFormat) -> Result<()> {
+    eprintln!("{} Tracing history of '{}'...", "→".cyan(), symbol.bold());
+
+    let start = Instant::now();
+    let cwd = std::env::current_dir()?;
+    let history = blame::history_symbol(&cwd, &file, &symbol)?;
+    let elapsed_ms = start.elapsed().as_millis();
+
+    if history.is_empty() {
+        println!("{} No history found for '{}'", "✗".yellow(), symbol.bold());
+        return Ok(());
+    }
+
+    eprintln!("{} Found {} version(s) in {}ms\n",
+        "✓".green(),
+        history.len().to_string().bold(),
+        elapsed_ms.to_string().bold()
+    );
+
+    let formatter = OutputFormatter::new(format);
+    let output = formatter.format_history(&history, &symbol);
+    println!("{}", output);
+
+    Ok(())
+}
+
+fn cmd_implements(
+    interface: String,
+    path: PathBuf,
+    fuzzy: bool,
+    extensions: String,
+    no_cache: bool,
+    rebuild_cache: bool,
+    format: OutputFormat,
+) -> Result<()> {
+    let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
+    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
+
+    let match_type = if fuzzy { " (fuzzy)" } else { "" };
+    eprintln!("{} Finding implementations of '{}'{}...", "→".cyan(), interface.bold(), match_type);
+
+    let start = Instant::now();
+    let implementations = implements::find_implementations(&index, &interface, fuzzy)?;
+    let elapsed_ms = start.elapsed().as_millis();
+
+    if implementations.is_empty() {
+        println!("{} No implementations found for '{}'", "✗".yellow(), interface.bold());
+        return Ok(());
+    }
+
+    eprintln!("{} Found {} implementation(s) in {}ms\n",
+        "✓".green(),
+        implementations.len().to_string().bold(),
+        elapsed_ms.to_string().bold()
+    );
+
+    let formatter = OutputFormatter::new(format);
+    let output = formatter.format_implements(&implementations, &interface);
+    println!("{}", output);
+
+    Ok(())
+}
+
+fn cmd_types(
+    symbol: String,
+    path: PathBuf,
+    fuzzy: bool,
+    extensions: String,
+    no_cache: bool,
+    rebuild_cache: bool,
+    format: OutputFormat,
+) -> Result<()> {
+    let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
+    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
+
+    let match_type = if fuzzy { " (fuzzy)" } else { "" };
+    eprintln!("{} Analyzing types for '{}'{}...", "→".cyan(), symbol.bold(), match_type);
+
+    let start = Instant::now();
+    let types_info = types::analyze_types(&index, &symbol, fuzzy)?;
+    let elapsed_ms = start.elapsed().as_millis();
+
+    if types_info.is_empty() {
+        println!("{} No symbols found for '{}'", "✗".yellow(), symbol.bold());
+        return Ok(());
+    }
+
+    eprintln!("{} Analyzed {} symbol(s) in {}ms\n",
+        "✓".green(),
+        types_info.len().to_string().bold(),
+        elapsed_ms.to_string().bold()
+    );
+
+    let formatter = OutputFormatter::new(format);
+    let output = formatter.format_types(&types_info);
     println!("{}", output);
 
     Ok(())

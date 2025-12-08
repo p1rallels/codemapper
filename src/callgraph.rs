@@ -1,11 +1,34 @@
 use crate::index::CodeIndex;
 use crate::models::{Language, Symbol, SymbolType};
 use anyhow::{Context, Result};
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::fs;
 use std::path::Path;
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{Parser, Query, QueryCursor};
+
+#[derive(Debug, Clone)]
+pub struct TraceStep {
+    pub symbol_name: String,
+    pub symbol_type: SymbolType,
+    pub file_path: String,
+    pub line: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct TracePath {
+    pub steps: Vec<TraceStep>,
+    pub found: bool,
+}
+
+impl TracePath {
+    pub fn not_found() -> Self {
+        Self {
+            steps: Vec::new(),
+            found: false,
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct TestInfo {
@@ -15,6 +38,52 @@ pub struct TestInfo {
     pub line: usize,
     pub call_line: usize,
     pub context: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct TestDep {
+    pub name: String,
+    pub symbol_type: SymbolType,
+    pub file_path: String,
+    pub line: usize,
+    pub called_from_line: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct UntestedInfo {
+    pub name: String,
+    pub symbol_type: SymbolType,
+    pub file_path: String,
+    pub line: usize,
+    pub signature: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EntrypointCategory {
+    MainEntry,
+    ApiFunction,
+    PossiblyUnused,
+}
+
+impl EntrypointCategory {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            EntrypointCategory::MainEntry => "Main Entrypoint",
+            EntrypointCategory::ApiFunction => "API Function",
+            EntrypointCategory::PossiblyUnused => "Possibly Unused",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct EntrypointInfo {
+    pub name: String,
+    pub symbol_type: SymbolType,
+    pub file_path: String,
+    pub line: usize,
+    pub signature: Option<String>,
+    pub is_exported: bool,
+    pub category: EntrypointCategory,
 }
 
 #[derive(Debug, Clone)]
@@ -531,6 +600,72 @@ pub fn is_test_file(path: &Path, language: Language) -> bool {
     }
 }
 
+pub fn find_test_deps(index: &CodeIndex, test_file: &Path) -> Result<Vec<TestDep>> {
+    let ext = test_file.extension().and_then(|e| e.to_str()).unwrap_or("");
+    let language = Language::from_extension(ext);
+    
+    if !is_test_file(test_file, language) {
+        anyhow::bail!("File does not appear to be a test file: {}", test_file.display());
+    }
+    
+    let content = fs::read_to_string(test_file)
+        .context("Failed to read test file")?;
+    
+    let calls = extract_calls_from_source(&content, language)?;
+    
+    let mut deps = Vec::new();
+    let mut seen = HashSet::new();
+    
+    for (call_name, call_line, _context) in calls {
+        if seen.contains(&call_name) {
+            continue;
+        }
+        
+        let target_symbols = index.query_symbol(&call_name);
+        
+        if let Some(target) = target_symbols.first() {
+            if target.file_path == test_file {
+                continue;
+            }
+            
+            let target_content = match fs::read_to_string(&target.file_path) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            
+            let target_lang = Language::from_extension(
+                target.file_path.extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("")
+            );
+            
+            if is_test_file(&target.file_path, target_lang) {
+                continue;
+            }
+            
+            if is_test_symbol(target, &target_content, target_lang) {
+                continue;
+            }
+            
+            seen.insert(call_name.clone());
+            
+            deps.push(TestDep {
+                name: target.name.clone(),
+                symbol_type: target.symbol_type,
+                file_path: target.file_path.display().to_string(),
+                line: target.line_start,
+                called_from_line: call_line,
+            });
+        }
+    }
+    
+    deps.sort_by(|a, b| {
+        a.file_path.cmp(&b.file_path).then(a.line.cmp(&b.line))
+    });
+    
+    Ok(deps)
+}
+
 pub fn is_test_symbol(symbol: &Symbol, content: &str, language: Language) -> bool {
     let name = &symbol.name;
     
@@ -654,6 +789,418 @@ pub fn find_tests(
     }
 
     Ok(tests)
+}
+
+pub fn find_untested(index: &CodeIndex) -> Result<Vec<UntestedInfo>> {
+    let mut tested_symbols: HashSet<String> = HashSet::new();
+    
+    for file_info in index.files() {
+        let is_test_file_flag = is_test_file(&file_info.path, file_info.language);
+        
+        let content = match fs::read_to_string(&file_info.path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        
+        if is_test_file_flag {
+            let calls = extract_calls_from_file(&content, &file_info.path, file_info.language)?;
+            for (call_name, _, _) in calls {
+                tested_symbols.insert(call_name);
+            }
+        } else {
+            let file_symbols = index.get_file_symbols(&file_info.path);
+            for symbol in file_symbols {
+                if is_test_symbol(symbol, &content, file_info.language) {
+                    let start_idx = symbol.line_start.saturating_sub(1);
+                    let end_idx = symbol.line_end.min(content.lines().count());
+                    let lines: Vec<&str> = content.lines().collect();
+                    
+                    if start_idx < lines.len() {
+                        let symbol_body: String = lines[start_idx..end_idx.min(lines.len())].join("\n");
+                        let calls = extract_calls_from_source(&symbol_body, file_info.language)?;
+                        for (call_name, _, _) in calls {
+                            tested_symbols.insert(call_name);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    let mut untested = Vec::new();
+    
+    for file_info in index.files() {
+        if is_test_file(&file_info.path, file_info.language) {
+            continue;
+        }
+        
+        let content = match fs::read_to_string(&file_info.path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        
+        let file_symbols = index.get_file_symbols(&file_info.path);
+        
+        for symbol in file_symbols {
+            if is_test_symbol(symbol, &content, file_info.language) {
+                continue;
+            }
+            
+            if symbol.name.starts_with('_') && file_info.language == Language::Python {
+                continue;
+            }
+            
+            if symbol.name.is_empty() {
+                continue;
+            }
+            
+            if !tested_symbols.contains(&symbol.name) {
+                untested.push(UntestedInfo {
+                    name: symbol.name.clone(),
+                    symbol_type: symbol.symbol_type,
+                    file_path: file_info.path.display().to_string(),
+                    line: symbol.line_start,
+                    signature: symbol.signature.clone(),
+                });
+            }
+        }
+    }
+    
+    untested.sort_by(|a, b| {
+        a.file_path.cmp(&b.file_path).then(a.line.cmp(&b.line))
+    });
+    
+    Ok(untested)
+}
+
+pub fn find_entrypoints(index: &CodeIndex) -> Result<Vec<EntrypointInfo>> {
+    let mut all_called_symbols: HashSet<String> = HashSet::new();
+    
+    for file_info in index.files() {
+        let content = match fs::read_to_string(&file_info.path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        
+        let calls = match extract_calls_from_file(&content, &file_info.path, file_info.language) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        
+        for (call_name, _, _) in calls {
+            all_called_symbols.insert(call_name);
+        }
+    }
+    
+    let mut entrypoints = Vec::new();
+    
+    for file_info in index.files() {
+        if is_test_file(&file_info.path, file_info.language) {
+            continue;
+        }
+        
+        let content = match fs::read_to_string(&file_info.path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        
+        let file_symbols = index.get_file_symbols(&file_info.path);
+        
+        for symbol in file_symbols {
+            if symbol.name.is_empty() {
+                continue;
+            }
+            
+            if matches!(symbol.symbol_type, SymbolType::Heading | SymbolType::CodeBlock) {
+                continue;
+            }
+            
+            if is_test_symbol(symbol, &content, file_info.language) {
+                continue;
+            }
+            
+            if all_called_symbols.contains(&symbol.name) {
+                continue;
+            }
+            
+            let is_exported = is_symbol_exported(symbol, &content, file_info.language);
+            
+            if !is_exported {
+                continue;
+            }
+            
+            let category = categorize_entrypoint(&symbol.name, symbol.symbol_type);
+            
+            entrypoints.push(EntrypointInfo {
+                name: symbol.name.clone(),
+                symbol_type: symbol.symbol_type,
+                file_path: file_info.path.display().to_string(),
+                line: symbol.line_start,
+                signature: symbol.signature.clone(),
+                is_exported,
+                category,
+            });
+        }
+    }
+    
+    entrypoints.sort_by(|a, b| {
+        match (&a.category, &b.category) {
+            (EntrypointCategory::MainEntry, EntrypointCategory::MainEntry) => {
+                a.file_path.cmp(&b.file_path).then(a.line.cmp(&b.line))
+            }
+            (EntrypointCategory::MainEntry, _) => std::cmp::Ordering::Less,
+            (_, EntrypointCategory::MainEntry) => std::cmp::Ordering::Greater,
+            (EntrypointCategory::ApiFunction, EntrypointCategory::ApiFunction) => {
+                a.file_path.cmp(&b.file_path).then(a.line.cmp(&b.line))
+            }
+            (EntrypointCategory::ApiFunction, _) => std::cmp::Ordering::Less,
+            (_, EntrypointCategory::ApiFunction) => std::cmp::Ordering::Greater,
+            _ => a.file_path.cmp(&b.file_path).then(a.line.cmp(&b.line)),
+        }
+    });
+    
+    Ok(entrypoints)
+}
+
+fn is_symbol_exported(symbol: &Symbol, content: &str, language: Language) -> bool {
+    let name = &symbol.name;
+    let lines: Vec<&str> = content.lines().collect();
+    let line_idx = symbol.line_start.saturating_sub(1);
+    let definition_line = lines.get(line_idx).unwrap_or(&"");
+    
+    match language {
+        Language::Rust => {
+            if definition_line.trim().starts_with("pub fn")
+                || definition_line.trim().starts_with("pub struct")
+                || definition_line.trim().starts_with("pub enum")
+                || definition_line.trim().starts_with("pub trait")
+                || definition_line.trim().starts_with("pub async fn")
+                || definition_line.trim().starts_with("pub const")
+                || definition_line.trim().starts_with("pub static")
+                || definition_line.trim().starts_with("pub type")
+            {
+                let is_restricted = definition_line.contains("pub(crate)")
+                    || definition_line.contains("pub(super)")
+                    || definition_line.contains("pub(self)");
+                return !is_restricted;
+            }
+            false
+        }
+        Language::Python => {
+            !name.starts_with('_')
+        }
+        Language::JavaScript | Language::TypeScript => {
+            definition_line.contains("export ")
+                || definition_line.contains("module.exports")
+                || definition_line.contains("exports.")
+        }
+        Language::Go => {
+            name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
+        }
+        Language::Java => {
+            definition_line.contains("public ")
+        }
+        Language::C => {
+            !name.starts_with('_')
+        }
+        _ => true,
+    }
+}
+
+fn categorize_entrypoint(name: &str, symbol_type: SymbolType) -> EntrypointCategory {
+    let name_lower = name.to_lowercase();
+    
+    let main_patterns = ["main", "run", "start", "init", "execute", "cli", "app"];
+    for pattern in main_patterns {
+        if name_lower == pattern || name_lower.starts_with(&format!("{}_", pattern)) {
+            return EntrypointCategory::MainEntry;
+        }
+    }
+    
+    let api_patterns = [
+        "get", "post", "put", "delete", "patch", "handle", "serve", "route",
+        "api", "endpoint", "create", "read", "update", "list", "fetch",
+        "process", "export", "import", "parse", "validate", "transform",
+    ];
+    
+    for pattern in api_patterns {
+        if name_lower.starts_with(pattern) || name_lower.ends_with(pattern) {
+            return EntrypointCategory::ApiFunction;
+        }
+    }
+    
+    if matches!(symbol_type, SymbolType::Class | SymbolType::Enum) {
+        return EntrypointCategory::ApiFunction;
+    }
+    
+    if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
+        && matches!(symbol_type, SymbolType::Function)
+    {
+        return EntrypointCategory::ApiFunction;
+    }
+    
+    EntrypointCategory::PossiblyUnused
+}
+
+const MAX_TRACE_DEPTH: usize = 10;
+
+pub fn trace_path(
+    index: &CodeIndex,
+    from: &str,
+    to: &str,
+    fuzzy: bool,
+) -> Result<TracePath> {
+    let source_symbols = if fuzzy {
+        index.fuzzy_search(from)
+    } else {
+        index.query_symbol(from)
+    };
+
+    if source_symbols.is_empty() {
+        return Ok(TracePath::not_found());
+    }
+
+    let target_symbols = if fuzzy {
+        index.fuzzy_search(to)
+    } else {
+        index.query_symbol(to)
+    };
+
+    if target_symbols.is_empty() {
+        return Ok(TracePath::not_found());
+    }
+
+    let target_names: HashSet<String> = target_symbols
+        .iter()
+        .map(|s| s.name.to_lowercase())
+        .collect();
+
+    let source = source_symbols.first().context("No source symbol")?;
+
+    let start_step = TraceStep {
+        symbol_name: source.name.clone(),
+        symbol_type: source.symbol_type,
+        file_path: source.file_path.display().to_string(),
+        line: source.line_start,
+    };
+
+    let mut queue: VecDeque<(TraceStep, Vec<TraceStep>)> = VecDeque::new();
+    queue.push_back((start_step.clone(), vec![start_step]));
+
+    let mut visited: HashSet<String> = HashSet::new();
+    visited.insert(source.name.to_lowercase());
+
+    while let Some((current, path)) = queue.pop_front() {
+        if path.len() > MAX_TRACE_DEPTH {
+            continue;
+        }
+
+        let callees = find_callees_by_name(index, &current.symbol_name)?;
+
+        for callee in callees {
+            let callee_lower = callee.caller_name.to_lowercase();
+
+            if target_names.contains(&callee_lower) {
+                let mut final_path = path.clone();
+                final_path.push(TraceStep {
+                    symbol_name: callee.caller_name.clone(),
+                    symbol_type: callee.caller_type,
+                    file_path: callee.file_path.clone(),
+                    line: callee.line,
+                });
+                return Ok(TracePath {
+                    steps: final_path,
+                    found: true,
+                });
+            }
+
+            if !visited.contains(&callee_lower) {
+                visited.insert(callee_lower);
+
+                let next_step = TraceStep {
+                    symbol_name: callee.caller_name.clone(),
+                    symbol_type: callee.caller_type,
+                    file_path: callee.file_path.clone(),
+                    line: callee.line,
+                };
+
+                let mut new_path = path.clone();
+                new_path.push(next_step.clone());
+                queue.push_back((next_step, new_path));
+            }
+        }
+    }
+
+    Ok(TracePath::not_found())
+}
+
+fn find_callees_by_name(index: &CodeIndex, symbol_name: &str) -> Result<Vec<CallInfo>> {
+    let symbols = index.query_symbol(symbol_name);
+
+    if symbols.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let symbol = match symbols.first() {
+        Some(s) => s,
+        None => return Ok(Vec::new()),
+    };
+
+    let content = match fs::read_to_string(&symbol.file_path) {
+        Ok(c) => c,
+        Err(_) => return Ok(Vec::new()),
+    };
+
+    let lines: Vec<&str> = content.lines().collect();
+    let start_idx = symbol.line_start.saturating_sub(1);
+    let end_idx = symbol.line_end.min(lines.len());
+
+    if start_idx >= lines.len() {
+        return Ok(Vec::new());
+    }
+
+    let symbol_body: String = lines[start_idx..end_idx].join("\n");
+
+    let language = Language::from_extension(
+        symbol.file_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+    );
+
+    let calls = extract_calls_from_source(&symbol_body, language)?;
+
+    let mut callees = Vec::new();
+    let mut seen = HashSet::new();
+
+    for (call_name, relative_line, context) in calls {
+        if seen.contains(&call_name) {
+            continue;
+        }
+        seen.insert(call_name.clone());
+
+        let target_symbols = index.query_symbol(&call_name);
+
+        if let Some(target) = target_symbols.first() {
+            callees.push(CallInfo {
+                caller_name: call_name,
+                caller_type: target.symbol_type,
+                file_path: target.file_path.display().to_string(),
+                line: target.line_start,
+                context: target.signature.clone().unwrap_or_default(),
+            });
+        } else {
+            callees.push(CallInfo {
+                caller_name: call_name,
+                caller_type: SymbolType::Function,
+                file_path: "<external>".to_string(),
+                line: symbol.line_start + relative_line,
+                context: context.trim().to_string(),
+            });
+        }
+    }
+
+    Ok(callees)
 }
 
 #[cfg(test)]

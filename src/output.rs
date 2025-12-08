@@ -1,7 +1,10 @@
-use crate::callgraph::{CallInfo, TestInfo};
+use crate::blame::{BlameResult, HistoryEntry};
+use crate::callgraph::{CallInfo, EntrypointCategory, EntrypointInfo, TestDep, TestInfo, TracePath, UntestedInfo};
 use crate::diff::{ChangeType, DiffResult, SymbolDiff};
+use crate::implements::Implementation;
 use crate::index::CodeIndex;
 use crate::models::{Symbol, SymbolType};
+use crate::types::SymbolTypes;
 use colored::*;
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, Table};
 use std::collections::HashMap;
@@ -1210,6 +1213,882 @@ impl OutputFormatter {
                 test.call_line
             ));
             output.push('\n');
+        }
+
+        output
+    }
+
+    pub fn format_test_deps(&self, deps: &[TestDep], test_file: &str) -> String {
+        match self.format {
+            OutputFormat::Default => self.format_test_deps_default(deps, test_file),
+            OutputFormat::Human => self.format_test_deps_human(deps, test_file),
+            OutputFormat::AI => self.format_test_deps_ai(deps, test_file),
+        }
+    }
+
+    fn format_test_deps_default(&self, deps: &[TestDep], test_file: &str) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("# Production dependencies of `{}`\n\n", test_file));
+        output.push_str(&format!("Found {} production symbol(s) called\n\n", deps.len()));
+
+        let mut current_file = String::new();
+        for dep in deps {
+            if dep.file_path != current_file {
+                current_file = dep.file_path.clone();
+                output.push_str(&format!("\n## {}\n\n", current_file));
+            }
+            
+            output.push_str(&format!("- **{}** ({}) @ line {} (called from test line {})\n",
+                dep.name,
+                dep.symbol_type.as_str(),
+                dep.line,
+                dep.called_from_line
+            ));
+        }
+
+        output
+    }
+
+    fn format_test_deps_human(&self, deps: &[TestDep], test_file: &str) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("{} {}\n\n", "Production dependencies of".green(), test_file.bold()));
+        output.push_str(&format!("Found {} production symbol(s)\n\n", deps.len().to_string().bold()));
+
+        let mut table = Table::new();
+        table
+            .load_preset(UTF8_FULL)
+            .apply_modifier(UTF8_ROUND_CORNERS)
+            .set_header(vec!["Symbol", "Type", "Location", "Called From"]);
+
+        for dep in deps {
+            table.add_row(vec![
+                dep.name.clone(),
+                dep.symbol_type.as_str().to_string(),
+                format!("{}:{}", dep.file_path, dep.line),
+                format!("line {}", dep.called_from_line),
+            ]);
+        }
+
+        output.push_str(&format!("{}\n", table));
+        output
+    }
+
+    fn format_test_deps_ai(&self, deps: &[TestDep], test_file: &str) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("[TEST_DEPS:{}|{}]\n", test_file, deps.len()));
+
+        for dep in deps {
+            output.push_str(&format!("{}|{}|{}:{}|from:{}",
+                dep.name,
+                match dep.symbol_type {
+                    SymbolType::Function => "f",
+                    SymbolType::Class => "c",
+                    SymbolType::Method => "m",
+                    SymbolType::Enum => "e",
+                    SymbolType::StaticField => "s",
+                    SymbolType::Heading => "h",
+                    SymbolType::CodeBlock => "cb",
+                },
+                dep.file_path,
+                dep.line,
+                dep.called_from_line
+            ));
+            output.push('\n');
+        }
+
+        output
+    }
+
+    pub fn format_untested(&self, untested: &[UntestedInfo], total_symbols: usize) -> String {
+        match self.format {
+            OutputFormat::Default => self.format_untested_default(untested, total_symbols),
+            OutputFormat::Human => self.format_untested_human(untested, total_symbols),
+            OutputFormat::AI => self.format_untested_ai(untested, total_symbols),
+        }
+    }
+
+    fn format_untested_default(&self, untested: &[UntestedInfo], total_symbols: usize) -> String {
+        let mut output = String::new();
+        output.push_str("# Untested Symbols\n\n");
+        
+        let tested_count = total_symbols.saturating_sub(untested.len());
+        let coverage_pct = if total_symbols > 0 {
+            (tested_count as f64 / total_symbols as f64) * 100.0
+        } else {
+            100.0
+        };
+        
+        output.push_str(&format!("**Coverage**: {:.1}% ({} of {} symbols tested)\n", 
+            coverage_pct, tested_count, total_symbols));
+        output.push_str(&format!("**Untested**: {} symbols\n\n", untested.len()));
+
+        let mut current_file = String::new();
+        for info in untested {
+            if info.file_path != current_file {
+                current_file = info.file_path.clone();
+                output.push_str(&format!("\n## {}\n\n", current_file));
+            }
+            
+            output.push_str(&format!("- **{}** ({}) @ line {}", 
+                info.name, 
+                info.symbol_type.as_str(),
+                info.line
+            ));
+            if let Some(ref sig) = info.signature {
+                output.push_str(&format!(": `{}`", sig));
+            }
+            output.push('\n');
+        }
+
+        output
+    }
+
+    fn format_untested_human(&self, untested: &[UntestedInfo], total_symbols: usize) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("{}\n\n", "Untested Symbols".bold().red()));
+
+        let tested_count = total_symbols.saturating_sub(untested.len());
+        let coverage_pct = if total_symbols > 0 {
+            (tested_count as f64 / total_symbols as f64) * 100.0
+        } else {
+            100.0
+        };
+
+        let coverage_color = if coverage_pct >= 80.0 {
+            format!("{:.1}%", coverage_pct).green()
+        } else if coverage_pct >= 50.0 {
+            format!("{:.1}%", coverage_pct).yellow()
+        } else {
+            format!("{:.1}%", coverage_pct).red()
+        };
+
+        output.push_str(&format!("{}: {} ({} of {} symbols tested)\n",
+            "Coverage".cyan(),
+            coverage_color,
+            tested_count,
+            total_symbols
+        ));
+        output.push_str(&format!("{}: {}\n\n",
+            "Untested".cyan(),
+            untested.len().to_string().bold()
+        ));
+
+        let mut table = Table::new();
+        table
+            .load_preset(UTF8_FULL)
+            .apply_modifier(UTF8_ROUND_CORNERS)
+            .set_header(vec!["Symbol", "Type", "File", "Line", "Signature"]);
+
+        for info in untested {
+            table.add_row(vec![
+                info.name.clone(),
+                info.symbol_type.as_str().to_string(),
+                info.file_path.clone(),
+                info.line.to_string(),
+                info.signature.as_deref().unwrap_or("-").to_string(),
+            ]);
+        }
+
+        output.push_str(&format!("{}\n", table));
+        output
+    }
+
+    fn format_untested_ai(&self, untested: &[UntestedInfo], total_symbols: usize) -> String {
+        let mut output = String::new();
+        
+        let tested_count = total_symbols.saturating_sub(untested.len());
+        let coverage_pct = if total_symbols > 0 {
+            (tested_count as f64 / total_symbols as f64) * 100.0
+        } else {
+            100.0
+        };
+
+        output.push_str(&format!("[UNTESTED:{}|{:.1}%]\n", untested.len(), coverage_pct));
+        output.push_str(&format!("TESTED:{} TOTAL:{}\n", tested_count, total_symbols));
+
+        for info in untested {
+            output.push_str(&format!("{}|{}|{}:{}",
+                info.name,
+                match info.symbol_type {
+                    SymbolType::Function => "f",
+                    SymbolType::Class => "c",
+                    SymbolType::Method => "m",
+                    SymbolType::Enum => "e",
+                    SymbolType::StaticField => "s",
+                    SymbolType::Heading => "h",
+                    SymbolType::CodeBlock => "cb",
+                },
+                info.file_path,
+                info.line
+            ));
+            if let Some(ref sig) = info.signature {
+                output.push_str(&format!("|sig:{}", sig));
+            }
+            output.push('\n');
+        }
+
+        output
+    }
+
+    pub fn format_entrypoints(&self, entrypoints: &[EntrypointInfo]) -> String {
+        match self.format {
+            OutputFormat::Default => self.format_entrypoints_default(entrypoints),
+            OutputFormat::Human => self.format_entrypoints_human(entrypoints),
+            OutputFormat::AI => self.format_entrypoints_ai(entrypoints),
+        }
+    }
+
+    fn format_entrypoints_default(&self, entrypoints: &[EntrypointInfo]) -> String {
+        let mut output = String::new();
+        output.push_str("# Entrypoints (Uncalled Exported Symbols)\n\n");
+        output.push_str(&format!("Found {} entrypoint(s)\n\n", entrypoints.len()));
+
+        let main_entries: Vec<_> = entrypoints.iter()
+            .filter(|e| e.category == EntrypointCategory::MainEntry)
+            .collect();
+        let api_funcs: Vec<_> = entrypoints.iter()
+            .filter(|e| e.category == EntrypointCategory::ApiFunction)
+            .collect();
+        let unused: Vec<_> = entrypoints.iter()
+            .filter(|e| e.category == EntrypointCategory::PossiblyUnused)
+            .collect();
+
+        if !main_entries.is_empty() {
+            output.push_str("## Main Entrypoints\n\n");
+            for entry in &main_entries {
+                output.push_str(&format!("- **{}** ({}) @ `{}:{}`",
+                    entry.name, entry.symbol_type.as_str(), entry.file_path, entry.line));
+                if let Some(ref sig) = entry.signature {
+                    output.push_str(&format!("\n  `{}`", sig));
+                }
+                output.push('\n');
+            }
+            output.push('\n');
+        }
+
+        if !api_funcs.is_empty() {
+            output.push_str("## API Functions\n\n");
+            for entry in &api_funcs {
+                output.push_str(&format!("- **{}** ({}) @ `{}:{}`",
+                    entry.name, entry.symbol_type.as_str(), entry.file_path, entry.line));
+                if let Some(ref sig) = entry.signature {
+                    output.push_str(&format!("\n  `{}`", sig));
+                }
+                output.push('\n');
+            }
+            output.push('\n');
+        }
+
+        if !unused.is_empty() {
+            output.push_str("## Possibly Unused\n\n");
+            for entry in &unused {
+                output.push_str(&format!("- **{}** ({}) @ `{}:{}`",
+                    entry.name, entry.symbol_type.as_str(), entry.file_path, entry.line));
+                if let Some(ref sig) = entry.signature {
+                    output.push_str(&format!("\n  `{}`", sig));
+                }
+                output.push('\n');
+            }
+            output.push('\n');
+        }
+
+        output
+    }
+
+    fn format_entrypoints_human(&self, entrypoints: &[EntrypointInfo]) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("{}\n\n", "Entrypoints (Uncalled Exported Symbols)".bold().green()));
+
+        let main_count = entrypoints.iter().filter(|e| e.category == EntrypointCategory::MainEntry).count();
+        let api_count = entrypoints.iter().filter(|e| e.category == EntrypointCategory::ApiFunction).count();
+        let unused_count = entrypoints.iter().filter(|e| e.category == EntrypointCategory::PossiblyUnused).count();
+
+        output.push_str(&format!("{}: {} total ({} main, {} API, {} possibly unused)\n\n",
+            "Found".cyan(),
+            entrypoints.len().to_string().bold(),
+            main_count.to_string().green(),
+            api_count.to_string().cyan(),
+            unused_count.to_string().yellow()
+        ));
+
+        let mut table = Table::new();
+        table
+            .load_preset(UTF8_FULL)
+            .apply_modifier(UTF8_ROUND_CORNERS)
+            .set_header(vec!["Category", "Symbol", "Type", "File", "Line", "Signature"]);
+
+        for entry in entrypoints {
+            let category_str = match entry.category {
+                EntrypointCategory::MainEntry => "Main".green().to_string(),
+                EntrypointCategory::ApiFunction => "API".cyan().to_string(),
+                EntrypointCategory::PossiblyUnused => "Unused?".yellow().to_string(),
+            };
+            table.add_row(vec![
+                category_str,
+                entry.name.clone(),
+                entry.symbol_type.as_str().to_string(),
+                entry.file_path.clone(),
+                entry.line.to_string(),
+                entry.signature.as_deref().unwrap_or("-").to_string(),
+            ]);
+        }
+
+        output.push_str(&format!("{}\n", table));
+        output
+    }
+
+    fn format_entrypoints_ai(&self, entrypoints: &[EntrypointInfo]) -> String {
+        let mut output = String::new();
+        
+        let main_count = entrypoints.iter().filter(|e| e.category == EntrypointCategory::MainEntry).count();
+        let api_count = entrypoints.iter().filter(|e| e.category == EntrypointCategory::ApiFunction).count();
+        let unused_count = entrypoints.iter().filter(|e| e.category == EntrypointCategory::PossiblyUnused).count();
+
+        output.push_str(&format!("[ENTRYPOINTS:{}]\n", entrypoints.len()));
+        output.push_str(&format!("MAIN:{} API:{} UNUSED:{}\n", main_count, api_count, unused_count));
+
+        for entry in entrypoints {
+            let cat_short = match entry.category {
+                EntrypointCategory::MainEntry => "main",
+                EntrypointCategory::ApiFunction => "api",
+                EntrypointCategory::PossiblyUnused => "unused",
+            };
+            output.push_str(&format!("{}|{}|{}|{}:{}",
+                cat_short,
+                entry.name,
+                match entry.symbol_type {
+                    SymbolType::Function => "f",
+                    SymbolType::Class => "c",
+                    SymbolType::Method => "m",
+                    SymbolType::Enum => "e",
+                    SymbolType::StaticField => "s",
+                    SymbolType::Heading => "h",
+                    SymbolType::CodeBlock => "cb",
+                },
+                entry.file_path,
+                entry.line
+            ));
+            if let Some(ref sig) = entry.signature {
+                output.push_str(&format!("|sig:{}", sig));
+            }
+            output.push('\n');
+        }
+
+        output
+    }
+
+    pub fn format_blame(&self, result: &BlameResult) -> String {
+        match self.format {
+            OutputFormat::Default => self.format_blame_default(result),
+            OutputFormat::Human => self.format_blame_human(result),
+            OutputFormat::AI => self.format_blame_ai(result),
+        }
+    }
+
+    fn format_blame_default(&self, result: &BlameResult) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("# Blame for `{}`\n\n", result.symbol_name));
+        output.push_str(&format!("Type: {}\n", result.symbol_type.as_str()));
+        output.push_str(&format!("Lines: {}-{}\n\n", result.current_lines.0, result.current_lines.1));
+        
+        output.push_str("## Last Modification\n\n");
+        output.push_str(&format!("- Commit: `{}`\n", result.last_commit.short_hash));
+        output.push_str(&format!("- Author: {}\n", result.last_commit.author));
+        output.push_str(&format!("- Date: {}\n", result.last_commit.date));
+        output.push_str(&format!("- Message: {}\n", result.last_commit.message));
+        
+        if result.old_signature.is_some() || result.new_signature.is_some() {
+            output.push_str("\n## Signature Change\n\n");
+            if let Some(ref old_sig) = result.old_signature {
+                output.push_str(&format!("- Old: `{}`\n", old_sig));
+            }
+            if let Some(ref new_sig) = result.new_signature {
+                output.push_str(&format!("- New: `{}`\n", new_sig));
+            }
+        }
+        
+        output
+    }
+
+    fn format_blame_human(&self, result: &BlameResult) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("{} {}\n\n", "Blame for".green(), result.symbol_name.bold()));
+        output.push_str(&format!("Type: {} | Lines: {}-{}\n\n", 
+            result.symbol_type.as_str().cyan(),
+            result.current_lines.0,
+            result.current_lines.1
+        ));
+
+        let mut table = Table::new();
+        table
+            .load_preset(UTF8_FULL)
+            .apply_modifier(UTF8_ROUND_CORNERS)
+            .set_header(vec!["Commit", "Author", "Date", "Message"]);
+
+        table.add_row(vec![
+            result.last_commit.short_hash.clone(),
+            result.last_commit.author.clone(),
+            result.last_commit.date.clone(),
+            if result.last_commit.message.len() > 50 {
+                format!("{}...", &result.last_commit.message[..47])
+            } else {
+                result.last_commit.message.clone()
+            },
+        ]);
+
+        output.push_str(&format!("{}\n", table));
+
+        if result.old_signature.is_some() || result.new_signature.is_some() {
+            output.push_str(&format!("\n{}\n", "Signature Change:".cyan()));
+            if let Some(ref old_sig) = result.old_signature {
+                output.push_str(&format!("  Old: {}\n", old_sig.red()));
+            }
+            if let Some(ref new_sig) = result.new_signature {
+                output.push_str(&format!("  New: {}\n", new_sig.green()));
+            }
+        }
+
+        output
+    }
+
+    fn format_blame_ai(&self, result: &BlameResult) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("[BLAME:{}|{}]\n", result.symbol_name, result.symbol_type.as_str()));
+        output.push_str(&format!("LINES:{}-{}\n", result.current_lines.0, result.current_lines.1));
+        output.push_str(&format!("COMMIT:{}|{}|{}|{}\n",
+            result.last_commit.short_hash,
+            result.last_commit.author,
+            result.last_commit.date,
+            result.last_commit.message
+        ));
+        
+        if let Some(ref old_sig) = result.old_signature {
+            output.push_str(&format!("OLD_SIG:{}\n", old_sig));
+        }
+        if let Some(ref new_sig) = result.new_signature {
+            output.push_str(&format!("NEW_SIG:{}\n", new_sig));
+        }
+
+        output
+    }
+
+    pub fn format_history(&self, history: &[HistoryEntry], symbol_name: &str) -> String {
+        match self.format {
+            OutputFormat::Default => self.format_history_default(history, symbol_name),
+            OutputFormat::Human => self.format_history_human(history, symbol_name),
+            OutputFormat::AI => self.format_history_ai(history, symbol_name),
+        }
+    }
+
+    fn format_history_default(&self, history: &[HistoryEntry], symbol_name: &str) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("# History for `{}`\n\n", symbol_name));
+        output.push_str(&format!("Found {} version(s)\n\n", history.len()));
+
+        for (i, entry) in history.iter().enumerate() {
+            let version_num = history.len() - i;
+            let status = if entry.existed { "exists" } else { "deleted" };
+            
+            output.push_str(&format!("## Version {} ({})\n\n", version_num, status));
+            output.push_str(&format!("- Commit: `{}`\n", entry.commit.short_hash));
+            output.push_str(&format!("- Author: {}\n", entry.commit.author));
+            output.push_str(&format!("- Date: {}\n", entry.commit.date));
+            output.push_str(&format!("- Message: {}\n", entry.commit.message));
+            
+            if let Some((start, end)) = entry.lines {
+                output.push_str(&format!("- Lines: {}-{}\n", start, end));
+            }
+            if let Some(ref sig) = entry.signature {
+                output.push_str(&format!("- Signature: `{}`\n", sig));
+            }
+            output.push('\n');
+        }
+
+        output
+    }
+
+    fn format_history_human(&self, history: &[HistoryEntry], symbol_name: &str) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("{} {}\n\n", "History for".green(), symbol_name.bold()));
+        output.push_str(&format!("Found {} version(s)\n\n", history.len().to_string().bold()));
+
+        let mut table = Table::new();
+        table
+            .load_preset(UTF8_FULL)
+            .apply_modifier(UTF8_ROUND_CORNERS)
+            .set_header(vec!["#", "Commit", "Date", "Status", "Signature"]);
+
+        for (i, entry) in history.iter().enumerate() {
+            let version_num = history.len() - i;
+            let status = if entry.existed { 
+                "✓".green().to_string() 
+            } else { 
+                "✗".red().to_string() 
+            };
+            
+            let sig = entry.signature.as_deref().unwrap_or("-");
+            let sig_display = if sig.len() > 40 {
+                format!("{}...", &sig[..37])
+            } else {
+                sig.to_string()
+            };
+
+            table.add_row(vec![
+                version_num.to_string(),
+                entry.commit.short_hash.clone(),
+                entry.commit.date.clone(),
+                status,
+                sig_display,
+            ]);
+        }
+
+        output.push_str(&format!("{}\n", table));
+        output
+    }
+
+    fn format_history_ai(&self, history: &[HistoryEntry], symbol_name: &str) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("[HISTORY:{}|{}]\n", symbol_name, history.len()));
+
+        for entry in history {
+            let status = if entry.existed { "+" } else { "-" };
+            output.push_str(&format!("{}|{}|{}|{}",
+                status,
+                entry.commit.short_hash,
+                entry.commit.date,
+                entry.commit.message
+            ));
+            
+            if let Some((start, end)) = entry.lines {
+                output.push_str(&format!("|{}-{}", start, end));
+            }
+            if let Some(ref sig) = entry.signature {
+                output.push_str(&format!("|sig:{}", sig));
+            }
+            output.push('\n');
+        }
+
+        output
+    }
+
+    pub fn format_trace(&self, trace: &TracePath, from: &str, to: &str) -> String {
+        match self.format {
+            OutputFormat::Default => self.format_trace_default(trace, from, to),
+            OutputFormat::Human => self.format_trace_human(trace, from, to),
+            OutputFormat::AI => self.format_trace_ai(trace, from, to),
+        }
+    }
+
+    fn format_trace_default(&self, trace: &TracePath, from: &str, to: &str) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("# Call Path: {} → {}\n\n", from, to));
+
+        if !trace.found {
+            output.push_str("No call path found between these symbols.\n");
+            return output;
+        }
+
+        output.push_str(&format!("**Path length**: {} step(s)\n\n", trace.steps.len()));
+        output.push_str("## Call Chain\n\n");
+        output.push_str("```\n");
+
+        for (i, step) in trace.steps.iter().enumerate() {
+            if i > 0 {
+                output.push_str("    ↓\n");
+            }
+            output.push_str(&format!("[{}] {} ({})\n", 
+                i + 1,
+                step.symbol_name,
+                step.symbol_type.as_str()
+            ));
+            output.push_str(&format!("    {}:{}\n", step.file_path, step.line));
+        }
+
+        output.push_str("```\n");
+        output
+    }
+
+    fn format_trace_human(&self, trace: &TracePath, from: &str, to: &str) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("{} {} {} {}\n\n", 
+            "Call Path:".green(),
+            from.bold(),
+            "→".cyan(),
+            to.bold()
+        ));
+
+        if !trace.found {
+            output.push_str(&format!("{} No call path found between these symbols.\n", "✗".yellow()));
+            return output;
+        }
+
+        output.push_str(&format!("{}: {} step(s)\n\n", "Path length".cyan(), trace.steps.len()));
+
+        let mut table = Table::new();
+        table
+            .load_preset(UTF8_FULL)
+            .apply_modifier(UTF8_ROUND_CORNERS)
+            .set_header(vec!["Step", "Symbol", "Type", "Location"]);
+
+        for (i, step) in trace.steps.iter().enumerate() {
+            let step_marker = if i == 0 {
+                "→".green().to_string()
+            } else if i == trace.steps.len() - 1 {
+                "◉".cyan().to_string()
+            } else {
+                "↓".white().to_string()
+            };
+
+            table.add_row(vec![
+                step_marker,
+                step.symbol_name.clone(),
+                step.symbol_type.as_str().to_string(),
+                format!("{}:{}", step.file_path, step.line),
+            ]);
+        }
+
+        output.push_str(&format!("{}\n", table));
+
+        output.push_str(&format!("\n{}\n", "Call Chain:".cyan()));
+        let names: Vec<&str> = trace.steps.iter().map(|s| s.symbol_name.as_str()).collect();
+        output.push_str(&format!("  {}\n", names.join(" → ")));
+
+        output
+    }
+
+    fn format_trace_ai(&self, trace: &TracePath, from: &str, to: &str) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("[TRACE:{}->{}]\n", from, to));
+
+        if !trace.found {
+            output.push_str("FOUND:false\n");
+            return output;
+        }
+
+        output.push_str(&format!("FOUND:true STEPS:{}\n", trace.steps.len()));
+
+        let names: Vec<&str> = trace.steps.iter().map(|s| s.symbol_name.as_str()).collect();
+        output.push_str(&format!("PATH:{}\n", names.join("|")));
+
+        for step in &trace.steps {
+            output.push_str(&format!("{}|{}|{}:{}\n",
+                step.symbol_name,
+                match step.symbol_type {
+                    SymbolType::Function => "f",
+                    SymbolType::Class => "c",
+                    SymbolType::Method => "m",
+                    SymbolType::Enum => "e",
+                    SymbolType::StaticField => "s",
+                    SymbolType::Heading => "h",
+                    SymbolType::CodeBlock => "cb",
+                },
+                step.file_path,
+                step.line
+            ));
+        }
+
+        output
+    }
+
+    pub fn format_implements(&self, implementations: &[Implementation], interface: &str) -> String {
+        match self.format {
+            OutputFormat::Default => self.format_implements_default(implementations, interface),
+            OutputFormat::Human => self.format_implements_human(implementations, interface),
+            OutputFormat::AI => self.format_implements_ai(implementations, interface),
+        }
+    }
+
+    fn format_implements_default(&self, implementations: &[Implementation], interface: &str) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("# Implementations of `{}`\n\n", interface));
+        output.push_str(&format!("Found {} implementation(s)\n\n", implementations.len()));
+
+        for imp in implementations {
+            output.push_str(&format!("## {}\n", imp.implementor_name));
+            output.push_str(&format!("- Interface: {}\n", imp.interface_name));
+            output.push_str(&format!("- Kind: {}\n", imp.kind.as_str()));
+            output.push_str(&format!("- Language: {}\n", imp.language.as_str()));
+            output.push_str(&format!("- Location: `{}:{}`\n", imp.file_path.display(), imp.line));
+            output.push('\n');
+        }
+
+        output
+    }
+
+    fn format_implements_human(&self, implementations: &[Implementation], interface: &str) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("{} {}\n\n", "Implementations of".green(), interface.bold()));
+        output.push_str(&format!("{} {} implementation(s)\n\n", "Found".cyan(), implementations.len().to_string().bold()));
+
+        let mut table = Table::new();
+        table
+            .load_preset(UTF8_FULL)
+            .apply_modifier(UTF8_ROUND_CORNERS)
+            .set_header(vec!["Implementor", "Interface", "Kind", "Language", "Location"]);
+
+        for imp in implementations {
+            table.add_row(vec![
+                imp.implementor_name.clone(),
+                imp.interface_name.clone(),
+                imp.kind.as_str().to_string(),
+                imp.language.as_str().to_string(),
+                format!("{}:{}", imp.file_path.display(), imp.line),
+            ]);
+        }
+
+        output.push_str(&format!("{}\n", table));
+        output
+    }
+
+    fn format_implements_ai(&self, implementations: &[Implementation], interface: &str) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("[IMPLEMENTS:{}|{}]\n", interface, implementations.len()));
+
+        for imp in implementations {
+            output.push_str(&format!("{}|{}|{}|{}|{}:{}\n",
+                imp.implementor_name,
+                imp.interface_name,
+                imp.kind.as_str(),
+                imp.language.as_str(),
+                imp.file_path.display(),
+                imp.line
+            ));
+        }
+
+        output
+    }
+
+    pub fn format_types(&self, types_info: &[SymbolTypes]) -> String {
+        match self.format {
+            OutputFormat::Default => self.format_types_default(types_info),
+            OutputFormat::Human => self.format_types_human(types_info),
+            OutputFormat::AI => self.format_types_ai(types_info),
+        }
+    }
+
+    fn format_types_default(&self, types_info: &[SymbolTypes]) -> String {
+        let mut output = String::new();
+        output.push_str("# Type Analysis\n\n");
+        output.push_str(&format!("Found {} symbol(s)\n\n", types_info.len()));
+
+        for symbol in types_info {
+            output.push_str(&format!("## {}\n\n", symbol.symbol_name));
+            output.push_str(&format!("- Type: {}\n", symbol.symbol_type.as_str()));
+            output.push_str(&format!("- Location: `{}:{}`\n", symbol.file_path, symbol.line));
+            
+            if let Some(ref sig) = symbol.signature {
+                output.push_str(&format!("- Signature: `{}`\n", sig));
+            }
+            output.push('\n');
+
+            if !symbol.params.is_empty() {
+                output.push_str("### Parameters\n\n");
+                output.push_str("| Name | Type | Defined In |\n");
+                output.push_str("|------|------|------------|\n");
+                for param in &symbol.params {
+                    let defined = param.defined_in.as_deref().unwrap_or("-");
+                    output.push_str(&format!("| {} | `{}` | {} |\n", 
+                        param.name, param.type_name, defined));
+                }
+                output.push('\n');
+            }
+
+            if let Some(ref ret) = symbol.return_type {
+                output.push_str("### Return Type\n\n");
+                let defined = ret.defined_in.as_deref().unwrap_or("-");
+                output.push_str(&format!("- `{}` (defined in: {})\n\n", ret.type_name, defined));
+            }
+        }
+
+        output
+    }
+
+    fn format_types_human(&self, types_info: &[SymbolTypes]) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("{}\n\n", "Type Analysis".bold().green()));
+        output.push_str(&format!("{} {} symbol(s)\n\n", "Found".cyan(), types_info.len().to_string().bold()));
+
+        for symbol in types_info {
+            output.push_str(&format!("{} {} ({})\n", 
+                "→".cyan(), 
+                symbol.symbol_name.bold(),
+                symbol.symbol_type.as_str()
+            ));
+            output.push_str(&format!("  Location: {}:{}\n", symbol.file_path, symbol.line));
+            
+            if let Some(ref sig) = symbol.signature {
+                output.push_str(&format!("  Signature: {}\n", sig.cyan()));
+            }
+            output.push('\n');
+
+            if !symbol.params.is_empty() || symbol.return_type.is_some() {
+                let mut table = Table::new();
+                table
+                    .load_preset(UTF8_FULL)
+                    .apply_modifier(UTF8_ROUND_CORNERS)
+                    .set_header(vec!["Kind", "Name", "Type", "Defined In"]);
+
+                for param in &symbol.params {
+                    let defined = param.defined_in.as_deref().unwrap_or("-");
+                    table.add_row(vec![
+                        param.kind.as_str().to_string(),
+                        param.name.clone(),
+                        param.type_name.clone(),
+                        defined.to_string(),
+                    ]);
+                }
+
+                if let Some(ref ret) = symbol.return_type {
+                    let defined = ret.defined_in.as_deref().unwrap_or("-");
+                    table.add_row(vec![
+                        ret.kind.as_str().to_string(),
+                        "-".to_string(),
+                        ret.type_name.clone(),
+                        defined.to_string(),
+                    ]);
+                }
+
+                output.push_str(&format!("{}\n\n", table));
+            }
+        }
+
+        output
+    }
+
+    fn format_types_ai(&self, types_info: &[SymbolTypes]) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("[TYPES:{}]\n", types_info.len()));
+
+        for symbol in types_info {
+            output.push_str(&format!("SYM:{}|{}|{}:{}\n", 
+                symbol.symbol_name,
+                match symbol.symbol_type {
+                    SymbolType::Function => "f",
+                    SymbolType::Class => "c",
+                    SymbolType::Method => "m",
+                    SymbolType::Enum => "e",
+                    SymbolType::StaticField => "s",
+                    SymbolType::Heading => "h",
+                    SymbolType::CodeBlock => "cb",
+                },
+                symbol.file_path,
+                symbol.line
+            ));
+
+            if let Some(ref sig) = symbol.signature {
+                output.push_str(&format!("SIG:{}\n", sig));
+            }
+
+            for param in &symbol.params {
+                let defined = param.defined_in.as_deref().unwrap_or("-");
+                output.push_str(&format!("P:{}|{}|{}\n", 
+                    param.name, param.type_name, defined));
+            }
+
+            if let Some(ref ret) = symbol.return_type {
+                let defined = ret.defined_in.as_deref().unwrap_or("-");
+                output.push_str(&format!("R:{}|{}\n", ret.type_name, defined));
+            }
         }
 
         output
