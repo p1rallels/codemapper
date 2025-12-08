@@ -1,3 +1,5 @@
+use crate::callgraph::{CallInfo, TestInfo};
+use crate::diff::{ChangeType, DiffResult, SymbolDiff};
 use crate::index::CodeIndex;
 use crate::models::{Symbol, SymbolType};
 use colored::*;
@@ -605,6 +607,610 @@ impl OutputFormatter {
             index.total_symbols(),
             total_loc
         ));
+
+        output
+    }
+
+    pub fn format_diff(&self, result: &DiffResult) -> String {
+        match self.format {
+            OutputFormat::Default => self.format_diff_default(result),
+            OutputFormat::Human => self.format_diff_human(result),
+            OutputFormat::AI => self.format_diff_ai(result),
+        }
+    }
+
+    fn format_diff_default(&self, result: &DiffResult) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("# Symbol Diff\n\n"));
+        output.push_str(&format!("Comparing HEAD to commit: `{}`\n\n", &result.commit[..8.min(result.commit.len())]));
+        output.push_str(&format!("Files analyzed: {}\n", result.files_analyzed));
+        output.push_str(&format!("Symbol changes: {}\n\n", result.symbols.len()));
+
+        if result.symbols.is_empty() {
+            output.push_str("No symbol changes detected.\n");
+            return output;
+        }
+
+        let mut by_type: HashMap<ChangeType, Vec<&SymbolDiff>> = HashMap::new();
+        for sym in &result.symbols {
+            by_type.entry(sym.change_type).or_default().push(sym);
+        }
+
+        for change_type in [ChangeType::Added, ChangeType::Deleted, ChangeType::Modified, ChangeType::SignatureChanged] {
+            if let Some(symbols) = by_type.get(&change_type) {
+                output.push_str(&format!("## {} ({})\n\n", change_type.as_str(), symbols.len()));
+                for sym in symbols {
+                    output.push_str(&format!("- **{}** ({}) in `{}`",
+                        sym.name,
+                        sym.symbol_type.as_str(),
+                        sym.file_path.display()
+                    ));
+                    if let Some((start, end)) = sym.new_lines {
+                        output.push_str(&format!(" @ lines {}-{}", start, end));
+                    } else if let Some((start, end)) = sym.old_lines {
+                        output.push_str(&format!(" @ lines {}-{} (deleted)", start, end));
+                    }
+                    output.push('\n');
+                    
+                    if change_type == ChangeType::SignatureChanged {
+                        if let Some(ref old_sig) = sym.old_signature {
+                            output.push_str(&format!("  - Old: `{}`\n", old_sig));
+                        }
+                        if let Some(ref new_sig) = sym.new_signature {
+                            output.push_str(&format!("  - New: `{}`\n", new_sig));
+                        }
+                    }
+                }
+                output.push('\n');
+            }
+        }
+
+        output
+    }
+
+    fn format_diff_human(&self, result: &DiffResult) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("{}\n\n", "Symbol Diff".bold().green()));
+        output.push_str(&format!("Commit: {}\n", result.commit[..8.min(result.commit.len())].cyan()));
+        output.push_str(&format!("Files analyzed: {}\n", result.files_analyzed.to_string().bold()));
+        output.push_str(&format!("Symbol changes: {}\n\n", result.symbols.len().to_string().bold()));
+
+        if result.symbols.is_empty() {
+            output.push_str(&format!("{}\n", "No symbol changes detected.".yellow()));
+            return output;
+        }
+
+        let mut table = Table::new();
+        table
+            .load_preset(UTF8_FULL)
+            .apply_modifier(UTF8_ROUND_CORNERS)
+            .set_header(vec!["Change", "Name", "Type", "File", "Lines"]);
+
+        for sym in &result.symbols {
+            let change_str = match sym.change_type {
+                ChangeType::Added => format!("{}", "+".green()),
+                ChangeType::Deleted => format!("{}", "-".red()),
+                ChangeType::Modified => format!("{}", "~".yellow()),
+                ChangeType::SignatureChanged => format!("{}", "!".magenta()),
+            };
+            
+            let lines = if let Some((start, end)) = sym.new_lines {
+                format!("{}-{}", start, end)
+            } else if let Some((start, end)) = sym.old_lines {
+                format!("{}-{} (del)", start, end)
+            } else {
+                "-".to_string()
+            };
+
+            table.add_row(vec![
+                change_str,
+                sym.name.clone(),
+                sym.symbol_type.as_str().to_string(),
+                sym.file_path.display().to_string(),
+                lines,
+            ]);
+        }
+
+        output.push_str(&format!("{}\n", table));
+
+        let sig_changes: Vec<&SymbolDiff> = result.symbols.iter()
+            .filter(|s| s.change_type == ChangeType::SignatureChanged)
+            .collect();
+        
+        if !sig_changes.is_empty() {
+            output.push_str(&format!("\n{}\n", "Signature Changes:".cyan()));
+            for sym in sig_changes {
+                output.push_str(&format!("  {} {}\n", "→".cyan(), sym.name.bold()));
+                if let Some(ref old_sig) = sym.old_signature {
+                    output.push_str(&format!("    Old: {}\n", old_sig.red()));
+                }
+                if let Some(ref new_sig) = sym.new_signature {
+                    output.push_str(&format!("    New: {}\n", new_sig.green()));
+                }
+            }
+        }
+
+        output.push_str(&format!("\n{}: {} {} {} {} {} {} {} {}\n",
+            "Legend".cyan(),
+            "+".green(), "added".dimmed(),
+            "-".red(), "deleted".dimmed(),
+            "~".yellow(), "modified".dimmed(),
+            "!".magenta(), "signature".dimmed()
+        ));
+
+        output
+    }
+
+    fn format_diff_ai(&self, result: &DiffResult) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("[DIFF:{}]\n", &result.commit[..8.min(result.commit.len())]));
+        output.push_str(&format!("FILES:{} CHANGES:{}\n", result.files_analyzed, result.symbols.len()));
+
+        if result.symbols.is_empty() {
+            output.push_str("NO_CHANGES\n");
+            return output;
+        }
+
+        for sym in &result.symbols {
+            output.push_str(&format!("{}|{}|{}|{}",
+                sym.change_type.short(),
+                sym.name,
+                match sym.symbol_type {
+                    SymbolType::Function => "f",
+                    SymbolType::Class => "c",
+                    SymbolType::Method => "m",
+                    SymbolType::Enum => "e",
+                    SymbolType::StaticField => "s",
+                    SymbolType::Heading => "h",
+                    SymbolType::CodeBlock => "cb",
+                },
+                sym.file_path.display()
+            ));
+
+            if let Some((start, end)) = sym.new_lines {
+                output.push_str(&format!("|{}-{}", start, end));
+            } else if let Some((start, end)) = sym.old_lines {
+                output.push_str(&format!("|{}-{}(del)", start, end));
+            }
+
+            if sym.change_type == ChangeType::SignatureChanged {
+                if let Some(ref old_sig) = sym.old_signature {
+                    output.push_str(&format!("|old:{}", old_sig));
+                }
+                if let Some(ref new_sig) = sym.new_signature {
+                    output.push_str(&format!("|new:{}", new_sig));
+                }
+            }
+
+            output.push('\n');
+        }
+
+        output
+    }
+
+    pub fn format_breaking(&self, result: &DiffResult) -> String {
+        match self.format {
+            OutputFormat::Default => self.format_breaking_default(result),
+            OutputFormat::Human => self.format_breaking_human(result),
+            OutputFormat::AI => self.format_breaking_ai(result),
+        }
+    }
+
+    fn format_breaking_default(&self, result: &DiffResult) -> String {
+        let mut output = String::new();
+        output.push_str("# Breaking Changes\n\n");
+        output.push_str(&format!("Since commit: `{}`\n\n", &result.commit[..8.min(result.commit.len())]));
+
+        if result.symbols.is_empty() {
+            output.push_str("No breaking changes detected.\n");
+            return output;
+        }
+
+        output.push_str(&format!("**{} breaking change(s) found**\n\n", result.symbols.len()));
+
+        let deleted: Vec<&SymbolDiff> = result.symbols.iter()
+            .filter(|s| s.change_type == ChangeType::Deleted)
+            .collect();
+        
+        let sig_changed: Vec<&SymbolDiff> = result.symbols.iter()
+            .filter(|s| s.change_type == ChangeType::SignatureChanged)
+            .collect();
+
+        if !deleted.is_empty() {
+            output.push_str("## REMOVED (callers will break)\n\n");
+            for sym in &deleted {
+                output.push_str(&format!("- **{}** ({}) in `{}`",
+                    sym.name,
+                    sym.symbol_type.as_str(),
+                    sym.file_path.display()
+                ));
+                if let Some((start, end)) = sym.old_lines {
+                    output.push_str(&format!(" @ lines {}-{}", start, end));
+                }
+                output.push('\n');
+                if let Some(ref sig) = sym.old_signature {
+                    output.push_str(&format!("  Was: `{}`\n", sig));
+                }
+            }
+            output.push('\n');
+        }
+
+        if !sig_changed.is_empty() {
+            output.push_str("## SIGNATURE CHANGED (callers may need updates)\n\n");
+            for sym in &sig_changed {
+                output.push_str(&format!("- **{}** ({}) in `{}`\n",
+                    sym.name,
+                    sym.symbol_type.as_str(),
+                    sym.file_path.display()
+                ));
+                if let Some(ref old_sig) = sym.old_signature {
+                    output.push_str(&format!("  Old: `{}`\n", old_sig));
+                }
+                if let Some(ref new_sig) = sym.new_signature {
+                    output.push_str(&format!("  New: `{}`\n", new_sig));
+                }
+            }
+            output.push('\n');
+        }
+
+        output
+    }
+
+    fn format_breaking_human(&self, result: &DiffResult) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("{}\n\n", "Breaking Changes".bold().red()));
+        output.push_str(&format!("Since commit: {}\n\n", result.commit[..8.min(result.commit.len())].cyan()));
+
+        if result.symbols.is_empty() {
+            output.push_str(&format!("{}\n", "No breaking changes detected.".green()));
+            return output;
+        }
+
+        output.push_str(&format!("{} breaking change(s) found\n\n", 
+            result.symbols.len().to_string().bold().red()));
+
+        let deleted: Vec<&SymbolDiff> = result.symbols.iter()
+            .filter(|s| s.change_type == ChangeType::Deleted)
+            .collect();
+        
+        let sig_changed: Vec<&SymbolDiff> = result.symbols.iter()
+            .filter(|s| s.change_type == ChangeType::SignatureChanged)
+            .collect();
+
+        if !deleted.is_empty() {
+            output.push_str(&format!("{}\n\n", "REMOVED (callers will break)".bold().red()));
+            
+            let mut table = Table::new();
+            table
+                .load_preset(UTF8_FULL)
+                .apply_modifier(UTF8_ROUND_CORNERS)
+                .set_header(vec!["Symbol", "Type", "File", "Was"]);
+
+            for sym in &deleted {
+                let was_sig = sym.old_signature.as_deref().unwrap_or("-");
+                table.add_row(vec![
+                    sym.name.clone(),
+                    sym.symbol_type.as_str().to_string(),
+                    sym.file_path.display().to_string(),
+                    was_sig.to_string(),
+                ]);
+            }
+            output.push_str(&format!("{}\n\n", table));
+        }
+
+        if !sig_changed.is_empty() {
+            output.push_str(&format!("{}\n\n", "SIGNATURE CHANGED (callers may need updates)".bold().yellow()));
+
+            for sym in &sig_changed {
+                output.push_str(&format!("  {} {} ({})\n", "→".cyan(), sym.name.bold(), sym.symbol_type.as_str()));
+                output.push_str(&format!("    File: {}\n", sym.file_path.display()));
+                if let Some(ref old_sig) = sym.old_signature {
+                    output.push_str(&format!("    Old: {}\n", old_sig.red()));
+                }
+                if let Some(ref new_sig) = sym.new_signature {
+                    output.push_str(&format!("    New: {}\n", new_sig.green()));
+                }
+                output.push('\n');
+            }
+        }
+
+        output
+    }
+
+    fn format_breaking_ai(&self, result: &DiffResult) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("[BREAKING:{}]\n", &result.commit[..8.min(result.commit.len())]));
+        output.push_str(&format!("COUNT:{}\n", result.symbols.len()));
+
+        if result.symbols.is_empty() {
+            output.push_str("NO_BREAKING_CHANGES\n");
+            return output;
+        }
+
+        for sym in &result.symbols {
+            let change_marker = match sym.change_type {
+                ChangeType::Deleted => "REMOVED",
+                ChangeType::SignatureChanged => "SIG_CHANGED",
+                _ => continue,
+            };
+            
+            output.push_str(&format!("{}|{}|{}|{}",
+                change_marker,
+                sym.name,
+                match sym.symbol_type {
+                    SymbolType::Function => "f",
+                    SymbolType::Class => "c",
+                    SymbolType::Method => "m",
+                    SymbolType::Enum => "e",
+                    SymbolType::StaticField => "s",
+                    SymbolType::Heading => "h",
+                    SymbolType::CodeBlock => "cb",
+                },
+                sym.file_path.display()
+            ));
+
+            if sym.change_type == ChangeType::Deleted {
+                if let Some(ref old_sig) = sym.old_signature {
+                    output.push_str(&format!("|was:{}", old_sig));
+                }
+            } else if sym.change_type == ChangeType::SignatureChanged {
+                if let Some(ref old_sig) = sym.old_signature {
+                    output.push_str(&format!("|old:{}", old_sig));
+                }
+                if let Some(ref new_sig) = sym.new_signature {
+                    output.push_str(&format!("|new:{}", new_sig));
+                }
+            }
+
+            output.push('\n');
+        }
+
+        output
+    }
+
+    pub fn format_callers(&self, callers: &[CallInfo], symbol_name: &str) -> String {
+        match self.format {
+            OutputFormat::Default => self.format_callers_default(callers, symbol_name),
+            OutputFormat::Human => self.format_callers_human(callers, symbol_name),
+            OutputFormat::AI => self.format_callers_ai(callers, symbol_name),
+        }
+    }
+
+    fn format_callers_default(&self, callers: &[CallInfo], symbol_name: &str) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("# Callers of `{}`\n\n", symbol_name));
+        output.push_str(&format!("Found {} call site(s)\n\n", callers.len()));
+
+        for caller in callers {
+            output.push_str(&format!("## {} ({})\n", caller.caller_name, caller.caller_type.as_str()));
+            output.push_str(&format!("- File: {}:{}\n", caller.file_path, caller.line));
+            if !caller.context.is_empty() {
+                output.push_str(&format!("- Context: `{}`\n", caller.context));
+            }
+            output.push('\n');
+        }
+
+        output
+    }
+
+    fn format_callers_human(&self, callers: &[CallInfo], symbol_name: &str) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("{} {}\n\n", "Callers of".green(), symbol_name.bold()));
+
+        let mut table = Table::new();
+        table
+            .load_preset(UTF8_FULL)
+            .apply_modifier(UTF8_ROUND_CORNERS)
+            .set_header(vec!["Caller", "Type", "Location", "Context"]);
+
+        for caller in callers {
+            table.add_row(vec![
+                caller.caller_name.clone(),
+                caller.caller_type.as_str().to_string(),
+                format!("{}:{}", caller.file_path, caller.line),
+                if caller.context.len() > 60 {
+                    format!("{}...", &caller.context[..57])
+                } else {
+                    caller.context.clone()
+                },
+            ]);
+        }
+
+        output.push_str(&format!("{}\n", table));
+        output
+    }
+
+    fn format_callers_ai(&self, callers: &[CallInfo], symbol_name: &str) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("[CALLERS:{}|{}]\n", symbol_name, callers.len()));
+
+        for caller in callers {
+            output.push_str(&format!("{}|{}|{}:{}",
+                caller.caller_name,
+                match caller.caller_type {
+                    SymbolType::Function => "f",
+                    SymbolType::Class => "c",
+                    SymbolType::Method => "m",
+                    SymbolType::Enum => "e",
+                    SymbolType::StaticField => "s",
+                    SymbolType::Heading => "h",
+                    SymbolType::CodeBlock => "cb",
+                },
+                caller.file_path,
+                caller.line
+            ));
+            output.push('\n');
+        }
+
+        output
+    }
+
+    pub fn format_callees(&self, callees: &[CallInfo], symbol_name: &str) -> String {
+        match self.format {
+            OutputFormat::Default => self.format_callees_default(callees, symbol_name),
+            OutputFormat::Human => self.format_callees_human(callees, symbol_name),
+            OutputFormat::AI => self.format_callees_ai(callees, symbol_name),
+        }
+    }
+
+    fn format_callees_default(&self, callees: &[CallInfo], symbol_name: &str) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("# Functions called by `{}`\n\n", symbol_name));
+        output.push_str(&format!("Found {} callee(s)\n\n", callees.len()));
+
+        for callee in callees {
+            output.push_str(&format!("## {} ({})\n", callee.caller_name, callee.caller_type.as_str()));
+            if callee.file_path != "<external>" {
+                output.push_str(&format!("- Definition: {}:{}\n", callee.file_path, callee.line));
+            } else {
+                output.push_str("- External/built-in function\n");
+            }
+            if !callee.context.is_empty() {
+                output.push_str(&format!("- Signature: `{}`\n", callee.context));
+            }
+            output.push('\n');
+        }
+
+        output
+    }
+
+    fn format_callees_human(&self, callees: &[CallInfo], symbol_name: &str) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("{} {}\n\n", "Functions called by".green(), symbol_name.bold()));
+
+        let mut table = Table::new();
+        table
+            .load_preset(UTF8_FULL)
+            .apply_modifier(UTF8_ROUND_CORNERS)
+            .set_header(vec!["Callee", "Type", "Definition", "Signature"]);
+
+        for callee in callees {
+            let location = if callee.file_path != "<external>" {
+                format!("{}:{}", callee.file_path, callee.line)
+            } else {
+                "<external>".to_string()
+            };
+
+            table.add_row(vec![
+                callee.caller_name.clone(),
+                callee.caller_type.as_str().to_string(),
+                location,
+                if callee.context.len() > 40 {
+                    format!("{}...", &callee.context[..37])
+                } else {
+                    callee.context.clone()
+                },
+            ]);
+        }
+
+        output.push_str(&format!("{}\n", table));
+        output
+    }
+
+    fn format_callees_ai(&self, callees: &[CallInfo], symbol_name: &str) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("[CALLEES:{}|{}]\n", symbol_name, callees.len()));
+
+        for callee in callees {
+            output.push_str(&format!("{}|{}|{}:{}",
+                callee.caller_name,
+                match callee.caller_type {
+                    SymbolType::Function => "f",
+                    SymbolType::Class => "c",
+                    SymbolType::Method => "m",
+                    SymbolType::Enum => "e",
+                    SymbolType::StaticField => "s",
+                    SymbolType::Heading => "h",
+                    SymbolType::CodeBlock => "cb",
+                },
+                callee.file_path,
+                callee.line
+            ));
+            if !callee.context.is_empty() {
+                output.push_str(&format!("|sig:{}", callee.context));
+            }
+            output.push('\n');
+        }
+
+        output
+    }
+
+    pub fn format_tests(&self, tests: &[TestInfo], symbol_name: &str) -> String {
+        match self.format {
+            OutputFormat::Default => self.format_tests_default(tests, symbol_name),
+            OutputFormat::Human => self.format_tests_human(tests, symbol_name),
+            OutputFormat::AI => self.format_tests_ai(tests, symbol_name),
+        }
+    }
+
+    fn format_tests_default(&self, tests: &[TestInfo], symbol_name: &str) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("# Tests covering `{}`\n\n", symbol_name));
+        output.push_str(&format!("Found {} test(s)\n\n", tests.len()));
+
+        for test in tests {
+            output.push_str(&format!("## {} ({})\n", test.test_name, test.test_type.as_str()));
+            output.push_str(&format!("- Test definition: {}:{}\n", test.file_path, test.line));
+            output.push_str(&format!("- Calls symbol at: line {}\n", test.call_line));
+            if !test.context.is_empty() {
+                output.push_str(&format!("- Context: `{}`\n", test.context));
+            }
+            output.push('\n');
+        }
+
+        output
+    }
+
+    fn format_tests_human(&self, tests: &[TestInfo], symbol_name: &str) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("{} {}\n\n", "Tests covering".green(), symbol_name.bold()));
+
+        let mut table = Table::new();
+        table
+            .load_preset(UTF8_FULL)
+            .apply_modifier(UTF8_ROUND_CORNERS)
+            .set_header(vec!["Test", "Type", "Location", "Call Line", "Context"]);
+
+        for test in tests {
+            table.add_row(vec![
+                test.test_name.clone(),
+                test.test_type.as_str().to_string(),
+                format!("{}:{}", test.file_path, test.line),
+                test.call_line.to_string(),
+                if test.context.len() > 50 {
+                    format!("{}...", &test.context[..47])
+                } else {
+                    test.context.clone()
+                },
+            ]);
+        }
+
+        output.push_str(&format!("{}\n", table));
+        output
+    }
+
+    fn format_tests_ai(&self, tests: &[TestInfo], symbol_name: &str) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("[TESTS:{}|{}]\n", symbol_name, tests.len()));
+
+        for test in tests {
+            output.push_str(&format!("{}|{}|{}:{}|call:{}",
+                test.test_name,
+                match test.test_type {
+                    SymbolType::Function => "f",
+                    SymbolType::Class => "c",
+                    SymbolType::Method => "m",
+                    SymbolType::Enum => "e",
+                    SymbolType::StaticField => "s",
+                    SymbolType::Heading => "h",
+                    SymbolType::CodeBlock => "cb",
+                },
+                test.file_path,
+                test.line,
+                test.call_line
+            ));
+            output.push('\n');
+        }
 
         output
     }

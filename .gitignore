@@ -22,6 +22,7 @@
 
 # Documentation
 *.md
+*.txt
 
 # Cache directory (created by project)
 .codemapper/
