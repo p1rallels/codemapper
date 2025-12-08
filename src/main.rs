@@ -10,6 +10,8 @@ mod indexer;
 mod models;
 mod output;
 mod parser;
+mod schema;
+mod snapshot;
 mod types;
 
 use anyhow::Result;
@@ -68,12 +70,38 @@ PRO TIPS FOR LLMs:
   • Start with stats → map → query workflow for any new codebase
 
 COMMAND REFERENCE:
-  stats   - File counts, symbol breakdown (START HERE)
-  map     - Project structure at different detail levels (1-3)
-  query   - Find symbols by name (use --fuzzy for flexibility)
-  inspect - See all symbols in a specific file
-  deps    - Track imports and find usage locations
-  index   - Validate indexing (rarely needed)
+  [Discovery]
+  stats       - File counts, symbol breakdown (START HERE)
+  map         - Project structure at levels 1-3
+  query       - Find symbols by name (--fuzzy for flexibility)
+  inspect     - All symbols in a specific file
+  deps        - Import relationships and usage
+
+  [Git Integration]
+  diff        - Symbol changes vs a git commit
+  since       - Breaking changes since commit (--breaking)
+  blame       - Who last modified a symbol
+  history     - Symbol evolution across commits
+
+  [Call Graph]
+  callers     - Who calls this function?
+  callees     - What does this function call?
+  trace       - Call path from A to B
+  entrypoints - Exported but uncalled symbols (API surface)
+
+  [Type Analysis]
+  types       - Param/return types and their definitions
+  implements  - Find interface/trait implementations
+  schema      - Field structure for structs/classes
+
+  [Testing]
+  tests       - Find tests covering a symbol
+  untested    - Symbols with no test coverage
+  test-deps   - Production symbols a test touches
+
+  [Snapshots]
+  snapshot    - Save symbol state for comparison
+  compare     - Diff current vs saved snapshot
 
 OUTPUT FORMATS:
   --format default  → Markdown (readable, structured)
@@ -1135,6 +1163,169 @@ WHEN TO USE:
         #[arg(long, default_value_t = false)]
         rebuild_cache: bool,
     },
+
+    /// [ANALYSIS] Show field structure for structs, classes, dataclasses, etc.
+    #[command(
+        about = "Display field schema for data structures (structs, classes, dataclasses, etc.)",
+        long_about = "USE CASE: Understand the field structure of data types
+  • Parse struct/class bodies to extract fields with types
+  • Works with Rust structs, Python dataclasses/Pydantic, TypeScript interfaces, Java classes, Go structs
+  • Shows field names, types, optionality, and default values
+
+LANGUAGE SUPPORT:
+  Rust       → struct fields (name: Type)
+  Python     → dataclass, TypedDict, Pydantic BaseModel fields
+  TypeScript → interface/class properties
+  Java       → class fields
+  Go         → struct fields
+
+TIP: Use --fuzzy for flexible symbol matching"
+    )]
+    #[command(after_help = "EXAMPLES:
+  cm schema User                           # Show fields of User struct/class
+  cm schema Config --fuzzy                 # Fuzzy search for Config
+  cm schema UserRequest ./src --format ai  # Token-efficient output
+  cm schema MyModel --format human         # Pretty table format
+
+TYPICAL WORKFLOW:
+  1. Find class: cm query MyClass --fuzzy
+  2. Show schema: cm schema MyClass
+  3. Understand types: cm types related_function
+
+WHEN TO USE:
+  ✓ \"What fields does this struct have?\"
+  ✓ \"What's the shape of this dataclass?\"
+  ✓ \"Which fields are optional in this model?\"")]
+    Schema {
+        /// Symbol name (struct/class/interface name)
+        symbol: String,
+
+        /// Directory path to search in
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Enable fuzzy matching for symbol name
+        #[arg(long, default_value = "false")]
+        fuzzy: bool,
+
+        /// Comma-separated file extensions to include
+        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,md")]
+        extensions: String,
+
+        /// Disable cache (always reindex)
+        #[arg(long, default_value_t = false)]
+        no_cache: bool,
+
+        /// Force rebuild cache
+        #[arg(long, default_value_t = false)]
+        rebuild_cache: bool,
+    },
+
+    /// [UTILITY] Save current symbol state as a named snapshot
+    #[command(
+        about = "Save a snapshot of current codebase symbols for later comparison",
+        long_about = "USE CASE: Create reference points for tracking code evolution
+  • Save current symbol state as a named reference
+  • Includes all symbols with signatures and locations
+  • Records git commit hash if in a git repository
+  • Stored in .codemapper/snapshots/<name>.json
+
+COMMON USES:
+  • Save baseline before major refactoring
+  • Track API surface changes over time
+  • Compare feature branches to main
+
+TIP: Use 'cm compare <name>' to see changes since the snapshot"
+    )]
+    #[command(after_help = "EXAMPLES:
+  cm snapshot baseline                      # Save snapshot named 'baseline'
+  cm snapshot v1.0                          # Save snapshot named 'v1.0'
+  cm snapshot pre-refactor --format human   # Save with confirmation table
+  cm snapshot --list                        # List all saved snapshots
+  cm snapshot --delete old-snap             # Delete a snapshot
+
+TYPICAL WORKFLOW:
+  1. Save baseline: cm snapshot before-changes
+  2. Make code changes
+  3. Compare: cm compare before-changes
+  4. Review added/deleted/modified symbols")]
+    Snapshot {
+        /// Snapshot name (required unless --list or --delete)
+        #[arg(required_unless_present_any = ["list", "delete"])]
+        name: Option<String>,
+
+        /// Directory path to analyze
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// List all saved snapshots
+        #[arg(long, default_value_t = false)]
+        list: bool,
+
+        /// Delete a snapshot by name
+        #[arg(long)]
+        delete: Option<String>,
+
+        /// Comma-separated file extensions to include
+        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,md")]
+        extensions: String,
+
+        /// Disable cache (always reindex)
+        #[arg(long, default_value_t = false)]
+        no_cache: bool,
+
+        /// Force rebuild cache
+        #[arg(long, default_value_t = false)]
+        rebuild_cache: bool,
+    },
+
+    /// [ANALYSIS] Compare current codebase to a saved snapshot
+    #[command(
+        about = "Show symbol-level changes between current code and a saved snapshot",
+        long_about = "USE CASE: Track code evolution since a snapshot was taken
+  • Compares current symbols against a previously saved snapshot
+  • Shows ADDED, DELETED, MODIFIED, and SIGNATURE_CHANGED symbols
+  • Like 'cm diff' but against a saved state instead of a git commit
+
+CHANGE TYPES:
+  ADDED            → New symbols that didn't exist in the snapshot
+  DELETED          → Symbols that were removed since the snapshot
+  MODIFIED         → Symbols with body/line changes (same signature)
+  SIGNATURE_CHANGED → Symbols with parameter or return type changes
+
+TIP: Save snapshots at key milestones for easy comparison"
+    )]
+    #[command(after_help = "EXAMPLES:
+  cm compare baseline                     # Compare to 'baseline' snapshot
+  cm compare v1.0 --format human          # Pretty table output
+  cm compare pre-refactor --format ai     # Token-efficient for LLMs
+  cm compare release --extensions py,rs   # Only Python and Rust files
+
+TYPICAL WORKFLOW:
+  1. Saved snapshot earlier: cm snapshot milestone
+  2. Made code changes
+  3. Review changes: cm compare milestone
+  4. See what was added/deleted/modified")]
+    Compare {
+        /// Snapshot name to compare against
+        snapshot: String,
+
+        /// Directory path to analyze
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Comma-separated file extensions to include
+        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,md")]
+        extensions: String,
+
+        /// Disable cache (always reindex)
+        #[arg(long, default_value_t = false)]
+        no_cache: bool,
+
+        /// Force rebuild cache
+        #[arg(long, default_value_t = false)]
+        rebuild_cache: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -1202,6 +1393,15 @@ fn main() -> Result<()> {
         }
         Commands::Types { symbol, path, fuzzy, extensions, no_cache, rebuild_cache } => {
             cmd_types(symbol, path, fuzzy, extensions, no_cache, rebuild_cache, format)?;
+        }
+        Commands::Schema { symbol, path, fuzzy, extensions, no_cache, rebuild_cache } => {
+            cmd_schema(symbol, path, fuzzy, extensions, no_cache, rebuild_cache, format)?;
+        }
+        Commands::Snapshot { name, path, list, delete, extensions, no_cache, rebuild_cache } => {
+            cmd_snapshot(name, path, list, delete, extensions, no_cache, rebuild_cache, format)?;
+        }
+        Commands::Compare { snapshot, path, extensions, no_cache, rebuild_cache } => {
+            cmd_compare(snapshot, path, extensions, no_cache, rebuild_cache, format)?;
         }
     }
 
@@ -2325,6 +2525,138 @@ fn cmd_types(
 
     let formatter = OutputFormatter::new(format);
     let output = formatter.format_types(&types_info);
+    println!("{}", output);
+
+    Ok(())
+}
+
+fn cmd_schema(
+    symbol: String,
+    path: PathBuf,
+    fuzzy: bool,
+    extensions: String,
+    no_cache: bool,
+    rebuild_cache: bool,
+    format: OutputFormat,
+) -> Result<()> {
+    let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
+    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
+
+    let match_type = if fuzzy { " (fuzzy)" } else { "" };
+    eprintln!("{} Analyzing schema for '{}'{}...", "→".cyan(), symbol.bold(), match_type);
+
+    let start = Instant::now();
+    let schemas = schema::analyze_schema(&index, &symbol, fuzzy)?;
+    let elapsed_ms = start.elapsed().as_millis();
+
+    if schemas.is_empty() {
+        println!("{} No class/struct found for '{}'", "✗".yellow(), symbol.bold());
+        return Ok(());
+    }
+
+    let total_fields: usize = schemas.iter().map(|s| s.fields.len()).sum();
+    eprintln!("{} Found {} schema(s) with {} field(s) in {}ms\n",
+        "✓".green(),
+        schemas.len().to_string().bold(),
+        total_fields.to_string().bold(),
+        elapsed_ms.to_string().bold()
+    );
+
+    let formatter = OutputFormatter::new(format);
+    let output = formatter.format_schema(&schemas);
+    println!("{}", output);
+
+    Ok(())
+}
+
+fn cmd_snapshot(
+    name: Option<String>,
+    path: PathBuf,
+    list: bool,
+    delete: Option<String>,
+    extensions: String,
+    no_cache: bool,
+    rebuild_cache: bool,
+    format: OutputFormat,
+) -> Result<()> {
+    let abs_path = if path.is_absolute() {
+        path.clone()
+    } else {
+        std::env::current_dir()?.join(&path)
+    };
+
+    if list {
+        let snapshots = snapshot::list_snapshots(&abs_path)?;
+        let formatter = OutputFormatter::new(format);
+        let output = formatter.format_snapshot_list(&snapshots);
+        println!("{}", output);
+        return Ok(());
+    }
+
+    if let Some(ref snap_name) = delete {
+        snapshot::delete_snapshot(snap_name, &abs_path)?;
+        eprintln!("{} Deleted snapshot '{}'", "✓".green(), snap_name.bold());
+        return Ok(());
+    }
+
+    let snap_name = name.unwrap_or_else(|| "unnamed".to_string());
+    let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
+
+    eprintln!("{} Creating snapshot '{}'...", "→".cyan(), snap_name.bold());
+
+    let start = Instant::now();
+    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
+    let saved = snapshot::save_snapshot(&index, &snap_name, &abs_path)?;
+    let elapsed_ms = start.elapsed().as_millis();
+
+    eprintln!("{} Saved {} symbols from {} files in {}ms\n",
+        "✓".green(),
+        saved.symbol_count.to_string().bold(),
+        saved.file_count.to_string().bold(),
+        elapsed_ms.to_string().bold()
+    );
+
+    let formatter = OutputFormatter::new(format);
+    let output = formatter.format_snapshot_saved(&saved);
+    println!("{}", output);
+
+    Ok(())
+}
+
+fn cmd_compare(
+    snapshot_name: String,
+    path: PathBuf,
+    extensions: String,
+    no_cache: bool,
+    rebuild_cache: bool,
+    format: OutputFormat,
+) -> Result<()> {
+    let abs_path = if path.is_absolute() {
+        path.clone()
+    } else {
+        std::env::current_dir()?.join(&path)
+    };
+
+    let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
+
+    eprintln!("{} Comparing to snapshot '{}'...", "→".cyan(), snapshot_name.bold());
+
+    let start = Instant::now();
+
+    let saved_snapshot = snapshot::load_snapshot(&snapshot_name, &abs_path)?;
+    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
+    let result = snapshot::compare_to_snapshot(&index, &saved_snapshot);
+
+    let elapsed_ms = start.elapsed().as_millis();
+
+    eprintln!("{} Found {} change(s) in {}ms\n",
+        "✓".green(),
+        result.symbols.len().to_string().bold(),
+        elapsed_ms.to_string().bold()
+    );
+
+    let formatter = OutputFormatter::new(format);
+    let output = formatter.format_diff(&result);
     println!("{}", output);
 
     Ok(())
