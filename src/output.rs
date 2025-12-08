@@ -4,6 +4,8 @@ use crate::diff::{ChangeType, DiffResult, SymbolDiff};
 use crate::implements::Implementation;
 use crate::index::CodeIndex;
 use crate::models::{Symbol, SymbolType};
+use crate::schema::SchemaInfo;
+use crate::snapshot::Snapshot;
 use crate::types::SymbolTypes;
 use colored::*;
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, Table};
@@ -2088,6 +2090,222 @@ impl OutputFormatter {
             if let Some(ref ret) = symbol.return_type {
                 let defined = ret.defined_in.as_deref().unwrap_or("-");
                 output.push_str(&format!("R:{}|{}\n", ret.type_name, defined));
+            }
+        }
+
+        output
+    }
+
+    pub fn format_snapshot_saved(&self, snapshot: &Snapshot) -> String {
+        match self.format {
+            OutputFormat::Default => self.format_snapshot_saved_default(snapshot),
+            OutputFormat::Human => self.format_snapshot_saved_human(snapshot),
+            OutputFormat::AI => self.format_snapshot_saved_ai(snapshot),
+        }
+    }
+
+    fn format_snapshot_saved_default(&self, snapshot: &Snapshot) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("# Snapshot Saved: `{}`\n\n", snapshot.name));
+        output.push_str(&format!("- Files: {}\n", snapshot.file_count));
+        output.push_str(&format!("- Symbols: {}\n", snapshot.symbol_count));
+        if let Some(ref commit) = snapshot.commit {
+            output.push_str(&format!("- Git Commit: `{}`\n", commit));
+        }
+        output
+    }
+
+    fn format_snapshot_saved_human(&self, snapshot: &Snapshot) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("{} {}\n\n", "Snapshot Saved:".green(), snapshot.name.bold()));
+        
+        let mut table = Table::new();
+        table
+            .load_preset(UTF8_FULL)
+            .apply_modifier(UTF8_ROUND_CORNERS)
+            .set_header(vec!["Property", "Value"]);
+        
+        table.add_row(vec!["Name", &snapshot.name]);
+        table.add_row(vec!["Files", &snapshot.file_count.to_string()]);
+        table.add_row(vec!["Symbols", &snapshot.symbol_count.to_string()]);
+        if let Some(ref commit) = snapshot.commit {
+            table.add_row(vec!["Git Commit", commit]);
+        }
+        
+        output.push_str(&format!("{}\n", table));
+        output
+    }
+
+    fn format_snapshot_saved_ai(&self, snapshot: &Snapshot) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("[SNAPSHOT_SAVED:{}]\n", snapshot.name));
+        output.push_str(&format!("FILES:{} SYMBOLS:{}", snapshot.file_count, snapshot.symbol_count));
+        if let Some(ref commit) = snapshot.commit {
+            output.push_str(&format!(" COMMIT:{}", commit));
+        }
+        output.push('\n');
+        output
+    }
+
+    pub fn format_snapshot_list(&self, snapshots: &[String]) -> String {
+        match self.format {
+            OutputFormat::Default => self.format_snapshot_list_default(snapshots),
+            OutputFormat::Human => self.format_snapshot_list_human(snapshots),
+            OutputFormat::AI => self.format_snapshot_list_ai(snapshots),
+        }
+    }
+
+    fn format_snapshot_list_default(&self, snapshots: &[String]) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("# Snapshots ({})\n\n", snapshots.len()));
+        for name in snapshots {
+            output.push_str(&format!("- {}\n", name));
+        }
+        output
+    }
+
+    fn format_snapshot_list_human(&self, snapshots: &[String]) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("{} {} snapshot(s)\n\n", "Found".green(), snapshots.len().to_string().bold()));
+        
+        if snapshots.is_empty() {
+            output.push_str("No snapshots found. Create one with 'cm snapshot <name>'\n");
+            return output;
+        }
+        
+        let mut table = Table::new();
+        table
+            .load_preset(UTF8_FULL)
+            .apply_modifier(UTF8_ROUND_CORNERS)
+            .set_header(vec!["Snapshot Name"]);
+        
+        for name in snapshots {
+            table.add_row(vec![name.clone()]);
+        }
+        
+        output.push_str(&format!("{}\n", table));
+        output
+    }
+
+    fn format_snapshot_list_ai(&self, snapshots: &[String]) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("[SNAPSHOTS:{}]\n", snapshots.len()));
+        for name in snapshots {
+            output.push_str(&format!("{}\n", name));
+        }
+        output
+    }
+
+    pub fn format_schema(&self, schemas: &[SchemaInfo]) -> String {
+        match self.format {
+            OutputFormat::Default => self.format_schema_default(schemas),
+            OutputFormat::Human => self.format_schema_human(schemas),
+            OutputFormat::AI => self.format_schema_ai(schemas),
+        }
+    }
+
+    fn format_schema_default(&self, schemas: &[SchemaInfo]) -> String {
+        let mut output = String::new();
+        output.push_str("# Schema Analysis\n\n");
+        output.push_str(&format!("Found {} schema(s)\n\n", schemas.len()));
+
+        for schema in schemas {
+            output.push_str(&format!("## {} ({})\n\n", schema.symbol_name, schema.symbol_type.as_str()));
+            output.push_str(&format!("- Language: {}\n", schema.language.as_str()));
+            output.push_str(&format!("- Location: `{}:{}`\n", schema.file_path.display(), schema.line));
+            output.push_str(&format!("- Fields: {}\n\n", schema.fields.len()));
+
+            if schema.fields.is_empty() {
+                output.push_str("*No fields found*\n\n");
+            } else {
+                output.push_str("| Field | Type | Optional | Default |\n");
+                output.push_str("|-------|------|----------|--------|\n");
+                for field in &schema.fields {
+                    let optional = if field.is_optional { "✓" } else { "" };
+                    let default = field.default_value.as_deref().unwrap_or("-");
+                    output.push_str(&format!("| {} | `{}` | {} | {} |\n",
+                        field.name, field.type_name, optional, default));
+                }
+                output.push('\n');
+            }
+        }
+
+        output
+    }
+
+    fn format_schema_human(&self, schemas: &[SchemaInfo]) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("{}\n\n", "Schema Analysis".bold().green()));
+        output.push_str(&format!("{} {} schema(s)\n\n", "Found".cyan(), schemas.len().to_string().bold()));
+
+        for schema in schemas {
+            output.push_str(&format!("{} {} ({})\n",
+                "→".cyan(),
+                schema.symbol_name.bold(),
+                schema.symbol_type.as_str()
+            ));
+            output.push_str(&format!("  Language: {} | Location: {}:{}\n\n",
+                schema.language.as_str(),
+                schema.file_path.display(),
+                schema.line
+            ));
+
+            if schema.fields.is_empty() {
+                output.push_str(&format!("  {}\n\n", "No fields found".yellow()));
+            } else {
+                let mut table = Table::new();
+                table
+                    .load_preset(UTF8_FULL)
+                    .apply_modifier(UTF8_ROUND_CORNERS)
+                    .set_header(vec!["Field", "Type", "Optional", "Default"]);
+
+                for field in &schema.fields {
+                    let optional = if field.is_optional {
+                        "✓".green().to_string()
+                    } else {
+                        "-".to_string()
+                    };
+                    let default = field.default_value.as_deref().unwrap_or("-");
+                    table.add_row(vec![
+                        field.name.clone(),
+                        field.type_name.clone(),
+                        optional,
+                        default.to_string(),
+                    ]);
+                }
+
+                output.push_str(&format!("{}\n\n", table));
+            }
+        }
+
+        output
+    }
+
+    fn format_schema_ai(&self, schemas: &[SchemaInfo]) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("[SCHEMA:{}]\n", schemas.len()));
+
+        for schema in schemas {
+            output.push_str(&format!("SYM:{}|{}|{}|{}:{}\n",
+                schema.symbol_name,
+                match schema.symbol_type {
+                    SymbolType::Class => "c",
+                    SymbolType::Enum => "e",
+                    _ => "?",
+                },
+                schema.language.as_str(),
+                schema.file_path.display(),
+                schema.line
+            ));
+
+            for field in &schema.fields {
+                let opt_marker = if field.is_optional { "?" } else { "" };
+                let default = field.default_value.as_deref().unwrap_or("");
+                if default.is_empty() {
+                    output.push_str(&format!("F:{}{}|{}\n", field.name, opt_marker, field.type_name));
+                } else {
+                    output.push_str(&format!("F:{}{}|{}|={}\n", field.name, opt_marker, field.type_name, default));
+                }
             }
         }
 
