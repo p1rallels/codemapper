@@ -146,6 +146,7 @@ impl PythonParser {
                     line_end,
                     parent_id,
                     file_path: file_path.to_path_buf(),
+                    is_exported: parent_id.is_none(),
                 });
             }
         }
@@ -234,6 +235,7 @@ impl PythonParser {
                     line_end,
                     parent_id,
                     file_path: file_path.to_path_buf(),
+                    is_exported: !is_method,
                 });
             }
         }
@@ -309,6 +311,7 @@ impl PythonParser {
                         line_end,
                         parent_id: None,
                         file_path: file_path.to_path_buf(),
+                        is_exported: true,
                     });
                 }
             }

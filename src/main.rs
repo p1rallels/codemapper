@@ -108,43 +108,38 @@ OUTPUT FORMATS:
   --format human    → Tables (best for terminal viewing)
   --format ai       → Compact (token-efficient for LLMs)
 
+COMMON FLAGS (available on multiple commands):
+  --skip-anonymous  Filter out anonymous/lambda functions (query, inspect, diff)
+  --exports-only    Show only exported/public symbols (query, inspect)
+  --show-body       Display actual code implementation
+  --fuzzy           Flexible symbol matching (case-insensitive)
+  --fast            Force fast mode for large repos (auto-enabled for 1000+ files)
+
 SUPPORTED LANGUAGES:
-  Python, JavaScript, TypeScript, Rust, Java, Go, C, Markdown
+  Python      → functions, classes, methods, imports
+  TypeScript  → functions, classes, methods, interfaces, types, enums (NEW)
+  JavaScript  → functions, classes, methods, imports
+  Rust        → functions, structs, impl blocks, traits, enums
+  Java        → classes, interfaces, methods, enums
+  Go          → functions, structs, methods, interfaces
+  C           → functions, structs, includes
+  Markdown    → headings, code blocks
 
 PERFORMANCE:
   • Small projects (< 100 files): < 20ms cold start
   • Large projects (1000+ files): Auto-enables fast mode (10-100x speedup)
   • Example: 18,457 files in 1.2s vs 76s (63x faster)
 
-SMART CACHING (Automatic + Threshold-based):
-  • Cache is ONLY created when indexing takes ≥ 300ms (automatic, no config needed)
-  • Small repos (< 300ms): No cache created - runs are already fast enough!
-  • Large repos (≥ 300ms): Auto-caches on first run, then loads from cache
-  • Cache location: <project_root>/.codemapper/cache/ (auto-added to .gitignore)
+CACHING (Automatic):
+  • Auto-enabled when indexing takes ≥ 300ms
+  • Small repos: No cache, always fast
+  • Large repos: ~0.5s cache load, incremental updates ~1s
+  • Flags: --no-cache (skip), --rebuild-cache (force rebuild)
+  • See 'cm stats --help' for full caching details
 
-  CACHE BEHAVIOR:
-  ✓ Small repos (< 100 files, < 300ms): No cache, re-index every time (imperceptible)
-  ✓ First run on large repo: Parses all files, creates cache if ≥ 300ms
-  ✓ Cache hit (no changes): Instant load ~0.5s (21k files validated in < 1s)
-  ✓ Incremental update (1 file changed): ~1s (validates all, re-parses changed, 45-55x faster)
-  ✓ Incremental update (few files changed): Scales linearly with changed file count
-  ✓ Major changes (>10% files): Auto-rebuilds entire cache for consistency
-
-  VALIDATION STRATEGY:
-  • Skips ignored directories (.git, node_modules, __pycache__, target, dist, build)
-  • Uses mtime + size pre-filter (like git) - only hashes files that look changed
-  • Detects new files, deleted files, and modified files
-  • Smart enough to skip false alarms (mtime changed but content didn't)
-  • Blake3 hashing for fast, secure file change detection
-
-  CACHE FLAGS:
-  --no-cache        Skip cache entirely, always reindex (useful for benchmarking)
-  --rebuild-cache   Force rebuild cache from scratch (use after git operations)
-
-  WHY THE 300ms THRESHOLD?:
-  Below 300ms, re-indexing is faster than cache validation overhead. Above 300ms,
-  caching saves significant time. This is automatic - repos that grow past 300ms
-  will start caching automatically. Small repos stay clean with no .codemapper/ clutter!
+DETAILED HELP:
+  cm <command> --help    Show detailed options for a command
+  Example: cm query --help
 
 EXAMPLES:
   cm stats /my/project              # Quick codebase overview
@@ -357,6 +352,14 @@ WHEN TO USE:
         /// Force rebuild cache (invalidate and reindex)
         #[arg(long, default_value_t = false)]
         rebuild_cache: bool,
+
+        /// Filter out anonymous functions from results
+        #[arg(long, default_value_t = false)]
+        skip_anonymous: bool,
+
+        /// Show only exported/public symbols (functions/classes with export keyword, pub visibility, etc.)
+        #[arg(long, default_value_t = false)]
+        exports_only: bool,
     },
 
     /// [SEARCH] Explore a single file in detail - see all symbols with their signatures
@@ -398,6 +401,14 @@ WHEN TO USE:
         /// Show the actual code implementation for each symbol
         #[arg(long, default_value = "false")]
         show_body: bool,
+
+        /// Filter out anonymous functions from results
+        #[arg(long, default_value_t = false)]
+        skip_anonymous: bool,
+
+        /// Show only exported/public symbols (functions/classes with export keyword, pub visibility, etc.)
+        #[arg(long, default_value_t = false)]
+        exports_only: bool,
     },
 
     /// [ANALYSIS] Track dependencies - see what imports what, or find all usages
@@ -557,6 +568,10 @@ WHEN TO USE:
         /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,md')
         #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,md")]
         extensions: String,
+
+        /// Filter out anonymous functions from results
+        #[arg(long, default_value_t = false)]
+        skip_anonymous: bool,
     },
 
     /// [ANALYSIS] Find all call sites of a function (reverse call graph)
@@ -1343,11 +1358,11 @@ fn main() -> Result<()> {
         Commands::Map { path, level, extensions, no_cache, rebuild_cache } => {
             cmd_map(path, level, extensions, no_cache, rebuild_cache, format)?;
         }
-        Commands::Query { symbol, path, fuzzy, r#type, context, show_body, fast, extensions, no_cache, rebuild_cache } => {
-            cmd_query(symbol, path, context, fuzzy, fast, show_body, r#type, extensions, no_cache, rebuild_cache, format)?;
+        Commands::Query { symbol, path, fuzzy, r#type, context, show_body, fast, extensions, no_cache, rebuild_cache, skip_anonymous, exports_only } => {
+            cmd_query(symbol, path, context, fuzzy, fast, show_body, r#type, extensions, no_cache, rebuild_cache, skip_anonymous, exports_only, format)?;
         }
-        Commands::Inspect { file_path, show_body } => {
-            cmd_inspect(file_path, show_body, format)?;
+        Commands::Inspect { file_path, show_body, skip_anonymous, exports_only } => {
+            cmd_inspect(file_path, show_body, skip_anonymous, exports_only, format)?;
         }
         Commands::Deps { target, path, direction, extensions, no_cache, rebuild_cache } => {
             cmd_deps(target, path, direction, extensions, no_cache, rebuild_cache, format)?;
@@ -1355,8 +1370,8 @@ fn main() -> Result<()> {
         Commands::Index { path, extensions } => {
             cmd_index(path, extensions)?;
         }
-        Commands::Diff { commit, path, extensions } => {
-            cmd_diff(commit, path, extensions, format)?;
+        Commands::Diff { commit, path, extensions, skip_anonymous } => {
+            cmd_diff(commit, path, extensions, skip_anonymous, format)?;
         }
         Commands::Callers { symbol, path, fuzzy, extensions, no_cache, rebuild_cache } => {
             cmd_callers(symbol, path, fuzzy, extensions, no_cache, rebuild_cache, format)?;
@@ -1646,6 +1661,8 @@ fn cmd_query(
     extensions: String,
     no_cache: bool,
     rebuild_cache: bool,
+    skip_anonymous: bool,
+    exports_only: bool,
     format: OutputFormat
 ) -> Result<()> {
     use fast_search::GrepFilter;
@@ -1717,6 +1734,16 @@ fn cmd_query(
                 symbols.retain(|s| s.symbol_type == filter_type);
             }
 
+            // Filter anonymous if requested
+            if skip_anonymous {
+                symbols.retain(|s| s.name != "anonymous");
+            }
+
+            // Filter to exports only if requested
+            if exports_only {
+                symbols.retain(|s| s.is_exported);
+            }
+
             if symbols.is_empty() {
                 println!("{} No symbols found matching '{}'", "✗".red(), symbol.bold());
                 return Ok(());
@@ -1735,6 +1762,16 @@ fn cmd_query(
             // Apply type filter if specified
             if let Some(filter_type) = type_filter {
                 owned_symbols.retain(|s| s.symbol_type == filter_type);
+            }
+
+            // Filter anonymous if requested
+            if skip_anonymous {
+                owned_symbols.retain(|s| s.name != "anonymous");
+            }
+
+            // Filter to exports only if requested
+            if exports_only {
+                owned_symbols.retain(|s| s.is_exported);
             }
 
             if owned_symbols.is_empty() {
@@ -1764,6 +1801,16 @@ fn cmd_query(
         // Apply type filter if specified
         if let Some(filter_type) = type_filter {
             symbols.retain(|s| s.symbol_type == filter_type);
+        }
+
+        // Filter anonymous if requested
+        if skip_anonymous {
+            symbols.retain(|s| s.name != "anonymous");
+        }
+
+        // Filter to exports only if requested
+        if exports_only {
+            symbols.retain(|s| s.is_exported);
         }
 
         if symbols.is_empty() {
@@ -1981,7 +2028,7 @@ fn cmd_stats(path: PathBuf, extensions: String, no_cache: bool, rebuild_cache: b
     Ok(())
 }
 
-fn cmd_inspect(file_path: PathBuf, show_body: bool, format: OutputFormat) -> Result<()> {
+fn cmd_inspect(file_path: PathBuf, show_body: bool, skip_anonymous: bool, exports_only: bool, format: OutputFormat) -> Result<()> {
     use std::fs;
 
     if !file_path.exists() {
@@ -1999,8 +2046,18 @@ fn cmd_inspect(file_path: PathBuf, show_body: bool, format: OutputFormat) -> Res
 
     let content = fs::read_to_string(&file_path)?;
     let start = Instant::now();
-    let file_info = indexer::index_file(&file_path, &content, language, None)?;
+    let mut file_info = indexer::index_file(&file_path, &content, language, None)?;
     let elapsed_ms = start.elapsed().as_millis();
+
+    // Filter anonymous if requested
+    if skip_anonymous {
+        file_info.symbols.retain(|s| s.name != "anonymous");
+    }
+
+    // Filter to exports only if requested
+    if exports_only {
+        file_info.symbols.retain(|s| s.is_exported);
+    }
 
     if file_info.symbols.is_empty() {
         println!("{} No symbols found in {}", "✗".yellow(), file_path.display());
@@ -2047,7 +2104,7 @@ fn cmd_inspect(file_path: PathBuf, show_body: bool, format: OutputFormat) -> Res
     Ok(())
 }
 
-fn cmd_diff(commit: String, path: PathBuf, extensions: String, format: OutputFormat) -> Result<()> {
+fn cmd_diff(commit: String, path: PathBuf, extensions: String, skip_anonymous: bool, format: OutputFormat) -> Result<()> {
     use std::time::Instant;
     
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
@@ -2062,8 +2119,13 @@ fn cmd_diff(commit: String, path: PathBuf, extensions: String, format: OutputFor
         Some(path.as_path())
     };
     
-    let result = diff::compute_diff(&std::env::current_dir()?, &commit, subpath, &ext_list)?;
+    let mut result = diff::compute_diff(&std::env::current_dir()?, &commit, subpath, &ext_list)?;
     let elapsed_ms = start.elapsed().as_millis();
+
+    // Filter anonymous if requested
+    if skip_anonymous {
+        result.symbols.retain(|s| s.name != "anonymous");
+    }
     
     eprintln!("{} Analyzed {} files in {}ms\n", 
         "✓".green(), 

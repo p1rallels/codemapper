@@ -102,6 +102,7 @@ impl CParser {
                         line_end,
                         parent_id: None,
                         file_path: file_path.to_path_buf(),
+                        is_exported: false,
                     });
                 }
             }
@@ -162,6 +163,7 @@ impl CParser {
                         line_end,
                         parent_id: None,
                         file_path: file_path.to_path_buf(),
+                        is_exported: false,
                     });
                 }
             }
@@ -210,6 +212,7 @@ impl CParser {
                         line_end,
                         parent_id: None,
                         file_path: file_path.to_path_buf(),
+                        is_exported: false,
                     });
                 }
             }

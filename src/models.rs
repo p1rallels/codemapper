@@ -53,6 +53,8 @@ pub enum SymbolType {
     StaticField,
     Heading,
     CodeBlock,
+    Interface,
+    TypeAlias,
 }
 
 impl SymbolType {
@@ -65,6 +67,8 @@ impl SymbolType {
             SymbolType::StaticField => "static",
             SymbolType::Heading => "heading",
             SymbolType::CodeBlock => "code_block",
+            SymbolType::Interface => "interface",
+            SymbolType::TypeAlias => "type",
         }
     }
 
@@ -77,6 +81,8 @@ impl SymbolType {
             "static" | "staticfield" => Some(SymbolType::StaticField),
             "heading" | "header" => Some(SymbolType::Heading),
             "code_block" | "codeblock" => Some(SymbolType::CodeBlock),
+            "interface" => Some(SymbolType::Interface),
+            "type" | "typealias" | "type_alias" => Some(SymbolType::TypeAlias),
             _ => None,
         }
     }
@@ -90,6 +96,8 @@ impl SymbolType {
             "statics" | "staticfields" => Some(SymbolType::StaticField),
             "headings" | "headers" => Some(SymbolType::Heading),
             "code_blocks" | "codeblocks" => Some(SymbolType::CodeBlock),
+            "interfaces" => Some(SymbolType::Interface),
+            "types" | "typealiases" | "type_aliases" => Some(SymbolType::TypeAlias),
             _ => None,
         }
     }
@@ -105,6 +113,7 @@ pub struct Symbol {
     pub line_end: usize,
     pub parent_id: Option<usize>,
     pub file_path: PathBuf,
+    pub is_exported: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

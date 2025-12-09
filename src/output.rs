@@ -266,6 +266,8 @@ impl OutputFormatter {
                                 SymbolType::StaticField => "s",
                                 SymbolType::Heading => "h",
                                 SymbolType::CodeBlock => "cb",
+                                SymbolType::Interface => "if",
+                                SymbolType::TypeAlias => "ty",
                             },
                             symbol.name,
                             symbol.line_start,
@@ -293,8 +295,9 @@ impl OutputFormatter {
         output.push_str(&format!("Found {} symbols\n\n", symbols.len()));
 
         for symbol in symbols {
+            let export_marker = if symbol.is_exported { " (exported)" } else { "" };
             output.push_str(&format!("## {}\n", symbol.name));
-            output.push_str(&format!("- Type: {}\n", symbol.symbol_type.as_str()));
+            output.push_str(&format!("- Type: {}{}\n", symbol.symbol_type.as_str(), export_marker));
             output.push_str(&format!("- File: {}\n", symbol.file_path.display()));
             output.push_str(&format!("- Lines: {}-{}\n", symbol.line_start, symbol.line_end));
 
@@ -385,7 +388,8 @@ impl OutputFormatter {
         output.push_str(&format!("[RESULTS:{}]\n", symbols.len()));
 
         for symbol in symbols {
-            output.push_str(&format!("{}|{}|{}|{}-{}",
+            let export_tag = if symbol.is_exported { "|exp" } else { "" };
+            output.push_str(&format!("{}|{}|{}|{}-{}{}",
                 symbol.name,
                 match symbol.symbol_type {
                     SymbolType::Function => "f",
@@ -395,10 +399,13 @@ impl OutputFormatter {
                     SymbolType::StaticField => "s",
                     SymbolType::Heading => "h",
                     SymbolType::CodeBlock => "cb",
+                    SymbolType::Interface => "if",
+                    SymbolType::TypeAlias => "ty",
                 },
                 symbol.file_path.display(),
                 symbol.line_start,
-                symbol.line_end
+                symbol.line_end,
+                export_tag
             ));
 
             if context {
@@ -768,6 +775,8 @@ impl OutputFormatter {
                     SymbolType::StaticField => "s",
                     SymbolType::Heading => "h",
                     SymbolType::CodeBlock => "cb",
+                                SymbolType::Interface => "if",
+                                SymbolType::TypeAlias => "ty",
                 },
                 sym.file_path.display()
             ));
@@ -950,6 +959,8 @@ impl OutputFormatter {
                     SymbolType::StaticField => "s",
                     SymbolType::Heading => "h",
                     SymbolType::CodeBlock => "cb",
+                                SymbolType::Interface => "if",
+                                SymbolType::TypeAlias => "ty",
                 },
                 sym.file_path.display()
             ));
@@ -1040,6 +1051,8 @@ impl OutputFormatter {
                     SymbolType::StaticField => "s",
                     SymbolType::Heading => "h",
                     SymbolType::CodeBlock => "cb",
+                                SymbolType::Interface => "if",
+                                SymbolType::TypeAlias => "ty",
                 },
                 caller.file_path,
                 caller.line
@@ -1127,6 +1140,8 @@ impl OutputFormatter {
                     SymbolType::StaticField => "s",
                     SymbolType::Heading => "h",
                     SymbolType::CodeBlock => "cb",
+                                SymbolType::Interface => "if",
+                                SymbolType::TypeAlias => "ty",
                 },
                 callee.file_path,
                 callee.line
@@ -1209,6 +1224,8 @@ impl OutputFormatter {
                     SymbolType::StaticField => "s",
                     SymbolType::Heading => "h",
                     SymbolType::CodeBlock => "cb",
+                                SymbolType::Interface => "if",
+                                SymbolType::TypeAlias => "ty",
                 },
                 test.file_path,
                 test.line,
@@ -1290,6 +1307,8 @@ impl OutputFormatter {
                     SymbolType::StaticField => "s",
                     SymbolType::Heading => "h",
                     SymbolType::CodeBlock => "cb",
+                                SymbolType::Interface => "if",
+                                SymbolType::TypeAlias => "ty",
                 },
                 dep.file_path,
                 dep.line,
@@ -1419,6 +1438,8 @@ impl OutputFormatter {
                     SymbolType::StaticField => "s",
                     SymbolType::Heading => "h",
                     SymbolType::CodeBlock => "cb",
+                                SymbolType::Interface => "if",
+                                SymbolType::TypeAlias => "ty",
                 },
                 info.file_path,
                 info.line
@@ -1566,6 +1587,8 @@ impl OutputFormatter {
                     SymbolType::StaticField => "s",
                     SymbolType::Heading => "h",
                     SymbolType::CodeBlock => "cb",
+                                SymbolType::Interface => "if",
+                                SymbolType::TypeAlias => "ty",
                 },
                 entry.file_path,
                 entry.line
@@ -1883,6 +1906,8 @@ impl OutputFormatter {
                     SymbolType::StaticField => "s",
                     SymbolType::Heading => "h",
                     SymbolType::CodeBlock => "cb",
+                                SymbolType::Interface => "if",
+                                SymbolType::TypeAlias => "ty",
                 },
                 step.file_path,
                 step.line
@@ -2072,6 +2097,8 @@ impl OutputFormatter {
                     SymbolType::StaticField => "s",
                     SymbolType::Heading => "h",
                     SymbolType::CodeBlock => "cb",
+                                SymbolType::Interface => "if",
+                                SymbolType::TypeAlias => "ty",
                 },
                 symbol.file_path,
                 symbol.line

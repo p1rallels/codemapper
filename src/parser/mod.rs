@@ -5,6 +5,7 @@ pub mod javascript;
 pub mod markdown;
 pub mod python;
 pub mod rust;
+pub mod typescript;
 
 use crate::models::{Dependency, Symbol};
 use anyhow::Result;

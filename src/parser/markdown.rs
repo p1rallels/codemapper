@@ -119,6 +119,7 @@ impl MarkdownParser {
                             line_end,
                             parent_id,
                             file_path: file_path.to_path_buf(),
+                            is_exported: false,
                         });
                     }
                 }
@@ -198,6 +199,7 @@ impl MarkdownParser {
                         line_end,
                         parent_id: None,
                         file_path: file_path.to_path_buf(),
+                        is_exported: false,
                     });
                 }
                 _ => {}

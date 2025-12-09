@@ -7,6 +7,25 @@ use tree_sitter::{Node, Parser as TSParser, Query, QueryCursor};
 
 pub struct JavaScriptParser;
 
+fn is_exported(node: Node) -> bool {
+    let mut current = node;
+    const MAX_DEPTH: usize = 3;
+    let mut depth = 0;
+    
+    while depth < MAX_DEPTH {
+        if let Some(parent) = current.parent() {
+            if parent.kind() == "export_statement" {
+                return true;
+            }
+            current = parent;
+            depth += 1;
+        } else {
+            break;
+        }
+    }
+    false
+}
+
 impl JavaScriptParser {
     pub fn new() -> Result<Self> {
         Ok(Self)
@@ -70,6 +89,7 @@ impl JavaScriptParser {
                         line_end,
                         parent_id: None,
                         file_path: file_path.to_path_buf(),
+                        is_exported: is_exported(node),
                     });
                 }
             }
@@ -101,12 +121,103 @@ impl JavaScriptParser {
                     ));
                 }
                 Some("arrow.def") | Some("func_expr.def") => {
+                    if let Some(test_name) = self.extract_test_context(capture.node, source) {
+                        return Ok(Some(test_name));
+                    }
                     return Ok(Some("anonymous".to_string()));
                 }
                 _ => {}
             }
         }
         Ok(None)
+    }
+
+    fn extract_test_context(&self, node: Node, source: &str) -> Option<String> {
+        let mut current = node.parent()?;
+        
+        const MAX_DEPTH: usize = 10;
+        let mut depth = 0;
+        
+        while depth < MAX_DEPTH {
+            if current.kind() == "arguments" {
+                if let Some(call_expr) = current.parent() {
+                    if call_expr.kind() == "call_expression" {
+                        return self.extract_test_name_from_call(call_expr, source);
+                    }
+                }
+            }
+            
+            current = current.parent()?;
+            depth += 1;
+        }
+        
+        None
+    }
+
+    fn extract_test_name_from_call(&self, call_node: Node, source: &str) -> Option<String> {
+        let mut cursor = call_node.walk();
+        
+        if !cursor.goto_first_child() {
+            return None;
+        }
+        
+        let mut func_name: Option<String> = None;
+        let mut description: Option<String> = None;
+        
+        loop {
+            let child = cursor.node();
+            
+            match child.kind() {
+                "identifier" | "member_expression" => {
+                    let name = child.utf8_text(source.as_bytes()).ok()?;
+                    func_name = Some(name.to_string());
+                }
+                "arguments" => {
+                    let mut args_cursor = child.walk();
+                    if args_cursor.goto_first_child() {
+                        loop {
+                            let arg = args_cursor.node();
+                            if arg.kind() == "string" || arg.kind() == "template_string" {
+                                let text = arg.utf8_text(source.as_bytes()).ok()?;
+                                let cleaned = text
+                                    .trim_matches('\'')
+                                    .trim_matches('"')
+                                    .trim_matches('`')
+                                    .to_string();
+                                description = Some(cleaned);
+                                break;
+                            }
+                            if !args_cursor.goto_next_sibling() {
+                                break;
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+            
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+        
+        let func = func_name?;
+        let func_lower = func.to_lowercase();
+        
+        match func_lower.as_str() {
+            "describe" => {
+                let desc = description.unwrap_or_else(|| "suite".to_string());
+                Some(format!("describe:{}", desc))
+            }
+            "it" | "test" => {
+                let desc = description.unwrap_or_else(|| "test".to_string());
+                Some(format!("test:{}", desc))
+            }
+            "beforeeach" | "aftereach" | "beforeall" | "afterall" => {
+                Some(func_lower)
+            }
+            _ => None,
+        }
     }
 
     fn extract_function_node<'a>(
@@ -192,6 +303,7 @@ impl JavaScriptParser {
                     line_end,
                     parent_id: None,
                     file_path: file_path.to_path_buf(),
+                    is_exported: is_exported(def_cap.node),
                 });
             }
         }
@@ -267,6 +379,7 @@ impl JavaScriptParser {
                     line_end,
                     parent_id,
                     file_path: file_path.to_path_buf(),
+                    is_exported: false,
                 });
             }
         }
@@ -492,6 +605,107 @@ class Calculator {
 
         assert_eq!(result.dependencies.len(), 1);
         assert_eq!(result.dependencies[0].import_name, "fs");
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_describe_block() -> Result<()> {
+        let parser = JavaScriptParser::new()?;
+        let content = r#"
+describe('User Authentication', () => {
+    console.log('test suite');
+});
+        "#;
+        let path = Path::new("test.js");
+
+        let result = parser.parse(content, path)?;
+
+        assert!(result
+            .symbols
+            .iter()
+            .any(|s| s.name == "describe:User Authentication" && s.symbol_type == SymbolType::Function));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_it_block() -> Result<()> {
+        let parser = JavaScriptParser::new()?;
+        let content = r#"
+it('should validate email', () => {
+    expect(true).toBe(true);
+});
+        "#;
+        let path = Path::new("test.js");
+
+        let result = parser.parse(content, path)?;
+
+        assert!(result
+            .symbols
+            .iter()
+            .any(|s| s.name == "test:should validate email" && s.symbol_type == SymbolType::Function));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_test_block() -> Result<()> {
+        let parser = JavaScriptParser::new()?;
+        let content = r#"
+test('handles empty input', () => {
+    expect(parse('')).toBeNull();
+});
+        "#;
+        let path = Path::new("test.js");
+
+        let result = parser.parse(content, path)?;
+
+        assert!(result
+            .symbols
+            .iter()
+            .any(|s| s.name == "test:handles empty input" && s.symbol_type == SymbolType::Function));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_beforeeach_hook() -> Result<()> {
+        let parser = JavaScriptParser::new()?;
+        let content = r#"
+beforeEach(() => {
+    setup();
+});
+        "#;
+        let path = Path::new("test.js");
+
+        let result = parser.parse(content, path)?;
+
+        assert!(result
+            .symbols
+            .iter()
+            .any(|s| s.name == "beforeeach" && s.symbol_type == SymbolType::Function));
+        Ok(())
+    }
+
+    #[test]
+    fn test_nested_describe_it() -> Result<()> {
+        let parser = JavaScriptParser::new()?;
+        let content = r#"
+describe('Auth', () => {
+    it('should login', () => {
+        // test
+    });
+});
+        "#;
+        let path = Path::new("test.js");
+
+        let result = parser.parse(content, path)?;
+
+        assert!(result
+            .symbols
+            .iter()
+            .any(|s| s.name == "describe:Auth"));
+        assert!(result
+            .symbols
+            .iter()
+            .any(|s| s.name == "test:should login"));
         Ok(())
     }
 }

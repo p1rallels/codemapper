@@ -1,6 +1,6 @@
 use crate::index::CodeIndex;
 use crate::models::{FileInfo, Language};
-use crate::parser::{c::CParser, go::GoParser, java::JavaParser, javascript::JavaScriptParser, markdown::MarkdownParser, python::PythonParser, rust::RustParser, Parser};
+use crate::parser::{c::CParser, go::GoParser, java::JavaParser, javascript::JavaScriptParser, markdown::MarkdownParser, python::PythonParser, rust::RustParser, typescript::TypeScriptParser, Parser};
 use anyhow::{Context, Result};
 use indicatif::ProgressBar;
 use rayon::prelude::*;
@@ -56,8 +56,16 @@ pub fn index_file(
                 }
             }
         }
-        Language::JavaScript | Language::TypeScript => {
+        Language::JavaScript => {
             if let Ok(parser) = JavaScriptParser::new() {
+                if let Ok(parsed) = parser.parse(content, path) {
+                    file_info.symbols = parsed.symbols;
+                    file_info.dependencies = parsed.dependencies;
+                }
+            }
+        }
+        Language::TypeScript => {
+            if let Ok(parser) = TypeScriptParser::new() {
                 if let Ok(parsed) = parser.parse(content, path) {
                     file_info.symbols = parsed.symbols;
                     file_info.dependencies = parsed.dependencies;
