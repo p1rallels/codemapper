@@ -7,6 +7,24 @@ use tree_sitter::{Node, Parser, Query, QueryCursor};
 
 pub struct RustParser;
 
+fn has_pub_visibility(node: Node, source: &str) -> bool {
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            let child = cursor.node();
+            if child.kind() == "visibility_modifier" {
+                if let Ok(text) = child.utf8_text(source.as_bytes()) {
+                    return text.starts_with("pub");
+                }
+            }
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+    false
+}
+
 impl RustParser {
     pub fn new() -> Result<Self> {
         Ok(Self)
@@ -138,6 +156,7 @@ impl RustParser {
                     line_end,
                     parent_id: None,
                     file_path: file_path.to_path_buf(),
+                    is_exported: has_pub_visibility(node, source),
                 });
             }
         }
@@ -206,6 +225,7 @@ impl RustParser {
                     line_end,
                     parent_id: None,
                     file_path: file_path.to_path_buf(),
+                    is_exported: has_pub_visibility(node, source),
                 });
             }
         }
@@ -285,6 +305,7 @@ impl RustParser {
                     line_end,
                     parent_id: None,
                     file_path: file_path.to_path_buf(),
+                    is_exported: has_pub_visibility(node, source),
                 });
             }
         }
@@ -352,6 +373,7 @@ impl RustParser {
                     line_end,
                     parent_id: None,
                     file_path: file_path.to_path_buf(),
+                    is_exported: false,
                 });
             }
         }
@@ -435,6 +457,7 @@ impl RustParser {
                     line_end,
                     parent_id,
                     file_path: file_path.to_path_buf(),
+                    is_exported: has_pub_visibility(node, source),
                 });
             }
         }

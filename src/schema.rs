@@ -741,6 +741,7 @@ struct User {
             line_end: 6,
             parent_id: None,
             file_path: Path::new("test.rs").to_path_buf(),
+            is_exported: false,
         };
 
         let fields = extract_rust_fields(content, &symbol)?;
@@ -770,6 +771,7 @@ class User:
             line_end: 6,
             parent_id: None,
             file_path: Path::new("test.py").to_path_buf(),
+            is_exported: false,
         };
 
         let fields = extract_python_fields_fallback(content, &symbol)?;
@@ -797,6 +799,7 @@ type User struct {
             line_end: 8,
             parent_id: None,
             file_path: Path::new("test.go").to_path_buf(),
+            is_exported: false,
         };
 
         let fields = extract_go_fields(content, &symbol)?;

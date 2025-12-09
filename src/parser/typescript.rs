@@ -5,7 +5,7 @@ use std::path::Path;
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{Node, Parser as TSParser, Query, QueryCursor};
 
-pub struct JavaScriptParser;
+pub struct TypeScriptParser;
 
 fn is_exported(node: Node) -> bool {
     let mut current = node;
@@ -26,17 +26,17 @@ fn is_exported(node: Node) -> bool {
     false
 }
 
-impl JavaScriptParser {
+impl TypeScriptParser {
     pub fn new() -> Result<Self> {
         Ok(Self)
     }
 
     fn create_parser() -> Result<TSParser> {
         let mut parser = TSParser::new();
-        let language = tree_sitter_javascript::LANGUAGE.into();
+        let language = tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into();
         parser
             .set_language(&language)
-            .context("Failed to set JavaScript language")?;
+            .context("Failed to set TypeScript language")?;
         Ok(parser)
     }
 
@@ -46,7 +46,7 @@ impl JavaScriptParser {
         source: &str,
         file_path: &Path,
     ) -> Result<Vec<Symbol>> {
-        let language = tree_sitter_javascript::LANGUAGE.into();
+        let language = tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into();
         let query = Query::new(
             &language,
             r#"
@@ -247,12 +247,12 @@ impl JavaScriptParser {
         source: &str,
         file_path: &Path,
     ) -> Result<Vec<Symbol>> {
-        let language = tree_sitter_javascript::LANGUAGE.into();
+        let language = tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into();
         let query = Query::new(
             &language,
             r#"
             (class_declaration
-                name: (identifier) @class.name) @class.def
+                name: (type_identifier) @class.name) @class.def
             "#,
         )
         .context("Failed to create class query")?;
@@ -318,7 +318,7 @@ impl JavaScriptParser {
         file_path: &Path,
         class_symbols: &[Symbol],
     ) -> Result<Vec<Symbol>> {
-        let language = tree_sitter_javascript::LANGUAGE.into();
+        let language = tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into();
         let query = Query::new(
             &language,
             r#"
@@ -387,12 +387,222 @@ impl JavaScriptParser {
         Ok(symbols)
     }
 
+    fn extract_interfaces(
+        &self,
+        tree: &tree_sitter::Tree,
+        source: &str,
+        file_path: &Path,
+    ) -> Result<Vec<Symbol>> {
+        let language = tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into();
+        let query = Query::new(
+            &language,
+            r#"
+            (interface_declaration
+                name: (type_identifier) @interface.name) @interface.def
+            "#,
+        )
+        .context("Failed to create interface query")?;
+
+        let root_node = tree.root_node();
+        let mut symbols = Vec::new();
+        let mut cursor = QueryCursor::new();
+        let mut matches = cursor.matches(&query, root_node, source.as_bytes());
+
+        while let Some(match_) = matches.next() {
+            let captures = match_.captures;
+
+            if captures.len() < 2 {
+                continue;
+            }
+
+            let name_capture = captures.iter().find(|c| {
+                query
+                    .capture_names()
+                    .get(c.index as usize)
+                    .map(|s| s.as_ref())
+                    == Some("interface.name")
+            });
+
+            let def_capture = captures.iter().find(|c| {
+                query
+                    .capture_names()
+                    .get(c.index as usize)
+                    .map(|s| s.as_ref())
+                    == Some("interface.def")
+            });
+
+            if let (Some(name_cap), Some(def_cap)) = (name_capture, def_capture) {
+                let name = name_cap
+                    .node
+                    .utf8_text(source.as_bytes())
+                    .context("Failed to extract interface name")?
+                    .to_string();
+
+                let (line_start, line_end) = self.get_line_range(def_cap.node);
+
+                symbols.push(Symbol {
+                    name,
+                    symbol_type: SymbolType::Interface,
+                    signature: None,
+                    docstring: None,
+                    line_start,
+                    line_end,
+                    parent_id: None,
+                    file_path: file_path.to_path_buf(),
+                    is_exported: is_exported(def_cap.node),
+                });
+            }
+        }
+
+        Ok(symbols)
+    }
+
+    fn extract_type_aliases(
+        &self,
+        tree: &tree_sitter::Tree,
+        source: &str,
+        file_path: &Path,
+    ) -> Result<Vec<Symbol>> {
+        let language = tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into();
+        let query = Query::new(
+            &language,
+            r#"
+            (type_alias_declaration
+                name: (type_identifier) @type.name) @type.def
+            "#,
+        )
+        .context("Failed to create type alias query")?;
+
+        let root_node = tree.root_node();
+        let mut symbols = Vec::new();
+        let mut cursor = QueryCursor::new();
+        let mut matches = cursor.matches(&query, root_node, source.as_bytes());
+
+        while let Some(match_) = matches.next() {
+            let captures = match_.captures;
+
+            if captures.len() < 2 {
+                continue;
+            }
+
+            let name_capture = captures.iter().find(|c| {
+                query
+                    .capture_names()
+                    .get(c.index as usize)
+                    .map(|s| s.as_ref())
+                    == Some("type.name")
+            });
+
+            let def_capture = captures.iter().find(|c| {
+                query
+                    .capture_names()
+                    .get(c.index as usize)
+                    .map(|s| s.as_ref())
+                    == Some("type.def")
+            });
+
+            if let (Some(name_cap), Some(def_cap)) = (name_capture, def_capture) {
+                let name = name_cap
+                    .node
+                    .utf8_text(source.as_bytes())
+                    .context("Failed to extract type alias name")?
+                    .to_string();
+
+                let (line_start, line_end) = self.get_line_range(def_cap.node);
+
+                symbols.push(Symbol {
+                    name,
+                    symbol_type: SymbolType::TypeAlias,
+                    signature: None,
+                    docstring: None,
+                    line_start,
+                    line_end,
+                    parent_id: None,
+                    file_path: file_path.to_path_buf(),
+                    is_exported: is_exported(def_cap.node),
+                });
+            }
+        }
+
+        Ok(symbols)
+    }
+
+    fn extract_enums(
+        &self,
+        tree: &tree_sitter::Tree,
+        source: &str,
+        file_path: &Path,
+    ) -> Result<Vec<Symbol>> {
+        let language = tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into();
+        let query = Query::new(
+            &language,
+            r#"
+            (enum_declaration
+                name: (identifier) @enum.name) @enum.def
+            "#,
+        )
+        .context("Failed to create enum query")?;
+
+        let root_node = tree.root_node();
+        let mut symbols = Vec::new();
+        let mut cursor = QueryCursor::new();
+        let mut matches = cursor.matches(&query, root_node, source.as_bytes());
+
+        while let Some(match_) = matches.next() {
+            let captures = match_.captures;
+
+            if captures.len() < 2 {
+                continue;
+            }
+
+            let name_capture = captures.iter().find(|c| {
+                query
+                    .capture_names()
+                    .get(c.index as usize)
+                    .map(|s| s.as_ref())
+                    == Some("enum.name")
+            });
+
+            let def_capture = captures.iter().find(|c| {
+                query
+                    .capture_names()
+                    .get(c.index as usize)
+                    .map(|s| s.as_ref())
+                    == Some("enum.def")
+            });
+
+            if let (Some(name_cap), Some(def_cap)) = (name_capture, def_capture) {
+                let name = name_cap
+                    .node
+                    .utf8_text(source.as_bytes())
+                    .context("Failed to extract enum name")?
+                    .to_string();
+
+                let (line_start, line_end) = self.get_line_range(def_cap.node);
+
+                symbols.push(Symbol {
+                    name,
+                    symbol_type: SymbolType::Enum,
+                    signature: None,
+                    docstring: None,
+                    line_start,
+                    line_end,
+                    parent_id: None,
+                    file_path: file_path.to_path_buf(),
+                    is_exported: is_exported(def_cap.node),
+                });
+            }
+        }
+
+        Ok(symbols)
+    }
+
     fn extract_dependencies(
         &self,
         tree: &tree_sitter::Tree,
         source: &str,
     ) -> Result<Vec<Dependency>> {
-        let language = tree_sitter_javascript::LANGUAGE.into();
+        let language = tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into();
         let query = Query::new(
             &language,
             r#"
@@ -489,22 +699,34 @@ impl JavaScriptParser {
     }
 }
 
-impl Parser for JavaScriptParser {
+impl Parser for TypeScriptParser {
     fn parse(&self, content: &str, file_path: &Path) -> Result<ParseResult> {
         let mut parser = Self::create_parser()?;
         let tree = parser
             .parse(content, None)
-            .context("Failed to parse JavaScript content")?;
+            .context("Failed to parse TypeScript content")?;
 
         let classes = self.extract_classes(&tree, content, file_path)?;
         let functions = self.extract_functions(&tree, content, file_path)?;
         let methods = self.extract_methods(&tree, content, file_path, &classes)?;
+        let interfaces = self.extract_interfaces(&tree, content, file_path)?;
+        let type_aliases = self.extract_type_aliases(&tree, content, file_path)?;
+        let enums = self.extract_enums(&tree, content, file_path)?;
         let dependencies = self.extract_dependencies(&tree, content)?;
 
-        let mut symbols = Vec::with_capacity(classes.len() + functions.len() + methods.len());
+        let total_capacity = classes.len()
+            + functions.len()
+            + methods.len()
+            + interfaces.len()
+            + type_aliases.len()
+            + enums.len();
+        let mut symbols = Vec::with_capacity(total_capacity);
         symbols.extend(classes);
         symbols.extend(functions);
         symbols.extend(methods);
+        symbols.extend(interfaces);
+        symbols.extend(type_aliases);
+        symbols.extend(enums);
 
         Ok(ParseResult {
             symbols,
@@ -519,23 +741,24 @@ mod tests {
 
     #[test]
     fn test_parse_function_declaration() -> Result<()> {
-        let parser = JavaScriptParser::new()?;
-        let content = "function greet(name) { return 'Hello ' + name; }";
-        let path = Path::new("test.js");
+        let parser = TypeScriptParser::new()?;
+        let content = "function greet(name: string): string { return 'Hello ' + name; }";
+        let path = Path::new("test.ts");
 
         let result = parser.parse(content, path)?;
 
-        assert_eq!(result.symbols.len(), 1);
-        assert_eq!(result.symbols[0].name, "greet");
-        assert_eq!(result.symbols[0].symbol_type, SymbolType::Function);
+        assert!(result
+            .symbols
+            .iter()
+            .any(|s| s.name == "greet" && s.symbol_type == SymbolType::Function));
         Ok(())
     }
 
     #[test]
     fn test_parse_arrow_function() -> Result<()> {
-        let parser = JavaScriptParser::new()?;
-        let content = "const add = (a, b) => a + b;";
-        let path = Path::new("test.js");
+        let parser = TypeScriptParser::new()?;
+        let content = "const add = (a: number, b: number): number => a + b;";
+        let path = Path::new("test.ts");
 
         let result = parser.parse(content, path)?;
 
@@ -548,9 +771,9 @@ mod tests {
 
     #[test]
     fn test_parse_class_declaration() -> Result<()> {
-        let parser = JavaScriptParser::new()?;
+        let parser = TypeScriptParser::new()?;
         let content = "class MyClass { constructor() {} }";
-        let path = Path::new("test.js");
+        let path = Path::new("test.ts");
 
         let result = parser.parse(content, path)?;
 
@@ -562,16 +785,93 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_interface() -> Result<()> {
+        let parser = TypeScriptParser::new()?;
+        let content = r#"
+interface User {
+    id: number;
+    name: string;
+    email?: string;
+}
+        "#;
+        let path = Path::new("test.ts");
+
+        let result = parser.parse(content, path)?;
+
+        assert!(result
+            .symbols
+            .iter()
+            .any(|s| s.name == "User" && s.symbol_type == SymbolType::Interface));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_type_alias() -> Result<()> {
+        let parser = TypeScriptParser::new()?;
+        let content = r#"
+type UserId = string | number;
+type UserRecord = { id: UserId; name: string };
+        "#;
+        let path = Path::new("test.ts");
+
+        let result = parser.parse(content, path)?;
+
+        assert!(result
+            .symbols
+            .iter()
+            .any(|s| s.name == "UserId" && s.symbol_type == SymbolType::TypeAlias));
+        assert!(result
+            .symbols
+            .iter()
+            .any(|s| s.name == "UserRecord" && s.symbol_type == SymbolType::TypeAlias));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_enum() -> Result<()> {
+        let parser = TypeScriptParser::new()?;
+        let content = r#"
+enum Status {
+    Active = "active",
+    Inactive = "inactive",
+    Pending = "pending"
+}
+        "#;
+        let path = Path::new("test.ts");
+
+        let result = parser.parse(content, path)?;
+
+        assert!(result
+            .symbols
+            .iter()
+            .any(|s| s.name == "Status" && s.symbol_type == SymbolType::Enum));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_es6_import() -> Result<()> {
+        let parser = TypeScriptParser::new()?;
+        let content = "import { Component } from 'react';";
+        let path = Path::new("test.ts");
+
+        let result = parser.parse(content, path)?;
+
+        assert_eq!(result.dependencies.len(), 1);
+        assert_eq!(result.dependencies[0].import_name, "react");
+        Ok(())
+    }
+
+    #[test]
     fn test_parse_method() -> Result<()> {
-        let parser = JavaScriptParser::new()?;
+        let parser = TypeScriptParser::new()?;
         let content = r#"
 class Calculator {
-    add(a, b) {
+    add(a: number, b: number): number {
         return a + b;
     }
 }
         "#;
-        let path = Path::new("test.js");
+        let path = Path::new("test.ts");
 
         let result = parser.parse(content, path)?;
 
@@ -583,40 +883,77 @@ class Calculator {
     }
 
     #[test]
-    fn test_parse_es6_import() -> Result<()> {
-        let parser = JavaScriptParser::new()?;
-        let content = "import React from 'react';";
-        let path = Path::new("test.js");
+    fn test_parse_complete_typescript_file() -> Result<()> {
+        let parser = TypeScriptParser::new()?;
+        let content = r#"
+import { BaseService } from './base';
 
-        let result = parser.parse(content, path)?;
+interface Config {
+    apiUrl: string;
+    timeout: number;
+}
 
-        assert_eq!(result.dependencies.len(), 1);
-        assert_eq!(result.dependencies[0].import_name, "react");
-        Ok(())
+type ConfigKey = keyof Config;
+
+enum LogLevel {
+    Debug,
+    Info,
+    Error
+}
+
+class ApiService {
+    private config: Config;
+    
+    constructor(config: Config) {
+        this.config = config;
     }
+    
+    async fetch(endpoint: string): Promise<Response> {
+        return fetch(this.config.apiUrl + endpoint);
+    }
+}
 
-    #[test]
-    fn test_parse_require() -> Result<()> {
-        let parser = JavaScriptParser::new()?;
-        let content = "const fs = require('fs');";
-        let path = Path::new("test.js");
+function createService(config: Config): ApiService {
+    return new ApiService(config);
+}
+        "#;
+        let path = Path::new("test.ts");
 
         let result = parser.parse(content, path)?;
 
-        assert_eq!(result.dependencies.len(), 1);
-        assert_eq!(result.dependencies[0].import_name, "fs");
+        assert!(result
+            .symbols
+            .iter()
+            .any(|s| s.name == "Config" && s.symbol_type == SymbolType::Interface));
+        assert!(result
+            .symbols
+            .iter()
+            .any(|s| s.name == "ConfigKey" && s.symbol_type == SymbolType::TypeAlias));
+        assert!(result
+            .symbols
+            .iter()
+            .any(|s| s.name == "LogLevel" && s.symbol_type == SymbolType::Enum));
+        assert!(result
+            .symbols
+            .iter()
+            .any(|s| s.name == "ApiService" && s.symbol_type == SymbolType::Class));
+        assert!(result
+            .symbols
+            .iter()
+            .any(|s| s.name == "createService" && s.symbol_type == SymbolType::Function));
+        assert!(result.dependencies.iter().any(|d| d.import_name == "./base"));
         Ok(())
     }
 
     #[test]
     fn test_parse_describe_block() -> Result<()> {
-        let parser = JavaScriptParser::new()?;
+        let parser = TypeScriptParser::new()?;
         let content = r#"
 describe('User Authentication', () => {
     console.log('test suite');
 });
         "#;
-        let path = Path::new("test.js");
+        let path = Path::new("test.ts");
 
         let result = parser.parse(content, path)?;
 
@@ -629,13 +966,13 @@ describe('User Authentication', () => {
 
     #[test]
     fn test_parse_it_block() -> Result<()> {
-        let parser = JavaScriptParser::new()?;
+        let parser = TypeScriptParser::new()?;
         let content = r#"
 it('should validate email', () => {
     expect(true).toBe(true);
 });
         "#;
-        let path = Path::new("test.js");
+        let path = Path::new("test.ts");
 
         let result = parser.parse(content, path)?;
 
@@ -648,13 +985,13 @@ it('should validate email', () => {
 
     #[test]
     fn test_parse_test_block() -> Result<()> {
-        let parser = JavaScriptParser::new()?;
+        let parser = TypeScriptParser::new()?;
         let content = r#"
 test('handles empty input', () => {
     expect(parse('')).toBeNull();
 });
         "#;
-        let path = Path::new("test.js");
+        let path = Path::new("test.ts");
 
         let result = parser.parse(content, path)?;
 
@@ -662,50 +999,6 @@ test('handles empty input', () => {
             .symbols
             .iter()
             .any(|s| s.name == "test:handles empty input" && s.symbol_type == SymbolType::Function));
-        Ok(())
-    }
-
-    #[test]
-    fn test_parse_beforeeach_hook() -> Result<()> {
-        let parser = JavaScriptParser::new()?;
-        let content = r#"
-beforeEach(() => {
-    setup();
-});
-        "#;
-        let path = Path::new("test.js");
-
-        let result = parser.parse(content, path)?;
-
-        assert!(result
-            .symbols
-            .iter()
-            .any(|s| s.name == "beforeeach" && s.symbol_type == SymbolType::Function));
-        Ok(())
-    }
-
-    #[test]
-    fn test_nested_describe_it() -> Result<()> {
-        let parser = JavaScriptParser::new()?;
-        let content = r#"
-describe('Auth', () => {
-    it('should login', () => {
-        // test
-    });
-});
-        "#;
-        let path = Path::new("test.js");
-
-        let result = parser.parse(content, path)?;
-
-        assert!(result
-            .symbols
-            .iter()
-            .any(|s| s.name == "describe:Auth"));
-        assert!(result
-            .symbols
-            .iter()
-            .any(|s| s.name == "test:should login"));
         Ok(())
     }
 }

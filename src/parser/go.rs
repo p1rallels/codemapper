@@ -7,6 +7,10 @@ use tree_sitter::{Node, Parser, Query, QueryCursor};
 
 pub struct GoParser;
 
+fn is_go_exported(name: &str) -> bool {
+    name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
+}
+
 impl GoParser {
     pub fn new() -> Result<Self> {
         Ok(Self)
@@ -82,6 +86,7 @@ impl GoParser {
 
                 if let Some(name) = func_name {
                     let docstring = self.extract_comment(node, source);
+                    let exported = is_go_exported(&name);
                     symbols.push(Symbol {
                         name,
                         symbol_type: SymbolType::Function,
@@ -91,6 +96,7 @@ impl GoParser {
                         line_end,
                         parent_id: None,
                         file_path: file_path.to_path_buf(),
+                        is_exported: exported,
                     });
                 }
             }
@@ -133,6 +139,7 @@ impl GoParser {
 
                 if let Some(name) = method_name {
                     let docstring = self.extract_comment(node, source);
+                    let exported = is_go_exported(&name);
                     symbols.push(Symbol {
                         name,
                         symbol_type: SymbolType::Method,
@@ -142,6 +149,7 @@ impl GoParser {
                         line_end,
                         parent_id: None,
                         file_path: file_path.to_path_buf(),
+                        is_exported: exported,
                     });
                 }
             }
@@ -215,6 +223,7 @@ impl GoParser {
                     "type"
                 };
 
+                let exported = is_go_exported(&name);
                 symbols.push(Symbol {
                     name,
                     symbol_type: SymbolType::Class,
@@ -224,6 +233,7 @@ impl GoParser {
                     line_end,
                     parent_id: None,
                     file_path: file_path.to_path_buf(),
+                    is_exported: exported,
                 });
             }
         }
@@ -289,6 +299,7 @@ impl GoParser {
                 let docstring = self.extract_comment(node, source);
                 let line_start = node.start_position().row + 1;
                 let line_end = node.end_position().row + 1;
+                let exported = is_go_exported(&name);
 
                 symbols.push(Symbol {
                     name,
@@ -299,6 +310,7 @@ impl GoParser {
                     line_end,
                     parent_id: None,
                     file_path: file_path.to_path_buf(),
+                    is_exported: exported,
                 });
             }
         }
