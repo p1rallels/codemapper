@@ -11,7 +11,7 @@ fn is_exported(node: Node) -> bool {
     let mut current = node;
     const MAX_DEPTH: usize = 3;
     let mut depth = 0;
-    
+
     while depth < MAX_DEPTH {
         if let Some(parent) = current.parent() {
             if parent.kind() == "export_statement" {
@@ -134,10 +134,10 @@ impl JavaScriptParser {
 
     fn extract_test_context(&self, node: Node, source: &str) -> Option<String> {
         let mut current = node.parent()?;
-        
+
         const MAX_DEPTH: usize = 10;
         let mut depth = 0;
-        
+
         while depth < MAX_DEPTH {
             if current.kind() == "arguments" {
                 if let Some(call_expr) = current.parent() {
@@ -146,27 +146,27 @@ impl JavaScriptParser {
                     }
                 }
             }
-            
+
             current = current.parent()?;
             depth += 1;
         }
-        
+
         None
     }
 
     fn extract_test_name_from_call(&self, call_node: Node, source: &str) -> Option<String> {
         let mut cursor = call_node.walk();
-        
+
         if !cursor.goto_first_child() {
             return None;
         }
-        
+
         let mut func_name: Option<String> = None;
         let mut description: Option<String> = None;
-        
+
         loop {
             let child = cursor.node();
-            
+
             match child.kind() {
                 "identifier" | "member_expression" => {
                     let name = child.utf8_text(source.as_bytes()).ok()?;
@@ -195,15 +195,15 @@ impl JavaScriptParser {
                 }
                 _ => {}
             }
-            
+
             if !cursor.goto_next_sibling() {
                 break;
             }
         }
-        
+
         let func = func_name?;
         let func_lower = func.to_lowercase();
-        
+
         match func_lower.as_str() {
             "describe" => {
                 let desc = description.unwrap_or_else(|| "suite".to_string());
@@ -213,9 +213,7 @@ impl JavaScriptParser {
                 let desc = description.unwrap_or_else(|| "test".to_string());
                 Some(format!("test:{}", desc))
             }
-            "beforeeach" | "aftereach" | "beforeall" | "afterall" => {
-                Some(func_lower)
-            }
+            "beforeeach" | "aftereach" | "beforeall" | "afterall" => Some(func_lower),
             _ => None,
         }
     }
@@ -482,10 +480,7 @@ impl JavaScriptParser {
     }
 
     fn clean_import_string(&self, s: &str) -> String {
-        s.trim()
-            .trim_matches('\'')
-            .trim_matches('"')
-            .to_string()
+        s.trim().trim_matches('\'').trim_matches('"').to_string()
     }
 }
 
@@ -623,7 +618,8 @@ describe('User Authentication', () => {
         assert!(result
             .symbols
             .iter()
-            .any(|s| s.name == "describe:User Authentication" && s.symbol_type == SymbolType::Function));
+            .any(|s| s.name == "describe:User Authentication"
+                && s.symbol_type == SymbolType::Function));
         Ok(())
     }
 
@@ -639,10 +635,9 @@ it('should validate email', () => {
 
         let result = parser.parse(content, path)?;
 
-        assert!(result
-            .symbols
-            .iter()
-            .any(|s| s.name == "test:should validate email" && s.symbol_type == SymbolType::Function));
+        assert!(result.symbols.iter().any(
+            |s| s.name == "test:should validate email" && s.symbol_type == SymbolType::Function
+        ));
         Ok(())
     }
 
@@ -658,10 +653,13 @@ test('handles empty input', () => {
 
         let result = parser.parse(content, path)?;
 
-        assert!(result
-            .symbols
-            .iter()
-            .any(|s| s.name == "test:handles empty input" && s.symbol_type == SymbolType::Function));
+        assert!(
+            result
+                .symbols
+                .iter()
+                .any(|s| s.name == "test:handles empty input"
+                    && s.symbol_type == SymbolType::Function)
+        );
         Ok(())
     }
 
@@ -698,14 +696,8 @@ describe('Auth', () => {
 
         let result = parser.parse(content, path)?;
 
-        assert!(result
-            .symbols
-            .iter()
-            .any(|s| s.name == "describe:Auth"));
-        assert!(result
-            .symbols
-            .iter()
-            .any(|s| s.name == "test:should login"));
+        assert!(result.symbols.iter().any(|s| s.name == "describe:Auth"));
+        assert!(result.symbols.iter().any(|s| s.name == "test:should login"));
         Ok(())
     }
 }

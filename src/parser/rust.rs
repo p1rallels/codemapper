@@ -1,4 +1,4 @@
-use super::{Parser as ParserTrait, ParseResult};
+use super::{ParseResult, Parser as ParserTrait};
 use crate::models::{Dependency, Symbol, SymbolType};
 use anyhow::{Context, Result};
 use std::path::Path;
@@ -72,9 +72,7 @@ impl RustParser {
             if parent.kind() == "impl_item" {
                 let parent_line = parent.start_position().row + 1;
                 for (idx, symbol) in symbols.iter().enumerate() {
-                    if symbol.symbol_type == SymbolType::Class
-                        && symbol.line_start == parent_line
-                    {
+                    if symbol.symbol_type == SymbolType::Class && symbol.line_start == parent_line {
                         return Some(idx);
                     }
                 }
@@ -130,7 +128,8 @@ impl RustParser {
 
                 match capture_name {
                     Some("struct.name") => {
-                        struct_name = capture.node
+                        struct_name = capture
+                            .node
                             .utf8_text(source.as_bytes())
                             .ok()
                             .map(|s| s.to_string());
@@ -199,7 +198,8 @@ impl RustParser {
 
                 match capture_name {
                     Some("enum.name") => {
-                        enum_name = capture.node
+                        enum_name = capture
+                            .node
                             .utf8_text(source.as_bytes())
                             .ok()
                             .map(|s| s.to_string());
@@ -273,13 +273,15 @@ impl RustParser {
 
                 match capture_name {
                     Some("const.name") | Some("static.name") => {
-                        field_name = capture.node
+                        field_name = capture
+                            .node
                             .utf8_text(source.as_bytes())
                             .ok()
                             .map(|s| s.to_string());
                     }
                     Some("const.type") | Some("static.type") => {
-                        field_type = capture.node
+                        field_type = capture
+                            .node
                             .utf8_text(source.as_bytes())
                             .ok()
                             .map(|s| s.to_string());
@@ -348,7 +350,8 @@ impl RustParser {
 
                 match capture_name {
                     Some("impl.type") => {
-                        impl_type = capture.node
+                        impl_type = capture
+                            .node
                             .utf8_text(source.as_bytes())
                             .ok()
                             .map(|s| s.to_string());
@@ -417,7 +420,8 @@ impl RustParser {
 
                 match capture_name {
                     Some("func.name") => {
-                        func_name = capture.node
+                        func_name = capture
+                            .node
                             .utf8_text(source.as_bytes())
                             .ok()
                             .map(|s| s.to_string());

@@ -15,9 +15,9 @@ mod snapshot;
 mod types;
 
 use anyhow::Result;
+use cache::FileChangeKind;
 use clap::{Parser, Subcommand};
 use colored::*;
-use cache::FileChangeKind;
 use indicatif::{ProgressBar, ProgressStyle};
 use models::Symbol;
 use output::{OutputFormat, OutputFormatter};
@@ -27,128 +27,232 @@ use std::time::Instant;
 
 #[derive(clap::Parser)]
 #[command(name = "cm")]
-#[command(
-    about = "CodeMapper (cm) - Fast Code Analysis Tool
+#[command(about = "CodeMapper (cm) - Code Analysis at LLM Speed
 
-WHAT IT DOES:
-  Instantly analyze codebases by parsing source files into symbols (functions, classes, methods)
-  using tree-sitter AST parsing. Works entirely in-memory with no database overhead.
+Analyze codebases instantly by mapping symbols (functions, classes, methods)
+using tree-sitter AST parsing. Everything runs in-memory, no databases.
 
-=== QUICKSTART FOR LLMs (Step-by-Step to Orient Yourself) ===
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-STEP 1: Get the lay of the land (10 seconds)
-  $ cm stats . --format ai
-  → See: How many files, what languages, symbol counts
-  → Tells you: Project size and composition
+TYPICAL WORKFLOWS
 
-STEP 2: Map the project structure (15 seconds)
-  $ cm map . --level 2 --format ai
-  → See: All files with symbol counts per file
-  → Tells you: Where the code lives, which files are important
+1. EXPLORING UNKNOWN CODE
+   Step 1: cm stats .
+   → Size and composition (how big? what languages?)
+   
+   Step 2: cm map . --level 2 --format ai
+   → File structure (where's the logic?)
+   
+   Step 3: cm query <symbol> --fuzzy
+   → Find code (where exactly?)
+   
+   Step 4: cm inspect ./path/to/file
+   → Deep dive (what's in this module?)
 
-STEP 3: Find what you're looking for (5 seconds)
-  $ cm query <symbol_name> . --fuzzy --format ai
-  → See: All functions/classes matching your search
-  → Tells you: Exact locations (file:line)
+2. FINDING A BUG (you know the symptom, need the source)
+   Step 1: cm query <suspected_function> --fuzzy --show-body
+   → See the implementation
+   
+   Step 2: cm callers <function>
+   → Who calls this? (Is it called from where the bug manifests?)
+   
+   Step 3: cm trace <entry_point> <suspected_function>
+   → Trace the call path (how does the bug get triggered?)
+   
+   Step 4: cm tests <function>
+   → Find tests (are there existing tests for this?)
 
-STEP 4 (Optional): Deep dive into specific files
-  $ cm inspect ./path/to/file.py --format ai
-  → See: All symbols in that file with signatures
+3. BEFORE REFACTORING
+   Step 1: cm callers <function>
+   → Understand impact (who depends on this?)
+   
+   Step 2: cm callees <function>
+   → What does it depend on? (what breaks if we change this?)
+   
+   Step 3: cm tests <function>
+   → Run tests (verify nothing breaks)
+   
+   Step 4: cm since main --breaking
+   → (After refactor) Did we break anything vs main?
 
-STEP 5 (Optional): Understand dependencies
-  $ cm deps <symbol_or_file> . --direction used-by --format ai
-  → See: Where a symbol/file is used across the codebase
+4. UNDERSTANDING AN API
+   Step 1: cm entrypoints .
+   → What's exported? (what's the public surface?)
+   
+   Step 2: cm implements <interface>
+   → Find all implementations (how many ways is this used?)
+   
+   Step 3: cm schema <DataClass>
+   → See field structure (what does the data look like?)
 
-PRO TIPS FOR LLMs:
-  • Always use --format ai (most token-efficient, easy to parse)
-  • Use --fuzzy for flexible searches (auth finds authenticate, Authorization, etc.)
-  • Small repos (< 300ms): No cache overhead, always fast
-  • Large repos: First run builds cache (~10s), cache hits ~0.5s, incremental rebuilds ~1s
-  • Cache validates automatically - no need to manually invalidate
-  • Incremental updates are 45-55x faster than full reindex
-  • No .codemapper/ clutter on small projects - caching is smart!
-  • Start with stats → map → query workflow for any new codebase
+5. VALIDATING CODE HEALTH
+   Step 1: cm untested .
+   → Find uncovered symbols (what's not tested?)
+   
+   Step 2: cm since <last_release> --breaking
+   → Did we break anything? (breaking changes since release?)
+   
+   Step 3: cm since <last_release>
+   → Full changelog (what changed?)
 
-COMMAND REFERENCE:
-  [Discovery]
-  stats       - File counts, symbol breakdown (START HERE)
-  map         - Project structure at levels 1-3
-  query       - Find symbols by name (--fuzzy for flexibility)
-  inspect     - All symbols in a specific file
-  deps        - Import relationships and usage
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  [Git Integration]
-  diff        - Symbol changes vs a git commit
-  since       - Breaking changes since commit (--breaking)
-  blame       - Who last modified a symbol
-  history     - Symbol evolution across commits
+COMMANDS (organized by task)
 
-  [Call Graph]
-  callers     - Who calls this function?
-  callees     - What does this function call?
-  trace       - Call path from A to B
-  entrypoints - Exported but uncalled symbols (API surface)
+[DISCOVERY - Start here]
+  stats        → Project size and composition (functions, classes, imports)
+  map          → File listing with symbol counts (3 detail levels)
+  query        → Find symbols by name (main search tool)
+  inspect      → List all symbols in one file
+  deps         → Track imports and usage
 
-  [Type Analysis]
-  types       - Param/return types and their definitions
-  implements  - Find interface/trait implementations
-  schema      - Field structure for structs/classes
+[CALL GRAPH - Understand code flow]
+  callers      → WHO calls this function? (reverse dependencies)
+  callees      → What DOES this function call? (forward dependencies)
+  trace        → CALL PATH from A → B (shortest route)
+  entrypoints  → Public APIs with no internal callers (dead code?)
+  tests        → Which tests call this symbol?
+  test-deps    → What production code does a test touch?
 
-  [Testing]
-  tests       - Find tests covering a symbol
-  untested    - Symbols with no test coverage
-  test-deps   - Production symbols a test touches
+[GIT HISTORY - Blame and timeline]
+  diff         → Symbol-level changes vs a commit (what changed?)
+  since        → Breaking changes since commit (what broke?)
+  blame        → Who last touched this symbol? (when, commit, author)
+  history      → Full evolution of a symbol (all commits touching it)
 
-  [Snapshots]
-  snapshot    - Save symbol state for comparison
-  compare     - Diff current vs saved snapshot
+[TYPE ANALYSIS - Understand data flow]
+  types        → Parameter types and return type (where are they defined?)
+  implements   → Find all implementations of an interface
+  schema       → Field structure (structs, classes, dataclasses)
+
+[SNAPSHOTS - Compare over time]
+  snapshot     → Save current state (named checkpoint)
+  compare      → Diff current vs saved snapshot (what changed?)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+KEY FACTS
 
 OUTPUT FORMATS:
-  --format default  → Markdown (readable, structured)
-  --format human    → Tables (best for terminal viewing)
-  --format ai       → Compact (token-efficient for LLMs)
-
-COMMON FLAGS (available on multiple commands):
-  --full            Show anonymous/lambda functions (default: hidden)
-  --exports-only    Show only exported/public symbols (query, inspect)
-  --show-body       Display actual code implementation
-  --fuzzy           Flexible symbol matching (case-insensitive)
-  --fast            Force fast mode for large repos (auto-enabled for 1000+ files)
-
-SUPPORTED LANGUAGES:
-  Python      → functions, classes, methods, imports
-  TypeScript  → functions, classes, methods, interfaces, types, enums (NEW)
-  JavaScript  → functions, classes, methods, imports
-  Rust        → functions, structs, impl blocks, traits, enums
-  Java        → classes, interfaces, methods, enums
-  Go          → functions, structs, methods, interfaces
-  C           → functions, structs, includes
-  Markdown    → headings, code blocks
+  --format default  → Markdown (documentation, readable)
+  --format human    → Tables (terminal viewing, pretty)
+  --format ai       → Compact (LLM context, token-efficient) ← RECOMMENDED
 
 PERFORMANCE:
-  • Small projects (< 100 files): < 20ms cold start
-  • Large projects (1000+ files): Auto-enables fast mode (10-100x speedup)
-  • Example: 18,457 files in 1.2s vs 76s (63x faster)
+  Small repos (< 100 files)    → < 20ms instant
+  Medium repos (100-1000)      → Cached, ~0.5s load
+  Large repos (1000+)          → Fast mode auto-enabled (10-100x speedup)
+  Incremental rebuilds         → 45-55x faster than full reindex
 
-CACHING (Automatic):
-  • Auto-enabled when indexing takes ≥ 300ms
-  • Small repos: No cache, always fast
-  • Large repos: ~0.5s cache load, incremental updates ~1s
-  • Flags: --no-cache (skip), --rebuild-cache (force rebuild)
-  • See 'cm stats --help' for full caching details
+CACHING:
+  Auto-enabled on projects ≥ 300ms to parse
+  Small projects never create cache (no .codemapper/ clutter)
+  Subsequent runs load from cache (~0.5s)
+  File changes auto-detected (you don't manage cache)
+  Flags: --no-cache (skip), --rebuild-cache (force rebuild)
 
-DETAILED HELP:
-  cm <command> --help    Show detailed options for a command
-  Example: cm query --help
+SEARCH MODES:
+  Exact   → cm query MyClass           (case-sensitive, precise)
+  Fuzzy   → cm query myclass --fuzzy   (case-insensitive, flexible)
+  → DEFAULT: Always use --fuzzy, more forgiving
+
+LANGUAGES SUPPORTED:
+  ✓ Python       → Functions, classes, methods, imports
+  ✓ JavaScript   → Functions, classes, methods, imports
+  ✓ TypeScript   → Functions, classes, methods, interfaces, types, enums
+  ✓ Rust         → Functions, structs, impl blocks, traits, enums
+  ✓ Java         → Classes, interfaces, methods, enums, javadoc
+  ✓ Go           → Functions, structs, methods, interfaces
+  ✓ C            → Functions, structs, includes
+  ✓ Markdown     → Headings, code blocks
+
+GIT REQUIREMENTS:
+  diff      → Must be in a git repo
+  since     → Must be in a git repo
+  blame     → Must be in a git repo
+  history   → Must be in a git repo
+  (Other commands work anywhere)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+COMMON FLAGS
+
+--fuzzy              → Flexible matching (auth finds authenticate, Authorization)
+--format <format>    → Output style: default (markdown), human (tables), ai (compact)
+--show-body          → Include actual code (not just signatures)
+--exports-only       → Public symbols only (functions with export, pub, etc.)
+--full               → Include anonymous/lambda functions (normally hidden)
+--context minimal    → Signatures only (default, fast)
+--context full       → Include docstrings and metadata
+--no-cache           → Skip cache, always reindex (troubleshooting)
+--rebuild-cache      → Force cache rebuild
+--extensions py,rs   → Comma-separated file types to include
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+TROUBLESHOOTING
+
+NO SYMBOLS FOUND?
+  ✓ Use --fuzzy (matches more)
+  ✓ Check --extensions py,js,ts (default: py,js,ts,jsx,tsx,rs,java,go,c,h,md)
+  ✓ Verify file encoding is UTF-8
+  ✓ Run: cm stats . (to see what's indexed)
+
+SLOW QUERIES?
+  ✓ Large repo (1000+ files)? Fast mode auto-enables (use --fast explicitly)
+  ✓ First run builds cache (~10s), cache hits ~0.5s after
+  ✓ Try --no-cache if cache is stale (rare)
+
+GIT COMMANDS FAIL?
+  ✓ Must be in a git repository (diff, since, blame, history need git)
+  ✓ Commit must exist (HEAD~1, abc123, main, v1.0 all work)
+  ✓ File must have git history (blame, history)
+
+OUTPUT TOO VERBOSE?
+  ✓ Use --format ai (most compact, LLM-optimized)
+  ✓ Use --format human (pretty tables for terminal)
+  ✓ Use --context minimal (signatures only)
+
+NO TEST COVERAGE?
+  ✓ Run: cm untested .
+  ✓ Test detection by file pattern (_test.rs, test_*.py, *.test.js, etc.)
+  ✓ Test detection by naming convention (test*, Test*, #[test], @Test, etc.)
 
 EXAMPLES:
-  cm stats /my/project              # Quick codebase overview
-  cm map . --level 2 --format human # File listing with symbol counts
-  cm query authenticate --fuzzy     # Find authentication functions
-  cm inspect ./auth.py --show-body  # See all symbols in auth.py
-  cm deps User --direction used-by  # Find where User class is used
-"
-)]
+  # Get the lay of the land
+  cm stats .                           # Project overview
+  cm map . --level 2 --format ai       # File structure
+  
+  # Find and explore
+  cm query authenticate --fuzzy        # Search
+  cm inspect ./src/auth.py             # Deep dive
+  cm query Parser --show-body          # See implementation
+  
+  # Understand flow
+  cm callers process_payment           # Who calls it?
+  cm callees process_payment           # What does it call?
+  cm trace main process_payment        # Call path
+  
+  # Before refactoring
+  cm callers my_function               # Impact radius
+  cm tests my_function                 # Verify coverage exists
+  
+  # Git analysis
+  cm diff main                         # Changes vs main
+  cm since v1.0 --breaking             # Breaking changes since v1.0
+  cm blame authenticate ./auth.py      # Who last touched it?
+  
+  # Type analysis
+  cm types process_payment             # What types flow through?
+  cm schema Order                      # Field structure
+  cm implements Iterator               # Find all implementations
+  
+  # Health check
+  cm untested .                        # What's not tested?
+  cm entrypoints .                     # Public API surface
+
+For detailed help on any command: cm <command> --help
+")]
 struct Cli {
     /// Output format: 'default' (markdown), 'human' (tables), 'ai' (token-efficient)
     #[arg(short, long, global = true, default_value = "default")]
@@ -1347,54 +1451,204 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     let format = OutputFormat::from_str(&cli.format).unwrap_or_else(|| {
-        eprintln!("{} Invalid format '{}', using default", "Warning:".yellow(), cli.format);
+        eprintln!(
+            "{} Invalid format '{}', using default",
+            "Warning:".yellow(),
+            cli.format
+        );
         OutputFormat::Default
     });
 
     match cli.command {
-        Commands::Stats { path, extensions, no_cache, rebuild_cache } => {
+        Commands::Stats {
+            path,
+            extensions,
+            no_cache,
+            rebuild_cache,
+        } => {
             cmd_stats(path, extensions, no_cache, rebuild_cache, format)?;
         }
-        Commands::Map { path, level, extensions, no_cache, rebuild_cache } => {
+        Commands::Map {
+            path,
+            level,
+            extensions,
+            no_cache,
+            rebuild_cache,
+        } => {
             cmd_map(path, level, extensions, no_cache, rebuild_cache, format)?;
         }
-        Commands::Query { symbol, path, fuzzy, r#type, context, show_body, fast, extensions, no_cache, rebuild_cache, full, exports_only } => {
-            cmd_query(symbol, path, context, fuzzy, fast, show_body, r#type, extensions, no_cache, rebuild_cache, !full, exports_only, format)?;
+        Commands::Query {
+            symbol,
+            path,
+            fuzzy,
+            r#type,
+            context,
+            show_body,
+            fast,
+            extensions,
+            no_cache,
+            rebuild_cache,
+            full,
+            exports_only,
+        } => {
+            cmd_query(
+                symbol,
+                path,
+                context,
+                fuzzy,
+                fast,
+                show_body,
+                r#type,
+                extensions,
+                no_cache,
+                rebuild_cache,
+                !full,
+                exports_only,
+                format,
+            )?;
         }
-        Commands::Inspect { file_path, show_body, full, exports_only } => {
+        Commands::Inspect {
+            file_path,
+            show_body,
+            full,
+            exports_only,
+        } => {
             cmd_inspect(file_path, show_body, !full, exports_only, format)?;
         }
-        Commands::Deps { target, path, direction, extensions, no_cache, rebuild_cache } => {
-            cmd_deps(target, path, direction, extensions, no_cache, rebuild_cache, format)?;
+        Commands::Deps {
+            target,
+            path,
+            direction,
+            extensions,
+            no_cache,
+            rebuild_cache,
+        } => {
+            cmd_deps(
+                target,
+                path,
+                direction,
+                extensions,
+                no_cache,
+                rebuild_cache,
+                format,
+            )?;
         }
         Commands::Index { path, extensions } => {
             cmd_index(path, extensions)?;
         }
-        Commands::Diff { commit, path, extensions, full } => {
+        Commands::Diff {
+            commit,
+            path,
+            extensions,
+            full,
+        } => {
             cmd_diff(commit, path, extensions, !full, format)?;
         }
-        Commands::Callers { symbol, path, fuzzy, extensions, no_cache, rebuild_cache } => {
-            cmd_callers(symbol, path, fuzzy, extensions, no_cache, rebuild_cache, format)?;
+        Commands::Callers {
+            symbol,
+            path,
+            fuzzy,
+            extensions,
+            no_cache,
+            rebuild_cache,
+        } => {
+            cmd_callers(
+                symbol,
+                path,
+                fuzzy,
+                extensions,
+                no_cache,
+                rebuild_cache,
+                format,
+            )?;
         }
-        Commands::Callees { symbol, path, fuzzy, extensions, no_cache, rebuild_cache } => {
-            cmd_callees(symbol, path, fuzzy, extensions, no_cache, rebuild_cache, format)?;
+        Commands::Callees {
+            symbol,
+            path,
+            fuzzy,
+            extensions,
+            no_cache,
+            rebuild_cache,
+        } => {
+            cmd_callees(
+                symbol,
+                path,
+                fuzzy,
+                extensions,
+                no_cache,
+                rebuild_cache,
+                format,
+            )?;
         }
-        Commands::Tests { symbol, path, fuzzy, extensions, no_cache, rebuild_cache } => {
-            cmd_tests(symbol, path, fuzzy, extensions, no_cache, rebuild_cache, format)?;
+        Commands::Tests {
+            symbol,
+            path,
+            fuzzy,
+            extensions,
+            no_cache,
+            rebuild_cache,
+        } => {
+            cmd_tests(
+                symbol,
+                path,
+                fuzzy,
+                extensions,
+                no_cache,
+                rebuild_cache,
+                format,
+            )?;
         }
-        Commands::Untested { path, extensions, no_cache, rebuild_cache } => {
+        Commands::Untested {
+            path,
+            extensions,
+            no_cache,
+            rebuild_cache,
+        } => {
             cmd_untested(path, extensions, no_cache, rebuild_cache, format)?;
         }
-        Commands::Since { commit, path, extensions, breaking } => {
+        Commands::Since {
+            commit,
+            path,
+            extensions,
+            breaking,
+        } => {
             cmd_since(commit, path, extensions, breaking, format)?;
         }
-        Commands::Entrypoints { path, extensions, no_cache, rebuild_cache } => {
+        Commands::Entrypoints {
+            path,
+            extensions,
+            no_cache,
+            rebuild_cache,
+        } => {
             cmd_entrypoints(path, extensions, no_cache, rebuild_cache, format)?;
         }
-        Commands::Trace { from, to, path, fuzzy, extensions, no_cache, rebuild_cache } => {
-            cmd_trace(from, to, path, fuzzy, extensions, no_cache, rebuild_cache, format)?;
+        Commands::Trace {
+            from,
+            to,
+            path,
+            fuzzy,
+            extensions,
+            no_cache,
+            rebuild_cache,
+        } => {
+            cmd_trace(
+                from,
+                to,
+                path,
+                fuzzy,
+                extensions,
+                no_cache,
+                rebuild_cache,
+                format,
+            )?;
         }
-        Commands::TestDeps { test_file, path, extensions, no_cache, rebuild_cache } => {
+        Commands::TestDeps {
+            test_file,
+            path,
+            extensions,
+            no_cache,
+            rebuild_cache,
+        } => {
             cmd_test_deps(test_file, path, extensions, no_cache, rebuild_cache, format)?;
         }
         Commands::Blame { symbol, file } => {
@@ -1403,19 +1657,87 @@ fn main() -> Result<()> {
         Commands::History { symbol, file } => {
             cmd_history(symbol, file, format)?;
         }
-        Commands::Implements { interface, path, fuzzy, extensions, no_cache, rebuild_cache } => {
-            cmd_implements(interface, path, fuzzy, extensions, no_cache, rebuild_cache, format)?;
+        Commands::Implements {
+            interface,
+            path,
+            fuzzy,
+            extensions,
+            no_cache,
+            rebuild_cache,
+        } => {
+            cmd_implements(
+                interface,
+                path,
+                fuzzy,
+                extensions,
+                no_cache,
+                rebuild_cache,
+                format,
+            )?;
         }
-        Commands::Types { symbol, path, fuzzy, extensions, no_cache, rebuild_cache } => {
-            cmd_types(symbol, path, fuzzy, extensions, no_cache, rebuild_cache, format)?;
+        Commands::Types {
+            symbol,
+            path,
+            fuzzy,
+            extensions,
+            no_cache,
+            rebuild_cache,
+        } => {
+            cmd_types(
+                symbol,
+                path,
+                fuzzy,
+                extensions,
+                no_cache,
+                rebuild_cache,
+                format,
+            )?;
         }
-        Commands::Schema { symbol, path, fuzzy, extensions, no_cache, rebuild_cache } => {
-            cmd_schema(symbol, path, fuzzy, extensions, no_cache, rebuild_cache, format)?;
+        Commands::Schema {
+            symbol,
+            path,
+            fuzzy,
+            extensions,
+            no_cache,
+            rebuild_cache,
+        } => {
+            cmd_schema(
+                symbol,
+                path,
+                fuzzy,
+                extensions,
+                no_cache,
+                rebuild_cache,
+                format,
+            )?;
         }
-        Commands::Snapshot { name, path, list, delete, extensions, no_cache, rebuild_cache } => {
-            cmd_snapshot(name, path, list, delete, extensions, no_cache, rebuild_cache, format)?;
+        Commands::Snapshot {
+            name,
+            path,
+            list,
+            delete,
+            extensions,
+            no_cache,
+            rebuild_cache,
+        } => {
+            cmd_snapshot(
+                name,
+                path,
+                list,
+                delete,
+                extensions,
+                no_cache,
+                rebuild_cache,
+                format,
+            )?;
         }
-        Commands::Compare { snapshot, path, extensions, no_cache, rebuild_cache } => {
+        Commands::Compare {
+            snapshot,
+            path,
+            extensions,
+            no_cache,
+            rebuild_cache,
+        } => {
             cmd_compare(snapshot, path, extensions, no_cache, rebuild_cache, format)?;
         }
     }
@@ -1445,14 +1767,19 @@ fn try_load_or_rebuild(
         // Save to cache only if indexing took >= 300ms (unless --no-cache)
         if !no_cache && elapsed_ms >= 300 {
             match CacheManager::save(&index, path, extensions) {
-                Ok(_) => eprintln!("{} Cached index for future use ({}ms)",
-                    "✓".green(), elapsed_ms),
-                Err(e) => eprintln!("{} Warning: Failed to save cache: {}",
-                    "⚠".yellow(), e),
+                Ok(_) => eprintln!(
+                    "{} Cached index for future use ({}ms)",
+                    "✓".green(),
+                    elapsed_ms
+                ),
+                Err(e) => eprintln!("{} Warning: Failed to save cache: {}", "⚠".yellow(), e),
             }
         } else if !no_cache && elapsed_ms < 300 {
-            eprintln!("{} Indexed in {}ms (no cache needed for small repos)",
-                "✓".green(), elapsed_ms);
+            eprintln!(
+                "{} Indexed in {}ms (no cache needed for small repos)",
+                "✓".green(),
+                elapsed_ms
+            );
         }
 
         return Ok(index);
@@ -1462,7 +1789,8 @@ fn try_load_or_rebuild(
     match CacheManager::load(path, extensions) {
         Ok(Some((index, metadata, changed_files))) if changed_files.is_empty() => {
             // Cache hit - no changes
-            eprintln!("{} Loaded from cache - {} files, {} symbols",
+            eprintln!(
+                "{} Loaded from cache - {} files, {} symbols",
                 "✓".green(),
                 metadata.file_count.to_string().bold(),
                 metadata.symbol_count.to_string().bold()
@@ -1471,9 +1799,7 @@ fn try_load_or_rebuild(
         }
         Ok(Some((mut index, metadata, changed_files))) => {
             // Incremental update needed
-            eprintln!("{} Indexing, changes detected",
-                "→".cyan()
-            );
+            eprintln!("{} Indexing, changes detected", "→".cyan());
 
             // Create progress bar
             let pb = ProgressBar::new(changed_files.len() as u64);
@@ -1481,7 +1807,7 @@ fn try_load_or_rebuild(
                 ProgressStyle::default_bar()
                     .template("{spinner:.cyan} [{bar:40.cyan/blue}] {percent}% ({pos}/{len} files)")
                     .unwrap()
-                    .progress_chars("=>-")
+                    .progress_chars("=>-"),
             );
 
             let start = Instant::now();
@@ -1501,23 +1827,34 @@ fn try_load_or_rebuild(
                     let result = match std::fs::read_to_string(&path) {
                         Ok(content) => {
                             let language = models::Language::from_extension(
-                                path.extension()
-                                    .and_then(|e| e.to_str())
-                                    .unwrap_or("")
+                                path.extension().and_then(|e| e.to_str()).unwrap_or(""),
                             );
 
-                            match indexer::index_file(&path, &content, language, change.hash.as_deref()) {
+                            match indexer::index_file(
+                                &path,
+                                &content,
+                                language,
+                                change.hash.as_deref(),
+                            ) {
                                 Ok(file_info) => Some((change.clone(), file_info)),
                                 Err(e) => {
-                                    eprintln!("{} Warning: Failed to parse {}: {}",
-                                        "⚠".yellow(), path.display(), e);
+                                    eprintln!(
+                                        "{} Warning: Failed to parse {}: {}",
+                                        "⚠".yellow(),
+                                        path.display(),
+                                        e
+                                    );
                                     None
                                 }
                             }
                         }
                         Err(e) => {
-                            eprintln!("{} Warning: Failed to read {}: {}",
-                                "⚠".yellow(), path.display(), e);
+                            eprintln!(
+                                "{} Warning: Failed to read {}: {}",
+                                "⚠".yellow(),
+                                path.display(),
+                                e
+                            );
                             None
                         }
                     };
@@ -1546,11 +1883,15 @@ fn try_load_or_rebuild(
             let elapsed_ms = start.elapsed().as_millis();
 
             // Always save updated cache for incremental updates (cache already exists)
-            match CacheManager::save_with_changes(&index, path, extensions, &metadata, &changed_files) {
-                Ok(_) => eprintln!("{} Cache updated ({}ms)",
-                    "✓".green(), elapsed_ms),
-                Err(e) => eprintln!("{} Warning: Failed to save cache: {}",
-                    "⚠".yellow(), e),
+            match CacheManager::save_with_changes(
+                &index,
+                path,
+                extensions,
+                &metadata,
+                &changed_files,
+            ) {
+                Ok(_) => eprintln!("{} Cache updated ({}ms)", "✓".green(), elapsed_ms),
+                Err(e) => eprintln!("{} Warning: Failed to save cache: {}", "⚠".yellow(), e),
             }
 
             Ok(index)
@@ -1565,7 +1906,7 @@ fn try_load_or_rebuild(
                 ProgressStyle::default_bar()
                     .template("{spinner:.cyan} [{bar:40.cyan/blue}] {percent}% ({pos}/{len} files)")
                     .unwrap()
-                    .progress_chars("=>-")
+                    .progress_chars("=>-"),
             );
 
             let start = Instant::now();
@@ -1575,19 +1916,22 @@ fn try_load_or_rebuild(
             // Save to cache only if indexing took >= 300ms
             if elapsed_ms >= 300 {
                 match CacheManager::save(&index, path, extensions) {
-                    Ok(_) => eprintln!("{} Cache not found (.codemapper), created new cache ({} files, {}ms)",
+                    Ok(_) => eprintln!(
+                        "{} Cache not found (.codemapper), created new cache ({} files, {}ms)",
                         "✓".green(),
                         index.total_files().to_string().bold(),
-                        elapsed_ms),
-                    Err(e) => eprintln!("{} Warning: Failed to save cache: {}",
-                        "⚠".yellow(), e),
+                        elapsed_ms
+                    ),
+                    Err(e) => eprintln!("{} Warning: Failed to save cache: {}", "⚠".yellow(), e),
                 }
             } else {
                 // Small repo - simple completion message
-                eprintln!("{} Indexed ({} files, {}ms)",
+                eprintln!(
+                    "{} Indexed ({} files, {}ms)",
                     "✓".green(),
                     index.total_files().to_string().bold(),
-                    elapsed_ms);
+                    elapsed_ms
+                );
             }
 
             Ok(index)
@@ -1599,7 +1943,8 @@ fn try_load_or_rebuild(
             let index = indexer::index_directory(path, extensions)?;
             let elapsed_ms = start.elapsed().as_millis();
 
-            eprintln!("{} Indexed ({} files, {}ms)",
+            eprintln!(
+                "{} Indexed ({} files, {}ms)",
                 "✓".green(),
                 index.total_files().to_string().bold(),
                 elapsed_ms
@@ -1612,27 +1957,36 @@ fn try_load_or_rebuild(
 
 fn cmd_index(path: PathBuf, extensions: String) -> Result<()> {
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
-    
+
     println!("{} Indexing directory: {}", "→".cyan(), path.display());
-    
+
     let start = Instant::now();
     let index = indexer::index_directory(&path, &ext_list)?;
     let elapsed_ms = start.elapsed().as_millis();
-    
-    println!("{} Indexed {} files in {}ms", 
-        "✓".green(), 
+
+    println!(
+        "{} Indexed {} files in {}ms",
+        "✓".green(),
         index.total_files().to_string().bold(),
         elapsed_ms.to_string().bold()
     );
-    println!("{} Total symbols: {}", 
-        "→".cyan(), 
+    println!(
+        "{} Total symbols: {}",
+        "→".cyan(),
         index.total_symbols().to_string().bold()
     );
-    
+
     Ok(())
 }
 
-fn cmd_map(path: PathBuf, level: u8, extensions: String, no_cache: bool, rebuild_cache: bool, format: OutputFormat) -> Result<()> {
+fn cmd_map(
+    path: PathBuf,
+    level: u8,
+    extensions: String,
+    no_cache: bool,
+    rebuild_cache: bool,
+    format: OutputFormat,
+) -> Result<()> {
     if level < 1 || level > 3 {
         eprintln!("{} Level must be between 1 and 3", "Error:".red());
         std::process::exit(1);
@@ -1663,7 +2017,7 @@ fn cmd_query(
     rebuild_cache: bool,
     skip_anonymous: bool,
     exports_only: bool,
-    format: OutputFormat
+    format: OutputFormat,
 ) -> Result<()> {
     use fast_search::GrepFilter;
     use models::SymbolType;
@@ -1706,9 +2060,17 @@ fn cmd_query(
 
     if use_fast_mode {
         if fast {
-            eprintln!("{} Fast mode enabled by --fast flag ({} files)", "→".cyan(), file_count);
+            eprintln!(
+                "{} Fast mode enabled by --fast flag ({} files)",
+                "→".cyan(),
+                file_count
+            );
         } else {
-            eprintln!("{} Fast mode auto-enabled ({} files detected)", "→".cyan(), file_count);
+            eprintln!(
+                "{} Fast mode auto-enabled ({} files detected)",
+                "→".cyan(),
+                file_count
+            );
         }
 
         // Stage 1: Ripgrep prefilter
@@ -1718,7 +2080,10 @@ fn cmd_query(
         let candidates = filter.prefilter(&path)?;
 
         if candidates.is_empty() {
-            eprintln!("{} No text matches found, falling back to full AST scan", "→".yellow());
+            eprintln!(
+                "{} No text matches found, falling back to full AST scan",
+                "→".yellow()
+            );
             // Fallback: Use normal mode with cache
             let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
             let mut symbols = if search_all {
@@ -1745,7 +2110,11 @@ fn cmd_query(
             }
 
             if symbols.is_empty() {
-                println!("{} No symbols found matching '{}'", "✗".red(), symbol.bold());
+                println!(
+                    "{} No symbols found matching '{}'",
+                    "✗".red(),
+                    symbol.bold()
+                );
                 return Ok(());
             }
 
@@ -1754,7 +2123,11 @@ fn cmd_query(
             let output = formatter.format_query(symbols, show_context, show_body);
             println!("{}", output);
         } else {
-            eprintln!("{} Found {} candidate files, validating with AST...", "→".cyan(), candidates.len());
+            eprintln!(
+                "{} Found {} candidate files, validating with AST...",
+                "→".cyan(),
+                candidates.len()
+            );
 
             // Stage 2: AST validation
             let mut owned_symbols = filter.validate(candidates, &symbol, fuzzy)?;
@@ -1775,7 +2148,11 @@ fn cmd_query(
             }
 
             if owned_symbols.is_empty() {
-                println!("{} No symbols found matching '{}'", "✗".red(), symbol.bold());
+                println!(
+                    "{} No symbols found matching '{}'",
+                    "✗".red(),
+                    symbol.bold()
+                );
                 return Ok(());
             }
 
@@ -1814,7 +2191,11 @@ fn cmd_query(
         }
 
         if symbols.is_empty() {
-            println!("{} No symbols found matching '{}'", "✗".red(), symbol.bold());
+            println!(
+                "{} No symbols found matching '{}'",
+                "✗".red(),
+                symbol.bold()
+            );
             return Ok(());
         }
 
@@ -1845,7 +2226,8 @@ fn count_indexable_files(path: &PathBuf, extensions: &[&str]) -> Result<usize> {
         if extensions.is_empty() {
             count += 1;
         } else {
-            if entry.path()
+            if entry
+                .path()
                 .extension()
                 .and_then(|ext| ext.to_str())
                 .map(|ext| extensions.contains(&ext))
@@ -1866,9 +2248,8 @@ fn cmd_deps(
     extensions: String,
     no_cache: bool,
     rebuild_cache: bool,
-    format: OutputFormat
+    format: OutputFormat,
 ) -> Result<()> {
-    
     use std::path::Path;
 
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
@@ -1891,7 +2272,7 @@ fn cmd_deps_file(
     target: String,
     index: index::CodeIndex,
     direction: String,
-    format: OutputFormat
+    format: OutputFormat,
 ) -> Result<()> {
     use std::path::PathBuf;
 
@@ -1900,7 +2281,8 @@ fn cmd_deps_file(
 
     let deps = if direction.to_lowercase() == "imports" {
         // Try both relative and canonical paths
-        index.get_dependencies(&target_path)
+        index
+            .get_dependencies(&target_path)
             .or_else(|| index.get_dependencies(&target_canonical))
             .map(|d| d.clone())
             .unwrap_or_default()
@@ -1908,7 +2290,8 @@ fn cmd_deps_file(
         let mut used_by = Vec::new();
         for file in index.files() {
             if let Some(file_deps) = index.get_dependencies(&file.path) {
-                let target_name = target_canonical.file_name()
+                let target_name = target_canonical
+                    .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or("");
 
@@ -1922,16 +2305,16 @@ fn cmd_deps_file(
         }
         used_by
     } else {
-        eprintln!("{} Invalid direction '{}', use 'imports' or 'used-by'",
-            "Error:".red(), direction);
+        eprintln!(
+            "{} Invalid direction '{}', use 'imports' or 'used-by'",
+            "Error:".red(),
+            direction
+        );
         std::process::exit(1);
     };
 
     if deps.is_empty() {
-        println!("{} No dependencies found for {}",
-            "✗".yellow(),
-            target
-        );
+        println!("{} No dependencies found for {}", "✗".yellow(), target);
         return Ok(());
     }
 
@@ -1947,13 +2330,15 @@ fn cmd_deps_symbol(
     symbol_name: String,
     index: index::CodeIndex,
     direction: String,
-    format: OutputFormat
+    format: OutputFormat,
 ) -> Result<()> {
     use std::fs;
 
     if direction.to_lowercase() != "used-by" {
-        eprintln!("{} For symbols, only '--direction used-by' is supported",
-            "Error:".red());
+        eprintln!(
+            "{} For symbols, only '--direction used-by' is supported",
+            "Error:".red()
+        );
         eprintln!("{} Use a file path to see imports", "Hint:".cyan());
         std::process::exit(1);
     }
@@ -1962,7 +2347,8 @@ fn cmd_deps_symbol(
     let symbols = index.query_symbol(&symbol_name);
 
     if symbols.is_empty() {
-        println!("{} Symbol '{}' not found in codebase",
+        println!(
+            "{} Symbol '{}' not found in codebase",
             "✗".yellow(),
             symbol_name.bold()
         );
@@ -1979,9 +2365,9 @@ fn cmd_deps_symbol(
                 if line.contains(&symbol_name) {
                     // Skip the definition itself
                     let is_definition = symbols.iter().any(|s| {
-                        s.file_path == file.path &&
-                        (line_num + 1) >= s.line_start &&
-                        (line_num + 1) <= s.line_end
+                        s.file_path == file.path
+                            && (line_num + 1) >= s.line_start
+                            && (line_num + 1) <= s.line_end
                     });
 
                     if !is_definition {
@@ -1993,7 +2379,8 @@ fn cmd_deps_symbol(
     }
 
     if usages.is_empty() {
-        println!("{} No usages found for symbol '{}'",
+        println!(
+            "{} No usages found for symbol '{}'",
             "✗".yellow(),
             symbol_name.bold()
         );
@@ -2001,7 +2388,8 @@ fn cmd_deps_symbol(
     }
 
     // Show summary first
-    println!("{} Found {} usage(s) of '{}'\n",
+    println!(
+        "{} Found {} usage(s) of '{}'\n",
         "✓".green(),
         usages.len().to_string().bold(),
         symbol_name.bold()
@@ -2015,7 +2403,13 @@ fn cmd_deps_symbol(
     Ok(())
 }
 
-fn cmd_stats(path: PathBuf, extensions: String, no_cache: bool, rebuild_cache: bool, format: OutputFormat) -> Result<()> {
+fn cmd_stats(
+    path: PathBuf,
+    extensions: String,
+    no_cache: bool,
+    rebuild_cache: bool,
+    format: OutputFormat,
+) -> Result<()> {
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
 
     let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
@@ -2028,7 +2422,13 @@ fn cmd_stats(path: PathBuf, extensions: String, no_cache: bool, rebuild_cache: b
     Ok(())
 }
 
-fn cmd_inspect(file_path: PathBuf, show_body: bool, skip_anonymous: bool, exports_only: bool, format: OutputFormat) -> Result<()> {
+fn cmd_inspect(
+    file_path: PathBuf,
+    show_body: bool,
+    skip_anonymous: bool,
+    exports_only: bool,
+    format: OutputFormat,
+) -> Result<()> {
     use std::fs;
 
     if !file_path.exists() {
@@ -2060,7 +2460,11 @@ fn cmd_inspect(file_path: PathBuf, show_body: bool, skip_anonymous: bool, export
     }
 
     if file_info.symbols.is_empty() {
-        println!("{} No symbols found in {}", "✗".yellow(), file_path.display());
+        println!(
+            "{} No symbols found in {}",
+            "✗".yellow(),
+            file_path.display()
+        );
         return Ok(());
     }
 
@@ -2069,13 +2473,15 @@ fn cmd_inspect(file_path: PathBuf, show_body: bool, skip_anonymous: bool, export
     match format {
         OutputFormat::AI => {
             println!("[FILE:{}]", file_path.display());
-            println!("LANG:{} SIZE:{} SYMS:{}",
+            println!(
+                "LANG:{} SIZE:{} SYMS:{}",
                 language.as_str(),
                 file_info.size,
                 file_info.symbols.len()
             );
             for symbol in &file_info.symbols {
-                print!("{}|{}|{}-{}",
+                print!(
+                    "{}|{}|{}-{}",
                     symbol.name,
                     symbol.symbol_type.as_str().chars().next().unwrap(),
                     symbol.line_start,
@@ -2088,7 +2494,11 @@ fn cmd_inspect(file_path: PathBuf, show_body: bool, skip_anonymous: bool, export
             }
         }
         _ => {
-            println!("{} Inspecting: {}\n", "→".cyan(), file_path.display().to_string().bold());
+            println!(
+                "{} Inspecting: {}\n",
+                "→".cyan(),
+                file_path.display().to_string().bold()
+            );
             println!("Language: {}", language.as_str());
             println!("Size: {} bytes", file_info.size);
             println!("Symbols: {}\n", file_info.symbols.len());
@@ -2099,26 +2509,40 @@ fn cmd_inspect(file_path: PathBuf, show_body: bool, skip_anonymous: bool, export
         }
     }
 
-    println!("\n{} Parse time: {}ms", "→".cyan(), elapsed_ms.to_string().bold());
+    println!(
+        "\n{} Parse time: {}ms",
+        "→".cyan(),
+        elapsed_ms.to_string().bold()
+    );
 
     Ok(())
 }
 
-fn cmd_diff(commit: String, path: PathBuf, extensions: String, skip_anonymous: bool, format: OutputFormat) -> Result<()> {
+fn cmd_diff(
+    commit: String,
+    path: PathBuf,
+    extensions: String,
+    skip_anonymous: bool,
+    format: OutputFormat,
+) -> Result<()> {
     use std::time::Instant;
-    
+
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
-    
-    eprintln!("{} Computing symbol diff against {}...", "→".cyan(), commit.bold());
-    
+
+    eprintln!(
+        "{} Computing symbol diff against {}...",
+        "→".cyan(),
+        commit.bold()
+    );
+
     let start = Instant::now();
-    
+
     let subpath = if path == PathBuf::from(".") {
         None
     } else {
         Some(path.as_path())
     };
-    
+
     let mut result = diff::compute_diff(&std::env::current_dir()?, &commit, subpath, &ext_list)?;
     let elapsed_ms = start.elapsed().as_millis();
 
@@ -2126,52 +2550,72 @@ fn cmd_diff(commit: String, path: PathBuf, extensions: String, skip_anonymous: b
     if skip_anonymous {
         result.symbols.retain(|s| s.name != "anonymous");
     }
-    
-    eprintln!("{} Analyzed {} files in {}ms\n", 
-        "✓".green(), 
+
+    eprintln!(
+        "{} Analyzed {} files in {}ms\n",
+        "✓".green(),
         result.files_analyzed.to_string().bold(),
         elapsed_ms.to_string().bold()
     );
-    
+
     let formatter = OutputFormatter::new(format);
     let output = formatter.format_diff(&result);
     println!("{}", output);
-    
+
     Ok(())
 }
 
-fn cmd_since(commit: String, path: PathBuf, extensions: String, breaking: bool, format: OutputFormat) -> Result<()> {
+fn cmd_since(
+    commit: String,
+    path: PathBuf,
+    extensions: String,
+    breaking: bool,
+    format: OutputFormat,
+) -> Result<()> {
     use diff::ChangeType;
     use std::time::Instant;
-    
+
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
-    
-    let label = if breaking { "breaking changes" } else { "changes" };
-    eprintln!("{} Finding {} since {}...", "→".cyan(), label, commit.bold());
-    
+
+    let label = if breaking {
+        "breaking changes"
+    } else {
+        "changes"
+    };
+    eprintln!(
+        "{} Finding {} since {}...",
+        "→".cyan(),
+        label,
+        commit.bold()
+    );
+
     let start = Instant::now();
-    
+
     let subpath = if path == PathBuf::from(".") {
         None
     } else {
         Some(path.as_path())
     };
-    
+
     let mut result = diff::compute_diff(&std::env::current_dir()?, &commit, subpath, &ext_list)?;
     let elapsed_ms = start.elapsed().as_millis();
-    
+
     if breaking {
         result.symbols.retain(|s| {
-            matches!(s.change_type, ChangeType::Deleted | ChangeType::SignatureChanged)
+            matches!(
+                s.change_type,
+                ChangeType::Deleted | ChangeType::SignatureChanged
+            )
         });
     }
-    
-    eprintln!("{} Analyzed {} files in {}ms\n", 
-        "✓".green(), 
+
+    eprintln!(
+        "{} Analyzed {} files in {}ms\n",
+        "✓".green(),
         result.files_analyzed.to_string().bold(),
         elapsed_ms.to_string().bold()
     );
-    
+
     let formatter = OutputFormatter::new(format);
     let output = if breaking {
         formatter.format_breaking(&result)
@@ -2179,7 +2623,7 @@ fn cmd_since(commit: String, path: PathBuf, extensions: String, breaking: bool, 
         formatter.format_diff(&result)
     };
     println!("{}", output);
-    
+
     Ok(())
 }
 
@@ -2202,11 +2646,16 @@ fn cmd_callers(
     let elapsed_ms = start.elapsed().as_millis();
 
     if callers.is_empty() {
-        println!("{} No call sites found for '{}'", "✗".yellow(), symbol.bold());
+        println!(
+            "{} No call sites found for '{}'",
+            "✗".yellow(),
+            symbol.bold()
+        );
         return Ok(());
     }
 
-    eprintln!("{} Found {} call site(s) in {}ms\n",
+    eprintln!(
+        "{} Found {} call site(s) in {}ms\n",
         "✓".green(),
         callers.len().to_string().bold(),
         elapsed_ms.to_string().bold()
@@ -2238,11 +2687,16 @@ fn cmd_callees(
     let elapsed_ms = start.elapsed().as_millis();
 
     if callees.is_empty() {
-        println!("{} No function calls found in '{}'", "✗".yellow(), symbol.bold());
+        println!(
+            "{} No function calls found in '{}'",
+            "✗".yellow(),
+            symbol.bold()
+        );
         return Ok(());
     }
 
-    eprintln!("{} Found {} callee(s) in {}ms\n",
+    eprintln!(
+        "{} Found {} callee(s) in {}ms\n",
         "✓".green(),
         callees.len().to_string().bold(),
         elapsed_ms.to_string().bold()
@@ -2278,7 +2732,8 @@ fn cmd_tests(
         return Ok(());
     }
 
-    eprintln!("{} Found {} test(s) in {}ms\n",
+    eprintln!(
+        "{} Found {} test(s) in {}ms\n",
         "✓".green(),
         tests.len().to_string().bold(),
         elapsed_ms.to_string().bold()
@@ -2315,7 +2770,8 @@ fn cmd_untested(
         100.0
     };
 
-    eprintln!("{} Analyzed {} symbols in {}ms (coverage: {:.1}%)\n",
+    eprintln!(
+        "{} Analyzed {} symbols in {}ms (coverage: {:.1}%)\n",
         "✓".green(),
         total_symbols.to_string().bold(),
         elapsed_ms.to_string().bold(),
@@ -2339,28 +2795,38 @@ fn cmd_entrypoints(
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
     let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
 
-    eprintln!("{} Finding entrypoints (uncalled exported symbols)...", "→".cyan());
+    eprintln!(
+        "{} Finding entrypoints (uncalled exported symbols)...",
+        "→".cyan()
+    );
 
     let start = Instant::now();
     let entrypoints = callgraph::find_entrypoints(&index)?;
     let elapsed_ms = start.elapsed().as_millis();
 
     if entrypoints.is_empty() {
-        println!("{} No entrypoints found (all exported symbols have internal callers)", "✓".green());
+        println!(
+            "{} No entrypoints found (all exported symbols have internal callers)",
+            "✓".green()
+        );
         return Ok(());
     }
 
-    let main_count = entrypoints.iter()
+    let main_count = entrypoints
+        .iter()
         .filter(|e| e.category == callgraph::EntrypointCategory::MainEntry)
         .count();
-    let api_count = entrypoints.iter()
+    let api_count = entrypoints
+        .iter()
         .filter(|e| e.category == callgraph::EntrypointCategory::ApiFunction)
         .count();
-    let unused_count = entrypoints.iter()
+    let unused_count = entrypoints
+        .iter()
         .filter(|e| e.category == callgraph::EntrypointCategory::PossiblyUnused)
         .count();
 
-    eprintln!("{} Found {} entrypoint(s) in {}ms ({} main, {} API, {} possibly unused)\n",
+    eprintln!(
+        "{} Found {} entrypoint(s) in {}ms ({} main, {} API, {} possibly unused)\n",
         "✓".green(),
         entrypoints.len().to_string().bold(),
         elapsed_ms.to_string().bold(),
@@ -2390,9 +2856,10 @@ fn cmd_trace(
     let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
 
     let match_type = if fuzzy { " (fuzzy)" } else { "" };
-    eprintln!("{} Tracing call path from '{}' to '{}'{}...", 
-        "→".cyan(), 
-        from.bold(), 
+    eprintln!(
+        "{} Tracing call path from '{}' to '{}'{}...",
+        "→".cyan(),
+        from.bold(),
         to.bold(),
         match_type
     );
@@ -2402,7 +2869,8 @@ fn cmd_trace(
     let elapsed_ms = start.elapsed().as_millis();
 
     if !trace.found {
-        println!("{} No call path found from '{}' to '{}'",
+        println!(
+            "{} No call path found from '{}' to '{}'",
             "✗".yellow(),
             from.bold(),
             to.bold()
@@ -2410,7 +2878,8 @@ fn cmd_trace(
         return Ok(());
     }
 
-    eprintln!("{} Found path with {} step(s) in {}ms\n",
+    eprintln!(
+        "{} Found path with {} step(s) in {}ms\n",
         "✓".green(),
         trace.steps.len().to_string().bold(),
         elapsed_ms.to_string().bold()
@@ -2432,34 +2901,40 @@ fn cmd_test_deps(
     format: OutputFormat,
 ) -> Result<()> {
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
-    
+
     let abs_test_file = if test_file.is_absolute() {
         test_file.clone()
     } else {
         std::env::current_dir()?.join(&test_file)
     };
-    
+
     if !abs_test_file.exists() {
         anyhow::bail!("Test file not found: {}", test_file.display());
     }
-    
+
     let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
 
-    eprintln!("{} Analyzing test file '{}'...", "→".cyan(), test_file.display().to_string().bold());
+    eprintln!(
+        "{} Analyzing test file '{}'...",
+        "→".cyan(),
+        test_file.display().to_string().bold()
+    );
 
     let start = Instant::now();
     let deps = callgraph::find_test_deps(&index, &abs_test_file)?;
     let elapsed_ms = start.elapsed().as_millis();
 
     if deps.is_empty() {
-        println!("{} No production symbols found in '{}'",
+        println!(
+            "{} No production symbols found in '{}'",
             "✗".yellow(),
             test_file.display().to_string().bold()
         );
         return Ok(());
     }
 
-    eprintln!("{} Found {} production symbol(s) in {}ms\n",
+    eprintln!(
+        "{} Found {} production symbol(s) in {}ms\n",
         "✓".green(),
         deps.len().to_string().bold(),
         elapsed_ms.to_string().bold()
@@ -2473,14 +2948,19 @@ fn cmd_test_deps(
 }
 
 fn cmd_blame(symbol: String, file: PathBuf, format: OutputFormat) -> Result<()> {
-    eprintln!("{} Finding last modification of '{}'...", "→".cyan(), symbol.bold());
+    eprintln!(
+        "{} Finding last modification of '{}'...",
+        "→".cyan(),
+        symbol.bold()
+    );
 
     let start = Instant::now();
     let cwd = std::env::current_dir()?;
     let result = blame::blame_symbol(&cwd, &file, &symbol)?;
     let elapsed_ms = start.elapsed().as_millis();
 
-    eprintln!("{} Found blame info in {}ms\n",
+    eprintln!(
+        "{} Found blame info in {}ms\n",
         "✓".green(),
         elapsed_ms.to_string().bold()
     );
@@ -2505,7 +2985,8 @@ fn cmd_history(symbol: String, file: PathBuf, format: OutputFormat) -> Result<()
         return Ok(());
     }
 
-    eprintln!("{} Found {} version(s) in {}ms\n",
+    eprintln!(
+        "{} Found {} version(s) in {}ms\n",
         "✓".green(),
         history.len().to_string().bold(),
         elapsed_ms.to_string().bold()
@@ -2531,18 +3012,28 @@ fn cmd_implements(
     let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
 
     let match_type = if fuzzy { " (fuzzy)" } else { "" };
-    eprintln!("{} Finding implementations of '{}'{}...", "→".cyan(), interface.bold(), match_type);
+    eprintln!(
+        "{} Finding implementations of '{}'{}...",
+        "→".cyan(),
+        interface.bold(),
+        match_type
+    );
 
     let start = Instant::now();
     let implementations = implements::find_implementations(&index, &interface, fuzzy)?;
     let elapsed_ms = start.elapsed().as_millis();
 
     if implementations.is_empty() {
-        println!("{} No implementations found for '{}'", "✗".yellow(), interface.bold());
+        println!(
+            "{} No implementations found for '{}'",
+            "✗".yellow(),
+            interface.bold()
+        );
         return Ok(());
     }
 
-    eprintln!("{} Found {} implementation(s) in {}ms\n",
+    eprintln!(
+        "{} Found {} implementation(s) in {}ms\n",
         "✓".green(),
         implementations.len().to_string().bold(),
         elapsed_ms.to_string().bold()
@@ -2568,7 +3059,12 @@ fn cmd_types(
     let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
 
     let match_type = if fuzzy { " (fuzzy)" } else { "" };
-    eprintln!("{} Analyzing types for '{}'{}...", "→".cyan(), symbol.bold(), match_type);
+    eprintln!(
+        "{} Analyzing types for '{}'{}...",
+        "→".cyan(),
+        symbol.bold(),
+        match_type
+    );
 
     let start = Instant::now();
     let types_info = types::analyze_types(&index, &symbol, fuzzy)?;
@@ -2579,7 +3075,8 @@ fn cmd_types(
         return Ok(());
     }
 
-    eprintln!("{} Analyzed {} symbol(s) in {}ms\n",
+    eprintln!(
+        "{} Analyzed {} symbol(s) in {}ms\n",
         "✓".green(),
         types_info.len().to_string().bold(),
         elapsed_ms.to_string().bold()
@@ -2605,19 +3102,29 @@ fn cmd_schema(
     let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
 
     let match_type = if fuzzy { " (fuzzy)" } else { "" };
-    eprintln!("{} Analyzing schema for '{}'{}...", "→".cyan(), symbol.bold(), match_type);
+    eprintln!(
+        "{} Analyzing schema for '{}'{}...",
+        "→".cyan(),
+        symbol.bold(),
+        match_type
+    );
 
     let start = Instant::now();
     let schemas = schema::analyze_schema(&index, &symbol, fuzzy)?;
     let elapsed_ms = start.elapsed().as_millis();
 
     if schemas.is_empty() {
-        println!("{} No class/struct found for '{}'", "✗".yellow(), symbol.bold());
+        println!(
+            "{} No class/struct found for '{}'",
+            "✗".yellow(),
+            symbol.bold()
+        );
         return Ok(());
     }
 
     let total_fields: usize = schemas.iter().map(|s| s.fields.len()).sum();
-    eprintln!("{} Found {} schema(s) with {} field(s) in {}ms\n",
+    eprintln!(
+        "{} Found {} schema(s) with {} field(s) in {}ms\n",
         "✓".green(),
         schemas.len().to_string().bold(),
         total_fields.to_string().bold(),
@@ -2671,7 +3178,8 @@ fn cmd_snapshot(
     let saved = snapshot::save_snapshot(&index, &snap_name, &abs_path)?;
     let elapsed_ms = start.elapsed().as_millis();
 
-    eprintln!("{} Saved {} symbols from {} files in {}ms\n",
+    eprintln!(
+        "{} Saved {} symbols from {} files in {}ms\n",
         "✓".green(),
         saved.symbol_count.to_string().bold(),
         saved.file_count.to_string().bold(),
@@ -2701,7 +3209,11 @@ fn cmd_compare(
 
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
 
-    eprintln!("{} Comparing to snapshot '{}'...", "→".cyan(), snapshot_name.bold());
+    eprintln!(
+        "{} Comparing to snapshot '{}'...",
+        "→".cyan(),
+        snapshot_name.bold()
+    );
 
     let start = Instant::now();
 
@@ -2711,7 +3223,8 @@ fn cmd_compare(
 
     let elapsed_ms = start.elapsed().as_millis();
 
-    eprintln!("{} Found {} change(s) in {}ms\n",
+    eprintln!(
+        "{} Found {} change(s) in {}ms\n",
         "✓".green(),
         result.symbols.len().to_string().bold(),
         elapsed_ms.to_string().bold()

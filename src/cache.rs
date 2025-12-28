@@ -202,23 +202,29 @@ impl CacheManager {
             }
         };
 
-        let size = change.size.or_else(|| {
-            if let FileChangeKind::Modified | FileChangeKind::Added = change.kind {
-                fs::metadata(&change.path).map(|m| m.len()).ok()
-            } else {
-                None
-            }
-        }).ok_or_else(|| anyhow::anyhow!("Missing size for change: {}", change.path.display()))?;
+        let size = change
+            .size
+            .or_else(|| {
+                if let FileChangeKind::Modified | FileChangeKind::Added = change.kind {
+                    fs::metadata(&change.path).map(|m| m.len()).ok()
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| anyhow::anyhow!("Missing size for change: {}", change.path.display()))?;
 
-        let mtime = change.mtime.or_else(|| {
-            if let FileChangeKind::Modified | FileChangeKind::Added = change.kind {
-                fs::metadata(&change.path)
-                    .and_then(|m| m.modified())
-                    .ok()
-            } else {
-                None
-            }
-        }).ok_or_else(|| anyhow::anyhow!("Missing mtime for change: {}", change.path.display()))?;
+        let mtime = change
+            .mtime
+            .or_else(|| {
+                if let FileChangeKind::Modified | FileChangeKind::Added = change.kind {
+                    fs::metadata(&change.path).and_then(|m| m.modified()).ok()
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| {
+                anyhow::anyhow!("Missing mtime for change: {}", change.path.display())
+            })?;
 
         Ok(FileMetadata { hash, size, mtime })
     }
@@ -279,11 +285,7 @@ impl CacheManager {
     }
 
     /// Save CodeIndex to cache with metadata
-    pub fn save(
-        index: &CodeIndex,
-        root: &Path,
-        extensions: &[&str],
-    ) -> Result<CacheMetadata> {
+    pub fn save(index: &CodeIndex, root: &Path, extensions: &[&str]) -> Result<CacheMetadata> {
         Self::save_internal(index, root, extensions, None, None)
     }
 
@@ -345,16 +347,15 @@ impl CacheManager {
         metadata.symbol_count = index.total_symbols();
 
         let cache_data = bincode::serialize(index).context("Failed to serialize index")?;
-        let mut cache_writer = BufWriter::new(
-            File::create(&cache_file).context("Failed to create cache file")?
-        );
+        let mut cache_writer =
+            BufWriter::new(File::create(&cache_file).context("Failed to create cache file")?);
         cache_writer
             .write_all(&cache_data)
             .context("Failed to write cache data")?;
         cache_writer.flush()?;
 
-        let meta_data = serde_json::to_string_pretty(&metadata)
-            .context("Failed to serialize metadata")?;
+        let meta_data =
+            serde_json::to_string_pretty(&metadata).context("Failed to serialize metadata")?;
         fs::write(&meta_file, meta_data).context("Failed to write metadata file")?;
 
         Self::ensure_gitignore(root)?;
@@ -377,10 +378,7 @@ impl CacheManager {
 
         for file in index.files() {
             if !file_metadata.contains_key(&file.path) {
-                return Err(anyhow!(
-                    "missing metadata for {}",
-                    file.path.display()
-                ));
+                return Err(anyhow!("missing metadata for {}", file.path.display()));
             }
         }
 
@@ -408,10 +406,9 @@ impl CacheManager {
         }
 
         // Load metadata
-        let meta_data = fs::read_to_string(&meta_file)
-            .context("Failed to read metadata file")?;
-        let metadata: CacheMetadata = serde_json::from_str(&meta_data)
-            .context("Failed to parse metadata")?;
+        let meta_data = fs::read_to_string(&meta_file).context("Failed to read metadata file")?;
+        let metadata: CacheMetadata =
+            serde_json::from_str(&meta_data).context("Failed to parse metadata")?;
 
         // Validate cache version
         if metadata.version != CACHE_VERSION {
@@ -428,9 +425,8 @@ impl CacheManager {
             }
             ValidationResult::Valid => {
                 // Load cache as-is
-                let cache_reader = BufReader::new(
-                    File::open(&cache_file).context("Failed to open cache file")?
-                );
+                let cache_reader =
+                    BufReader::new(File::open(&cache_file).context("Failed to open cache file")?);
                 let index: CodeIndex = bincode::deserialize_from(cache_reader)
                     .context("Failed to deserialize index")?;
 
@@ -438,9 +434,8 @@ impl CacheManager {
             }
             ValidationResult::NeedsUpdate(changed_files) => {
                 // Load cache but needs incremental update
-                let cache_reader = BufReader::new(
-                    File::open(&cache_file).context("Failed to open cache file")?
-                );
+                let cache_reader =
+                    BufReader::new(File::open(&cache_file).context("Failed to open cache file")?);
                 let index: CodeIndex = bincode::deserialize_from(cache_reader)
                     .context("Failed to deserialize index")?;
 

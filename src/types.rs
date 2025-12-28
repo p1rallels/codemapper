@@ -57,7 +57,11 @@ pub struct SymbolTypes {
 }
 
 /// Analyze types for a symbol by name
-pub fn analyze_types(index: &CodeIndex, symbol_name: &str, fuzzy: bool) -> Result<Vec<SymbolTypes>> {
+pub fn analyze_types(
+    index: &CodeIndex,
+    symbol_name: &str,
+    fuzzy: bool,
+) -> Result<Vec<SymbolTypes>> {
     let symbols: Vec<&Symbol> = if fuzzy {
         index.fuzzy_search(symbol_name)
     } else {
@@ -68,7 +72,10 @@ pub fn analyze_types(index: &CodeIndex, symbol_name: &str, fuzzy: bool) -> Resul
 
     for symbol in symbols {
         // Skip non-callable symbols
-        if matches!(symbol.symbol_type, SymbolType::Heading | SymbolType::CodeBlock) {
+        if matches!(
+            symbol.symbol_type,
+            SymbolType::Heading | SymbolType::CodeBlock
+        ) {
             continue;
         }
 
@@ -97,11 +104,7 @@ pub fn analyze_types(index: &CodeIndex, symbol_name: &str, fuzzy: bool) -> Resul
 
 /// Detect language from file path extension
 fn detect_language_from_path(path: &str) -> Language {
-    let ext = path
-        .rsplit('.')
-        .next()
-        .unwrap_or_default()
-        .to_lowercase();
+    let ext = path.rsplit('.').next().unwrap_or_default().to_lowercase();
     Language::from_extension(&ext)
 }
 
@@ -126,7 +129,7 @@ fn parse_rust_signature(signature: &str) -> (Vec<TypeInfo>, Option<TypeInfo>) {
     // Extract return type: `-> Type` or `-> Result<Type, Error>`
     let return_re = Regex::new(r"->\s*(.+?)\s*(?:\{|$|\))")
         .unwrap_or_else(|_| Regex::new(r"$").unwrap_or_else(|_| panic!("Failed to compile regex")));
-    
+
     if let Some(cap) = return_re.captures(signature) {
         let ret_type = cap.get(1).map(|m| m.as_str().trim()).unwrap_or_default();
         if !ret_type.is_empty() {
@@ -142,7 +145,7 @@ fn parse_rust_signature(signature: &str) -> (Vec<TypeInfo>, Option<TypeInfo>) {
     // Extract parameters: look for content between ( and )
     let param_re = Regex::new(r"\(([^)]*)\)")
         .unwrap_or_else(|_| Regex::new(r"$").unwrap_or_else(|_| panic!("Failed to compile regex")));
-    
+
     if let Some(cap) = param_re.captures(signature) {
         let param_str = cap.get(1).map(|m| m.as_str()).unwrap_or_default();
         params = parse_rust_params(param_str);
@@ -168,7 +171,7 @@ fn parse_rust_params(param_str: &str) -> Vec<TypeInfo> {
         if let Some(colon_pos) = part.find(':') {
             let name = part[..colon_pos].trim();
             let type_name = part[colon_pos + 1..].trim();
-            
+
             // Skip lifetime-only parameters
             if !type_name.starts_with('\'') {
                 params.push(TypeInfo {
@@ -192,7 +195,7 @@ fn parse_python_signature(signature: &str) -> (Vec<TypeInfo>, Option<TypeInfo>) 
     // Extract return type: `-> Type:`
     let return_re = Regex::new(r"->\s*([^:]+)")
         .unwrap_or_else(|_| Regex::new(r"$").unwrap_or_else(|_| panic!("Failed to compile regex")));
-    
+
     if let Some(cap) = return_re.captures(signature) {
         let ret_type = cap.get(1).map(|m| m.as_str().trim()).unwrap_or_default();
         if !ret_type.is_empty() && ret_type != "None" {
@@ -208,7 +211,7 @@ fn parse_python_signature(signature: &str) -> (Vec<TypeInfo>, Option<TypeInfo>) 
     // Extract parameters
     let param_re = Regex::new(r"\(([^)]*)\)")
         .unwrap_or_else(|_| Regex::new(r"$").unwrap_or_else(|_| panic!("Failed to compile regex")));
-    
+
     if let Some(cap) = param_re.captures(signature) {
         let param_str = cap.get(1).map(|m| m.as_str()).unwrap_or_default();
         params = parse_python_params(param_str);
@@ -236,7 +239,7 @@ fn parse_python_params(param_str: &str) -> Vec<TypeInfo> {
         if let Some(colon_pos) = part.find(':') {
             let name = part[..colon_pos].trim();
             let type_name = part[colon_pos + 1..].trim();
-            
+
             if !type_name.is_empty() {
                 params.push(TypeInfo {
                     name: name.to_string(),
@@ -259,7 +262,7 @@ fn parse_typescript_signature(signature: &str) -> (Vec<TypeInfo>, Option<TypeInf
     // Extract return type: `): Type {` or `): Type`
     let return_re = Regex::new(r"\)\s*:\s*([^{=]+)")
         .unwrap_or_else(|_| Regex::new(r"$").unwrap_or_else(|_| panic!("Failed to compile regex")));
-    
+
     if let Some(cap) = return_re.captures(signature) {
         let ret_type = cap.get(1).map(|m| m.as_str().trim()).unwrap_or_default();
         if !ret_type.is_empty() && ret_type != "void" {
@@ -275,7 +278,7 @@ fn parse_typescript_signature(signature: &str) -> (Vec<TypeInfo>, Option<TypeInf
     // Extract parameters
     let param_re = Regex::new(r"\(([^)]*)\)")
         .unwrap_or_else(|_| Regex::new(r"$").unwrap_or_else(|_| panic!("Failed to compile regex")));
-    
+
     if let Some(cap) = param_re.captures(signature) {
         let param_str = cap.get(1).map(|m| m.as_str()).unwrap_or_default();
         params = parse_typescript_params(param_str);
@@ -306,7 +309,7 @@ fn parse_typescript_params(param_str: &str) -> Vec<TypeInfo> {
         if let Some(colon_pos) = part.find(':') {
             let name = part[..colon_pos].trim();
             let type_name = part[colon_pos + 1..].trim();
-            
+
             if !type_name.is_empty() {
                 params.push(TypeInfo {
                     name: name.to_string(),
@@ -329,7 +332,7 @@ fn parse_go_signature(signature: &str) -> (Vec<TypeInfo>, Option<TypeInfo>) {
     // Extract return type: `) Type {` or `) (Type, error) {`
     let return_re = Regex::new(r"\)\s*([^{]+)")
         .unwrap_or_else(|_| Regex::new(r"$").unwrap_or_else(|_| panic!("Failed to compile regex")));
-    
+
     if let Some(cap) = return_re.captures(signature) {
         let ret_type = cap.get(1).map(|m| m.as_str().trim()).unwrap_or_default();
         if !ret_type.is_empty() && ret_type != "error" {
@@ -345,7 +348,7 @@ fn parse_go_signature(signature: &str) -> (Vec<TypeInfo>, Option<TypeInfo>) {
     // Extract parameters
     let param_re = Regex::new(r"\(([^)]*)\)")
         .unwrap_or_else(|_| Regex::new(r"$").unwrap_or_else(|_| panic!("Failed to compile regex")));
-    
+
     if let Some(cap) = param_re.captures(signature) {
         let param_str = cap.get(1).map(|m| m.as_str()).unwrap_or_default();
         params = parse_go_params(param_str);
@@ -371,7 +374,7 @@ fn parse_go_params(param_str: &str) -> Vec<TypeInfo> {
         if tokens.len() >= 2 {
             let name = tokens[0];
             let type_name = tokens[1..].join(" ");
-            
+
             params.push(TypeInfo {
                 name: name.to_string(),
                 kind: TypeKind::Parameter,
@@ -393,7 +396,7 @@ fn parse_java_signature(signature: &str) -> (Vec<TypeInfo>, Option<TypeInfo>) {
     // Pattern: `public? static? RetType name(`
     let return_re = Regex::new(r"(?:public\s+)?(?:private\s+)?(?:protected\s+)?(?:static\s+)?(?:final\s+)?(\w+(?:<[^>]+>)?)\s+\w+\s*\(")
         .unwrap_or_else(|_| Regex::new(r"$").unwrap_or_else(|_| panic!("Failed to compile regex")));
-    
+
     if let Some(cap) = return_re.captures(signature) {
         let ret_type = cap.get(1).map(|m| m.as_str().trim()).unwrap_or_default();
         if !ret_type.is_empty() && ret_type != "void" {
@@ -409,7 +412,7 @@ fn parse_java_signature(signature: &str) -> (Vec<TypeInfo>, Option<TypeInfo>) {
     // Extract parameters
     let param_re = Regex::new(r"\(([^)]*)\)")
         .unwrap_or_else(|_| Regex::new(r"$").unwrap_or_else(|_| panic!("Failed to compile regex")));
-    
+
     if let Some(cap) = param_re.captures(signature) {
         let param_str = cap.get(1).map(|m| m.as_str()).unwrap_or_default();
         params = parse_java_params(param_str);
@@ -438,12 +441,12 @@ fn parse_java_params(param_str: &str) -> Vec<TypeInfo> {
 
         // Java syntax: `Type name` or `final Type name`
         let part = part.strip_prefix("final").unwrap_or(part).trim();
-        
+
         let tokens: Vec<&str> = part.split_whitespace().collect();
         if tokens.len() >= 2 {
             let type_name = tokens[..tokens.len() - 1].join(" ");
             let name = tokens[tokens.len() - 1];
-            
+
             params.push(TypeInfo {
                 name: name.to_string(),
                 kind: TypeKind::Parameter,
@@ -462,9 +465,12 @@ fn parse_c_signature(signature: &str) -> (Vec<TypeInfo>, Option<TypeInfo>) {
     let mut return_type = None;
 
     // C: return type is before function name
-    let return_re = Regex::new(r"^\s*(?:static\s+)?(?:inline\s+)?(?:const\s+)?(\w+\s*\*?)\s+\w+\s*\(")
-        .unwrap_or_else(|_| Regex::new(r"$").unwrap_or_else(|_| panic!("Failed to compile regex")));
-    
+    let return_re =
+        Regex::new(r"^\s*(?:static\s+)?(?:inline\s+)?(?:const\s+)?(\w+\s*\*?)\s+\w+\s*\(")
+            .unwrap_or_else(|_| {
+                Regex::new(r"$").unwrap_or_else(|_| panic!("Failed to compile regex"))
+            });
+
     if let Some(cap) = return_re.captures(signature) {
         let ret_type = cap.get(1).map(|m| m.as_str().trim()).unwrap_or_default();
         if !ret_type.is_empty() && ret_type != "void" {
@@ -480,7 +486,7 @@ fn parse_c_signature(signature: &str) -> (Vec<TypeInfo>, Option<TypeInfo>) {
     // Extract parameters
     let param_re = Regex::new(r"\(([^)]*)\)")
         .unwrap_or_else(|_| Regex::new(r"$").unwrap_or_else(|_| panic!("Failed to compile regex")));
-    
+
     if let Some(cap) = param_re.captures(signature) {
         let param_str = cap.get(1).map(|m| m.as_str()).unwrap_or_default();
         params = parse_c_params(param_str);
@@ -506,14 +512,14 @@ fn parse_c_params(param_str: &str) -> Vec<TypeInfo> {
         if tokens.len() >= 2 {
             let name = tokens[tokens.len() - 1].trim_start_matches('*');
             let type_name = tokens[..tokens.len() - 1].join(" ");
-            
+
             // Check if name has pointer
             let type_with_ptr = if tokens[tokens.len() - 1].starts_with('*') {
                 format!("{}*", type_name)
             } else {
                 type_name
             };
-            
+
             params.push(TypeInfo {
                 name: name.to_string(),
                 kind: TypeKind::Parameter,
@@ -572,7 +578,7 @@ fn clean_type_name(type_name: &str) -> String {
 /// Extract the base type name for lookup (e.g., "Vec<User>" -> "User", "Option<String>" -> "String")
 fn extract_base_types(type_name: &str) -> Vec<String> {
     let mut types = Vec::new();
-    
+
     // Get the main type
     let main_type = type_name
         .split('<')
@@ -583,25 +589,28 @@ fn extract_base_types(type_name: &str) -> Vec<String> {
         .trim_start_matches("mut ")
         .trim_end_matches('*')
         .to_string();
-    
+
     if !main_type.is_empty() && !is_primitive_type(&main_type) {
         types.push(main_type);
     }
-    
+
     // Extract generic parameters
     if let Some(start) = type_name.find('<') {
         if let Some(end) = type_name.rfind('>') {
             let generics = &type_name[start + 1..end];
             let generic_parts = split_by_comma_respecting_brackets(generics);
             for part in generic_parts {
-                let part = part.trim().trim_start_matches('&').trim_start_matches("mut ");
+                let part = part
+                    .trim()
+                    .trim_start_matches('&')
+                    .trim_start_matches("mut ");
                 if !part.is_empty() && !is_primitive_type(part) {
                     types.push(part.to_string());
                 }
             }
         }
     }
-    
+
     types
 }
 
@@ -609,26 +618,96 @@ fn extract_base_types(type_name: &str) -> Vec<String> {
 fn is_primitive_type(type_name: &str) -> bool {
     let primitives = [
         // Rust
-        "i8", "i16", "i32", "i64", "i128", "isize",
-        "u8", "u16", "u32", "u64", "u128", "usize",
-        "f32", "f64", "bool", "char", "str", "String",
-        "Vec", "Option", "Result", "Box", "Rc", "Arc",
-        "HashMap", "HashSet", "BTreeMap", "BTreeSet",
+        "i8",
+        "i16",
+        "i32",
+        "i64",
+        "i128",
+        "isize",
+        "u8",
+        "u16",
+        "u32",
+        "u64",
+        "u128",
+        "usize",
+        "f32",
+        "f64",
+        "bool",
+        "char",
+        "str",
+        "String",
+        "Vec",
+        "Option",
+        "Result",
+        "Box",
+        "Rc",
+        "Arc",
+        "HashMap",
+        "HashSet",
+        "BTreeMap",
+        "BTreeSet",
         // Python
-        "int", "float", "str", "bool", "list", "dict", "set", "tuple",
-        "List", "Dict", "Set", "Tuple", "Optional", "Union", "Any",
+        "int",
+        "float",
+        "str",
+        "bool",
+        "list",
+        "dict",
+        "set",
+        "tuple",
+        "List",
+        "Dict",
+        "Set",
+        "Tuple",
+        "Optional",
+        "Union",
+        "Any",
         // TypeScript/JavaScript
-        "string", "number", "boolean", "void", "undefined", "null",
-        "Array", "object", "Object", "Promise", "Map", "Set",
+        "string",
+        "number",
+        "boolean",
+        "void",
+        "undefined",
+        "null",
+        "Array",
+        "object",
+        "Object",
+        "Promise",
+        "Map",
+        "Set",
         // Go
-        "error", "byte", "rune",
+        "error",
+        "byte",
+        "rune",
         // Java
-        "byte", "short", "int", "long", "float", "double", "boolean", "char",
-        "Byte", "Short", "Integer", "Long", "Float", "Double", "Boolean", "Character",
+        "byte",
+        "short",
+        "int",
+        "long",
+        "float",
+        "double",
+        "boolean",
+        "char",
+        "Byte",
+        "Short",
+        "Integer",
+        "Long",
+        "Float",
+        "Double",
+        "Boolean",
+        "Character",
         // C
-        "void", "int", "long", "short", "char", "float", "double", "unsigned", "signed",
+        "void",
+        "int",
+        "long",
+        "short",
+        "char",
+        "float",
+        "double",
+        "unsigned",
+        "signed",
     ];
-    
+
     primitives.contains(&type_name)
 }
 
@@ -640,11 +719,11 @@ fn resolve_types(index: &CodeIndex, types: Vec<TypeInfo>) -> Vec<TypeInfo> {
 /// Resolve a single type by searching for its definition
 fn resolve_type(index: &CodeIndex, mut type_info: TypeInfo) -> TypeInfo {
     let base_types = extract_base_types(&type_info.type_name);
-    
+
     for base_type in base_types {
         // Search for class/struct/type definition
         let symbols = index.query_symbol(&base_type);
-        
+
         for symbol in symbols {
             // Look for class, struct (Class type), or enum definitions
             if matches!(symbol.symbol_type, SymbolType::Class | SymbolType::Enum) {
@@ -656,7 +735,7 @@ fn resolve_type(index: &CodeIndex, mut type_info: TypeInfo) -> TypeInfo {
                 return type_info;
             }
         }
-        
+
         // Try fuzzy search if exact match fails
         let fuzzy_symbols = index.fuzzy_search(&base_type);
         for symbol in fuzzy_symbols {
@@ -672,7 +751,7 @@ fn resolve_type(index: &CodeIndex, mut type_info: TypeInfo) -> TypeInfo {
             }
         }
     }
-    
+
     type_info
 }
 
@@ -684,45 +763,54 @@ mod tests {
     fn test_parse_rust_signature() {
         let sig = "fn process(user: User, count: i32) -> Result<String, Error>";
         let (params, ret) = parse_rust_signature(sig);
-        
+
         assert_eq!(params.len(), 2);
         assert_eq!(params[0].name, "user");
         assert_eq!(params[0].type_name, "User");
         assert_eq!(params[1].name, "count");
         assert_eq!(params[1].type_name, "i32");
-        
+
         assert!(ret.is_some());
-        assert_eq!(ret.as_ref().map(|r| r.type_name.as_str()), Some("Result<String, Error>"));
+        assert_eq!(
+            ret.as_ref().map(|r| r.type_name.as_str()),
+            Some("Result<String, Error>")
+        );
     }
 
     #[test]
     fn test_parse_python_signature() {
         let sig = "def process(user: User, count: int = 0) -> Optional[str]:";
         let (params, ret) = parse_python_signature(sig);
-        
+
         assert_eq!(params.len(), 2);
         assert_eq!(params[0].name, "user");
         assert_eq!(params[0].type_name, "User");
         assert_eq!(params[1].name, "count");
         assert_eq!(params[1].type_name, "int");
-        
+
         assert!(ret.is_some());
-        assert_eq!(ret.as_ref().map(|r| r.type_name.as_str()), Some("Optional[str]"));
+        assert_eq!(
+            ret.as_ref().map(|r| r.type_name.as_str()),
+            Some("Optional[str]")
+        );
     }
 
     #[test]
     fn test_parse_typescript_signature() {
         let sig = "function process(user: User, count?: number): Promise<string>";
         let (params, ret) = parse_typescript_signature(sig);
-        
+
         assert_eq!(params.len(), 2);
         assert_eq!(params[0].name, "user");
         assert_eq!(params[0].type_name, "User");
         assert_eq!(params[1].name, "count");
         assert_eq!(params[1].type_name, "number");
-        
+
         assert!(ret.is_some());
-        assert_eq!(ret.as_ref().map(|r| r.type_name.as_str()), Some("Promise<string>"));
+        assert_eq!(
+            ret.as_ref().map(|r| r.type_name.as_str()),
+            Some("Promise<string>")
+        );
     }
 
     #[test]

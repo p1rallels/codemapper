@@ -1,4 +1,4 @@
-use super::{Parser as ParserTrait, ParseResult};
+use super::{ParseResult, Parser as ParserTrait};
 use crate::models::{Dependency, Symbol, SymbolType};
 use anyhow::{Context, Result};
 use std::path::Path;
@@ -8,7 +8,10 @@ use tree_sitter::{Node, Parser, Query, QueryCursor};
 pub struct GoParser;
 
 fn is_go_exported(name: &str) -> bool {
-    name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
+    name.chars()
+        .next()
+        .map(|c| c.is_uppercase())
+        .unwrap_or(false)
 }
 
 impl GoParser {
@@ -50,11 +53,8 @@ impl GoParser {
         let language: tree_sitter::Language = tree_sitter_go::LANGUAGE.into();
 
         // Query for function declarations
-        let func_query = Query::new(
-            &language,
-            r#"(function_declaration) @func.def"#,
-        )
-        .context("Failed to create Go function query")?;
+        let func_query = Query::new(&language, r#"(function_declaration) @func.def"#)
+            .context("Failed to create Go function query")?;
 
         let mut cursor = QueryCursor::new();
         let mut matches = cursor.matches(&func_query, tree_root, source.as_bytes());
@@ -103,11 +103,8 @@ impl GoParser {
         }
 
         // Query for method declarations
-        let method_query = Query::new(
-            &language,
-            r#"(method_declaration) @method.def"#,
-        )
-        .context("Failed to create Go method query")?;
+        let method_query = Query::new(&language, r#"(method_declaration) @method.def"#)
+            .context("Failed to create Go method query")?;
 
         let mut cursor = QueryCursor::new();
         let mut matches = cursor.matches(&method_query, tree_root, source.as_bytes());
@@ -193,7 +190,8 @@ impl GoParser {
 
                 match capture_name {
                     Some("type.name") => {
-                        type_name = capture.node
+                        type_name = capture
+                            .node
                             .utf8_text(source.as_bytes())
                             .ok()
                             .map(|s| s.to_string());
@@ -211,13 +209,17 @@ impl GoParser {
                 let docstring = self.extract_comment(node, source);
 
                 // Determine if it's a struct, interface, or other type
-                let type_kind = if self.extract_text(node, source)
+                let type_kind = if self
+                    .extract_text(node, source)
                     .unwrap_or_default()
-                    .contains("struct") {
+                    .contains("struct")
+                {
                     "struct"
-                } else if self.extract_text(node, source)
+                } else if self
+                    .extract_text(node, source)
                     .unwrap_or_default()
-                    .contains("interface") {
+                    .contains("interface")
+                {
                     "interface"
                 } else {
                     "type"
@@ -280,7 +282,8 @@ impl GoParser {
 
                 match capture_name {
                     Some("const.name") => {
-                        const_name = capture.node
+                        const_name = capture
+                            .node
                             .utf8_text(source.as_bytes())
                             .ok()
                             .map(|s| s.to_string());
@@ -339,9 +342,14 @@ impl GoParser {
                                         if spec_cursor.goto_first_child() {
                                             loop {
                                                 let spec_child = spec_cursor.node();
-                                                if spec_child.kind() == "interpreted_string_literal" {
-                                                    if let Some(import_path) = self.extract_text(spec_child, source) {
-                                                        let clean_path = import_path.trim_matches('"').to_string();
+                                                if spec_child.kind() == "interpreted_string_literal"
+                                                {
+                                                    if let Some(import_path) =
+                                                        self.extract_text(spec_child, source)
+                                                    {
+                                                        let clean_path = import_path
+                                                            .trim_matches('"')
+                                                            .to_string();
                                                         imports.push(Dependency {
                                                             import_name: clean_path,
                                                             from_file: None,
@@ -366,8 +374,11 @@ impl GoParser {
                                 loop {
                                     let spec_child = spec_cursor.node();
                                     if spec_child.kind() == "interpreted_string_literal" {
-                                        if let Some(import_path) = self.extract_text(spec_child, source) {
-                                            let clean_path = import_path.trim_matches('"').to_string();
+                                        if let Some(import_path) =
+                                            self.extract_text(spec_child, source)
+                                        {
+                                            let clean_path =
+                                                import_path.trim_matches('"').to_string();
                                             imports.push(Dependency {
                                                 import_name: clean_path,
                                                 from_file: None,
@@ -456,7 +467,9 @@ func HelloWorld() {
         let result = parser.parse(source, Path::new("test.go"))?;
         assert!(result.symbols.len() >= 1);
 
-        let funcs: Vec<_> = result.symbols.iter()
+        let funcs: Vec<_> = result
+            .symbols
+            .iter()
             .filter(|s| s.symbol_type == SymbolType::Function)
             .collect();
         assert_eq!(funcs.len(), 1);
@@ -478,7 +491,9 @@ type User struct {
 "#;
         let result = parser.parse(source, Path::new("test.go"))?;
 
-        let structs: Vec<_> = result.symbols.iter()
+        let structs: Vec<_> = result
+            .symbols
+            .iter()
             .filter(|s| s.symbol_type == SymbolType::Class)
             .collect();
         assert_eq!(structs.len(), 1);

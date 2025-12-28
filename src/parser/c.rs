@@ -1,4 +1,4 @@
-use super::{Parser as ParserTrait, ParseResult};
+use super::{ParseResult, Parser as ParserTrait};
 use crate::models::{Dependency, Symbol, SymbolType};
 use anyhow::{Context, Result};
 use std::path::Path;
@@ -46,11 +46,8 @@ impl CParser {
         let language: tree_sitter::Language = tree_sitter_c::LANGUAGE.into();
 
         // Query for function definitions
-        let func_query = Query::new(
-            &language,
-            r#"(function_definition) @func.def"#,
-        )
-        .context("Failed to create C function query")?;
+        let func_query = Query::new(&language, r#"(function_definition) @func.def"#)
+            .context("Failed to create C function query")?;
 
         let mut cursor = QueryCursor::new();
         let mut matches = cursor.matches(&func_query, tree_root, source.as_bytes());
@@ -121,11 +118,8 @@ impl CParser {
         let language: tree_sitter::Language = tree_sitter_c::LANGUAGE.into();
 
         // Query for struct definitions
-        let struct_query = Query::new(
-            &language,
-            r#"(struct_specifier) @struct.def"#,
-        )
-        .context("Failed to create C struct query")?;
+        let struct_query = Query::new(&language, r#"(struct_specifier) @struct.def"#)
+            .context("Failed to create C struct query")?;
 
         let mut cursor = QueryCursor::new();
         let mut matches = cursor.matches(&struct_query, tree_root, source.as_bytes());
@@ -170,11 +164,8 @@ impl CParser {
         }
 
         // Query for union definitions
-        let union_query = Query::new(
-            &language,
-            r#"(union_specifier) @union.def"#,
-        )
-        .context("Failed to create C union query")?;
+        let union_query = Query::new(&language, r#"(union_specifier) @union.def"#)
+            .context("Failed to create C union query")?;
 
         let mut cursor = QueryCursor::new();
         let mut matches = cursor.matches(&union_query, tree_root, source.as_bytes());
@@ -307,7 +298,9 @@ int main(void) {
 "#;
         let result = parser.parse(source, Path::new("test.c"))?;
 
-        let funcs: Vec<_> = result.symbols.iter()
+        let funcs: Vec<_> = result
+            .symbols
+            .iter()
             .filter(|s| s.symbol_type == SymbolType::Function)
             .collect();
         assert_eq!(funcs.len(), 1);
@@ -327,7 +320,9 @@ struct User {
 "#;
         let result = parser.parse(source, Path::new("test.c"))?;
 
-        let structs: Vec<_> = result.symbols.iter()
+        let structs: Vec<_> = result
+            .symbols
+            .iter()
             .filter(|s| s.symbol_type == SymbolType::Class)
             .collect();
         assert_eq!(structs.len(), 1);

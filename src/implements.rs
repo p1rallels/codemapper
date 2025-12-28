@@ -50,12 +50,18 @@ pub fn find_implementations(
         }
 
         let file_impls = match file.language {
-            Language::Rust => find_rust_implementations(&content, interface, fuzzy, &interface_lower),
-            Language::Python => find_python_implementations(&content, interface, fuzzy, &interface_lower),
+            Language::Rust => {
+                find_rust_implementations(&content, interface, fuzzy, &interface_lower)
+            }
+            Language::Python => {
+                find_python_implementations(&content, interface, fuzzy, &interface_lower)
+            }
             Language::TypeScript | Language::JavaScript => {
                 find_ts_implementations(&content, interface, fuzzy, &interface_lower)
             }
-            Language::Java => find_java_implementations(&content, interface, fuzzy, &interface_lower),
+            Language::Java => {
+                find_java_implementations(&content, interface, fuzzy, &interface_lower)
+            }
             Language::Go => find_go_implementations(&content, interface, fuzzy, &interface_lower),
             _ => Vec::new(),
         };
@@ -200,8 +206,10 @@ fn find_ts_implementations(
     let mut results = Vec::new();
 
     // Pattern: class ClassName implements Interface1, Interface2
-    let implements_re = Regex::new(r"class\s+(\w+)(?:<[^>]*>)?(?:\s+extends\s+\w+(?:<[^>]*>)?)?\s+implements\s+([^{]+)")
-        .unwrap_or_else(|_| Regex::new(r"^$").expect("fallback regex"));
+    let implements_re = Regex::new(
+        r"class\s+(\w+)(?:<[^>]*>)?(?:\s+extends\s+\w+(?:<[^>]*>)?)?\s+implements\s+([^{]+)",
+    )
+    .unwrap_or_else(|_| Regex::new(r"^$").expect("fallback regex"));
 
     // Pattern: class ClassName extends ParentClass
     let extends_re = Regex::new(r"class\s+(\w+)(?:<[^>]*>)?\s+extends\s+(\w+)")
@@ -217,8 +225,7 @@ fn find_ts_implementations(
 
             for iface in interfaces_str.split(',') {
                 let iface = iface.trim().split('<').next().unwrap_or("").trim();
-                if !iface.is_empty()
-                    && matches_interface(iface, interface, fuzzy, interface_lower)
+                if !iface.is_empty() && matches_interface(iface, interface, fuzzy, interface_lower)
                 {
                     results.push((
                         class_name.to_string(),
@@ -258,8 +265,10 @@ fn find_java_implementations(
     let mut results = Vec::new();
 
     // Pattern: class ClassName implements Interface1, Interface2
-    let implements_re = Regex::new(r"class\s+(\w+)(?:<[^>]*>)?(?:\s+extends\s+\w+(?:<[^>]*>)?)?\s+implements\s+([^{]+)")
-        .unwrap_or_else(|_| Regex::new(r"^$").expect("fallback regex"));
+    let implements_re = Regex::new(
+        r"class\s+(\w+)(?:<[^>]*>)?(?:\s+extends\s+\w+(?:<[^>]*>)?)?\s+implements\s+([^{]+)",
+    )
+    .unwrap_or_else(|_| Regex::new(r"^$").expect("fallback regex"));
 
     // Pattern: class ClassName extends ParentClass
     let extends_re = Regex::new(r"class\s+(\w+)(?:<[^>]*>)?\s+extends\s+(\w+)")
@@ -279,8 +288,7 @@ fn find_java_implementations(
 
             for iface in interfaces_str.split(',') {
                 let iface = iface.trim().split('<').next().unwrap_or("").trim();
-                if !iface.is_empty()
-                    && matches_interface(iface, interface, fuzzy, interface_lower)
+                if !iface.is_empty() && matches_interface(iface, interface, fuzzy, interface_lower)
                 {
                     results.push((
                         class_name.to_string(),
