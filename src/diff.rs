@@ -22,7 +22,7 @@ impl ChangeType {
             ChangeType::SignatureChanged => "SIGNATURE_CHANGED",
         }
     }
-    
+
     pub fn short(&self) -> &'static str {
         match self {
             ChangeType::Added => "+",
@@ -61,19 +61,22 @@ pub fn compute_diff(
     if !git::is_git_repo(repo_path) {
         anyhow::bail!("Not a git repository: {}", repo_path.display());
     }
-    
+
     let resolved_commit = git::resolve_commit(repo_path, commit)?;
     let repo_root = git::get_repo_root(repo_path)?;
-    
+
     let changed_files = git::get_changed_files(repo_path, &resolved_commit, subpath)?;
-    
-    let all_changed: Vec<PathBuf> = changed_files.added.iter()
+
+    let all_changed: Vec<PathBuf> = changed_files
+        .added
+        .iter()
         .chain(changed_files.deleted.iter())
         .chain(changed_files.modified.iter())
         .cloned()
         .collect();
-    
-    let filtered_files: Vec<PathBuf> = all_changed.into_iter()
+
+    let filtered_files: Vec<PathBuf> = all_changed
+        .into_iter()
         .filter(|f| {
             if extensions.is_empty() {
                 true
@@ -85,23 +88,23 @@ pub fn compute_diff(
             }
         })
         .collect();
-    
+
     let mut symbol_diffs = Vec::new();
     let files_analyzed = filtered_files.len();
-    
+
     for file_path in &filtered_files {
         let language = indexer::detect_language(file_path);
         if language == Language::Unknown {
             continue;
         }
-        
+
         let old_symbols = get_symbols_at_commit(&repo_root, file_path, &resolved_commit, language)?;
         let new_symbols = get_current_symbols(file_path, language)?;
-        
+
         let diffs = compare_symbols(&old_symbols, &new_symbols, file_path);
         symbol_diffs.extend(diffs);
     }
-    
+
     Ok(DiffResult {
         commit: resolved_commit,
         symbols: symbol_diffs,
@@ -119,10 +122,10 @@ fn get_symbols_at_commit(
         Some(c) => c,
         None => return Ok(Vec::new()),
     };
-    
+
     let file_info = indexer::index_file(file_path, &content, language, None)
         .context("Failed to parse file at commit")?;
-    
+
     Ok(file_info.symbols)
 }
 
@@ -130,30 +133,35 @@ fn get_current_symbols(file_path: &Path, language: Language) -> Result<Vec<Symbo
     if !file_path.exists() {
         return Ok(Vec::new());
     }
-    
-    let content = std::fs::read_to_string(file_path)
-        .context("Failed to read current file")?;
-    
+
+    let content = std::fs::read_to_string(file_path).context("Failed to read current file")?;
+
     let file_info = indexer::index_file(file_path, &content, language, None)
         .context("Failed to parse current file")?;
-    
+
     Ok(file_info.symbols)
 }
 
-fn compare_symbols(old_symbols: &[Symbol], new_symbols: &[Symbol], file_path: &Path) -> Vec<SymbolDiff> {
+fn compare_symbols(
+    old_symbols: &[Symbol],
+    new_symbols: &[Symbol],
+    file_path: &Path,
+) -> Vec<SymbolDiff> {
     let mut diffs = Vec::new();
-    
-    let old_map: HashMap<(&str, SymbolType), &Symbol> = old_symbols.iter()
+
+    let old_map: HashMap<(&str, SymbolType), &Symbol> = old_symbols
+        .iter()
         .map(|s| ((s.name.as_str(), s.symbol_type), s))
         .collect();
-    
-    let new_map: HashMap<(&str, SymbolType), &Symbol> = new_symbols.iter()
+
+    let new_map: HashMap<(&str, SymbolType), &Symbol> = new_symbols
+        .iter()
         .map(|s| ((s.name.as_str(), s.symbol_type), s))
         .collect();
-    
+
     for new_sym in new_symbols {
         let key = (new_sym.name.as_str(), new_sym.symbol_type);
-        
+
         match old_map.get(&key) {
             None => {
                 diffs.push(SymbolDiff {
@@ -169,11 +177,11 @@ fn compare_symbols(old_symbols: &[Symbol], new_symbols: &[Symbol], file_path: &P
             }
             Some(old_sym) => {
                 let sig_changed = old_sym.signature != new_sym.signature;
-                let lines_changed = old_sym.line_start != new_sym.line_start 
+                let lines_changed = old_sym.line_start != new_sym.line_start
                     || old_sym.line_end != new_sym.line_end;
-                let size_changed = (old_sym.line_end - old_sym.line_start) 
+                let size_changed = (old_sym.line_end - old_sym.line_start)
                     != (new_sym.line_end - new_sym.line_start);
-                
+
                 if sig_changed {
                     diffs.push(SymbolDiff {
                         name: new_sym.name.clone(),
@@ -200,10 +208,10 @@ fn compare_symbols(old_symbols: &[Symbol], new_symbols: &[Symbol], file_path: &P
             }
         }
     }
-    
+
     for old_sym in old_symbols {
         let key = (old_sym.name.as_str(), old_sym.symbol_type);
-        
+
         if !new_map.contains_key(&key) {
             diffs.push(SymbolDiff {
                 name: old_sym.name.clone(),
@@ -217,14 +225,14 @@ fn compare_symbols(old_symbols: &[Symbol], new_symbols: &[Symbol], file_path: &P
             });
         }
     }
-    
+
     diffs
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_change_type_str() {
         assert_eq!(ChangeType::Added.as_str(), "ADDED");

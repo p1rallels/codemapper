@@ -1,4 +1,4 @@
-use super::{Parser as ParserTrait, ParseResult};
+use super::{ParseResult, Parser as ParserTrait};
 use crate::models::{Dependency, Symbol, SymbolType};
 use anyhow::{Context, Result};
 use std::path::Path;
@@ -56,9 +56,7 @@ impl PythonParser {
             if parent.kind() == "class_definition" {
                 let parent_line = parent.start_position().row + 1;
                 for (idx, symbol) in symbols.iter().enumerate() {
-                    if symbol.symbol_type == SymbolType::Class
-                        && symbol.line_start == parent_line
-                    {
+                    if symbol.symbol_type == SymbolType::Class && symbol.line_start == parent_line {
                         return Some(idx);
                     }
                 }
@@ -86,7 +84,7 @@ impl PythonParser {
         file_path: &Path,
     ) -> Result<Vec<Symbol>> {
         let mut symbols = Vec::new();
-        
+
         let language = tree_sitter_python::LANGUAGE.into();
         let query = Query::new(
             &language,
@@ -97,26 +95,27 @@ impl PythonParser {
             "#,
         )
         .context("Failed to create Python class query")?;
-        
+
         let mut cursor = QueryCursor::new();
         let mut matches = cursor.matches(&query, tree_root, source.as_bytes());
-        
+
         while let Some(match_) = matches.next() {
             let captures = match_.captures;
-            
+
             let mut class_name = None;
             let mut class_body = None;
             let mut class_node = None;
-            
+
             for capture in captures {
                 let capture_name = query
                     .capture_names()
                     .get(capture.index as usize)
                     .map(|s| s.as_ref());
-                    
+
                 match capture_name {
                     Some("class.name") => {
-                        class_name = capture.node
+                        class_name = capture
+                            .node
                             .utf8_text(source.as_bytes())
                             .ok()
                             .map(|s| s.to_string());
@@ -172,13 +171,13 @@ impl PythonParser {
             "#,
         )
         .context("Failed to create Python function query")?;
-        
+
         let mut cursor = QueryCursor::new();
         let mut matches = cursor.matches(&query, tree_root, source.as_bytes());
-        
+
         while let Some(match_) = matches.next() {
             let captures = match_.captures;
-            
+
             let mut func_name = None;
             let mut func_params = None;
             let mut func_body = None;
@@ -189,10 +188,11 @@ impl PythonParser {
                     .capture_names()
                     .get(capture.index as usize)
                     .map(|s| s.as_ref());
-                    
+
                 match capture_name {
                     Some("func.name") => {
-                        func_name = capture.node
+                        func_name = capture
+                            .node
                             .utf8_text(source.as_bytes())
                             .ok()
                             .map(|s| s.to_string());
@@ -239,7 +239,7 @@ impl PythonParser {
                 });
             }
         }
-        
+
         Ok(())
     }
 
@@ -282,7 +282,8 @@ impl PythonParser {
 
                 match capture_name {
                     Some("const.name") => {
-                        const_name = capture.node
+                        const_name = capture
+                            .node
                             .utf8_text(source.as_bytes())
                             .ok()
                             .map(|s| s.to_string());
@@ -298,7 +299,11 @@ impl PythonParser {
             }
 
             if let (Some(name), Some(node)) = (const_name, const_node) {
-                if name.chars().all(|c| c.is_uppercase() || c == '_' || c.is_numeric()) && name.len() > 1 {
+                if name
+                    .chars()
+                    .all(|c| c.is_uppercase() || c == '_' || c.is_numeric())
+                    && name.len() > 1
+                {
                     let line_start = node.start_position().row + 1;
                     let line_end = node.end_position().row + 1;
 
@@ -437,7 +442,7 @@ impl ParserTrait for PythonParser {
         parser
             .set_language(&language)
             .context("Failed to set Python language")?;
-        
+
         let tree = parser
             .parse(content, None)
             .context("Failed to parse Python file")?;
@@ -491,14 +496,18 @@ class MyClass:
 "#;
         let result = parser.parse(source, Path::new("test.py"))?;
         assert!(result.symbols.len() >= 3);
-        
-        let class_symbols: Vec<_> = result.symbols.iter()
+
+        let class_symbols: Vec<_> = result
+            .symbols
+            .iter()
             .filter(|s| s.symbol_type == SymbolType::Class)
             .collect();
         assert_eq!(class_symbols.len(), 1);
         assert_eq!(class_symbols[0].name, "MyClass");
-        
-        let method_symbols: Vec<_> = result.symbols.iter()
+
+        let method_symbols: Vec<_> = result
+            .symbols
+            .iter()
             .filter(|s| s.symbol_type == SymbolType::Method)
             .collect();
         assert_eq!(method_symbols.len(), 2);

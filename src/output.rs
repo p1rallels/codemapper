@@ -1,5 +1,7 @@
 use crate::blame::{BlameResult, HistoryEntry};
-use crate::callgraph::{CallInfo, EntrypointCategory, EntrypointInfo, TestDep, TestInfo, TracePath, UntestedInfo};
+use crate::callgraph::{
+    CallInfo, EntrypointCategory, EntrypointInfo, TestDep, TestInfo, TracePath, UntestedInfo,
+};
 use crate::diff::{ChangeType, DiffResult, SymbolDiff};
 use crate::implements::Implementation;
 use crate::index::CodeIndex;
@@ -93,13 +95,34 @@ impl OutputFormatter {
         output.push_str(&format!("\n## Statistics\n"));
         output.push_str(&format!("- Total files: {}\n", index.total_files()));
         output.push_str(&format!("- Total symbols: {}\n", index.total_symbols()));
-        output.push_str(&format!("  - Functions: {}\n", index.symbols_by_type(SymbolType::Function)));
-        output.push_str(&format!("  - Classes: {}\n", index.symbols_by_type(SymbolType::Class)));
-        output.push_str(&format!("  - Methods: {}\n", index.symbols_by_type(SymbolType::Method)));
-        output.push_str(&format!("  - Enums: {}\n", index.symbols_by_type(SymbolType::Enum)));
-        output.push_str(&format!("  - Static Fields: {}\n", index.symbols_by_type(SymbolType::StaticField)));
-        output.push_str(&format!("  - Headings: {}\n", index.symbols_by_type(SymbolType::Heading)));
-        output.push_str(&format!("  - Code Blocks: {}\n", index.symbols_by_type(SymbolType::CodeBlock)));
+        output.push_str(&format!(
+            "  - Functions: {}\n",
+            index.symbols_by_type(SymbolType::Function)
+        ));
+        output.push_str(&format!(
+            "  - Classes: {}\n",
+            index.symbols_by_type(SymbolType::Class)
+        ));
+        output.push_str(&format!(
+            "  - Methods: {}\n",
+            index.symbols_by_type(SymbolType::Method)
+        ));
+        output.push_str(&format!(
+            "  - Enums: {}\n",
+            index.symbols_by_type(SymbolType::Enum)
+        ));
+        output.push_str(&format!(
+            "  - Static Fields: {}\n",
+            index.symbols_by_type(SymbolType::StaticField)
+        ));
+        output.push_str(&format!(
+            "  - Headings: {}\n",
+            index.symbols_by_type(SymbolType::Heading)
+        ));
+        output.push_str(&format!(
+            "  - Code Blocks: {}\n",
+            index.symbols_by_type(SymbolType::CodeBlock)
+        ));
 
         if level >= 2 {
             output.push_str("\n## Files\n\n");
@@ -107,14 +130,15 @@ impl OutputFormatter {
                 output.push_str(&format!("### {}\n", file.path.display()));
                 output.push_str(&format!("- Language: {}\n", file.language.as_str()));
                 output.push_str(&format!("- Size: {} bytes\n", file.size));
-                
+
                 let symbols = index.get_file_symbols(&file.path);
                 if !symbols.is_empty() {
                     output.push_str(&format!("- Symbols: {}\n", symbols.len()));
-                    
+
                     if level >= 3 {
                         for symbol in symbols {
-                            output.push_str(&format!("  - {} {} (lines {}-{})",
+                            output.push_str(&format!(
+                                "  - {} {} (lines {}-{})",
                                 symbol.symbol_type.as_str(),
                                 symbol.name,
                                 symbol.line_start,
@@ -139,7 +163,7 @@ impl OutputFormatter {
 
     fn format_map_human(&self, index: &CodeIndex, level: u8) -> String {
         let mut output = String::new();
-        
+
         output.push_str(&format!("{}\n\n", "Project Overview".bold().green()));
 
         let mut lang_table = Table::new();
@@ -167,19 +191,40 @@ impl OutputFormatter {
 
         stats_table.add_row(vec!["Total Files", &index.total_files().to_string()]);
         stats_table.add_row(vec!["Total Symbols", &index.total_symbols().to_string()]);
-        stats_table.add_row(vec!["Functions", &index.symbols_by_type(SymbolType::Function).to_string()]);
-        stats_table.add_row(vec!["Classes", &index.symbols_by_type(SymbolType::Class).to_string()]);
-        stats_table.add_row(vec!["Methods", &index.symbols_by_type(SymbolType::Method).to_string()]);
-        stats_table.add_row(vec!["Enums", &index.symbols_by_type(SymbolType::Enum).to_string()]);
-        stats_table.add_row(vec!["Static Fields", &index.symbols_by_type(SymbolType::StaticField).to_string()]);
-        stats_table.add_row(vec!["Headings", &index.symbols_by_type(SymbolType::Heading).to_string()]);
-        stats_table.add_row(vec!["Code Blocks", &index.symbols_by_type(SymbolType::CodeBlock).to_string()]);
+        stats_table.add_row(vec![
+            "Functions",
+            &index.symbols_by_type(SymbolType::Function).to_string(),
+        ]);
+        stats_table.add_row(vec![
+            "Classes",
+            &index.symbols_by_type(SymbolType::Class).to_string(),
+        ]);
+        stats_table.add_row(vec![
+            "Methods",
+            &index.symbols_by_type(SymbolType::Method).to_string(),
+        ]);
+        stats_table.add_row(vec![
+            "Enums",
+            &index.symbols_by_type(SymbolType::Enum).to_string(),
+        ]);
+        stats_table.add_row(vec![
+            "Static Fields",
+            &index.symbols_by_type(SymbolType::StaticField).to_string(),
+        ]);
+        stats_table.add_row(vec![
+            "Headings",
+            &index.symbols_by_type(SymbolType::Heading).to_string(),
+        ]);
+        stats_table.add_row(vec![
+            "Code Blocks",
+            &index.symbols_by_type(SymbolType::CodeBlock).to_string(),
+        ]);
 
         output.push_str(&format!("{}\n", stats_table));
 
         if level >= 2 {
             output.push_str(&format!("\n{}\n\n", "Files".bold().green()));
-            
+
             let mut file_table = Table::new();
             file_table
                 .load_preset(UTF8_FULL)
@@ -194,7 +239,8 @@ impl OutputFormatter {
             for file in index.files() {
                 let symbols = index.get_file_symbols(&file.path);
                 let symbol_info = if level >= 3 {
-                    symbols.iter()
+                    symbols
+                        .iter()
                         .map(|s| format!("{}:{}", s.symbol_type.as_str(), s.name))
                         .collect::<Vec<_>>()
                         .join(", ")
@@ -246,18 +292,22 @@ impl OutputFormatter {
         if level >= 2 {
             output.push_str("\n[FILES]\n");
             for file in index.files() {
-                output.push_str(&format!("{}|{}|{}", 
+                output.push_str(&format!(
+                    "{}|{}|{}",
                     file.path.display(),
                     file.language.as_str(),
                     file.size
                 ));
-                
+
                 let symbols = index.get_file_symbols(&file.path);
                 if !symbols.is_empty() && level >= 3 {
                     output.push_str("|");
                     for (i, symbol) in symbols.iter().enumerate() {
-                        if i > 0 { output.push(','); }
-                        output.push_str(&format!("{}:{}@{}-{}",
+                        if i > 0 {
+                            output.push(',');
+                        }
+                        output.push_str(&format!(
+                            "{}:{}@{}-{}",
                             match symbol.symbol_type {
                                 SymbolType::Function => "f",
                                 SymbolType::Class => "c",
@@ -290,16 +340,32 @@ impl OutputFormatter {
         }
     }
 
-    fn format_query_default(&self, symbols: Vec<&Symbol>, context: bool, show_body: bool) -> String {
+    fn format_query_default(
+        &self,
+        symbols: Vec<&Symbol>,
+        context: bool,
+        show_body: bool,
+    ) -> String {
         let mut output = String::new();
         output.push_str(&format!("Found {} symbols\n\n", symbols.len()));
 
         for symbol in symbols {
-            let export_marker = if symbol.is_exported { " (exported)" } else { "" };
+            let export_marker = if symbol.is_exported {
+                " (exported)"
+            } else {
+                ""
+            };
             output.push_str(&format!("## {}\n", symbol.name));
-            output.push_str(&format!("- Type: {}{}\n", symbol.symbol_type.as_str(), export_marker));
+            output.push_str(&format!(
+                "- Type: {}{}\n",
+                symbol.symbol_type.as_str(),
+                export_marker
+            ));
             output.push_str(&format!("- File: {}\n", symbol.file_path.display()));
-            output.push_str(&format!("- Lines: {}-{}\n", symbol.line_start, symbol.line_end));
+            output.push_str(&format!(
+                "- Lines: {}-{}\n",
+                symbol.line_start, symbol.line_end
+            ));
 
             if let Some(sig) = &symbol.signature {
                 output.push_str(&format!("- Signature: {}\n", sig));
@@ -315,12 +381,17 @@ impl OutputFormatter {
             if show_body {
                 let line_count = symbol.line_end - symbol.line_start + 1;
                 if line_count <= 50 {
-                    if let Some(body) = read_file_lines(&symbol.file_path, symbol.line_start, symbol.line_end) {
+                    if let Some(body) =
+                        read_file_lines(&symbol.file_path, symbol.line_start, symbol.line_end)
+                    {
                         output.push_str("\nCode:\n");
                         output.push_str(&body);
                     }
                 } else {
-                    output.push_str(&format!("\n(Code body omitted: {} lines, use --context full to see more details)\n", line_count));
+                    output.push_str(&format!(
+                        "\n(Code body omitted: {} lines, use --context full to see more details)\n",
+                        line_count
+                    ));
                 }
             }
 
@@ -332,7 +403,11 @@ impl OutputFormatter {
 
     fn format_query_human(&self, symbols: Vec<&Symbol>, context: bool, show_body: bool) -> String {
         let mut output = String::new();
-        output.push_str(&format!("{} {}\n\n", "Found".green(), format!("{} symbols", symbols.len()).bold()));
+        output.push_str(&format!(
+            "{} {}\n\n",
+            "Found".green(),
+            format!("{} symbols", symbols.len()).bold()
+        ));
 
         let mut table = Table::new();
         table
@@ -340,7 +415,14 @@ impl OutputFormatter {
             .apply_modifier(UTF8_ROUND_CORNERS);
 
         if context {
-            table.set_header(vec!["Name", "Type", "File", "Lines", "Signature", "Documentation"]);
+            table.set_header(vec![
+                "Name",
+                "Type",
+                "File",
+                "Lines",
+                "Signature",
+                "Documentation",
+            ]);
             for symbol in &symbols {
                 table.add_row(vec![
                     symbol.name.clone(),
@@ -371,7 +453,9 @@ impl OutputFormatter {
             for symbol in &symbols {
                 let line_count = symbol.line_end - symbol.line_start + 1;
                 if line_count <= 50 {
-                    if let Some(body) = read_file_lines(&symbol.file_path, symbol.line_start, symbol.line_end) {
+                    if let Some(body) =
+                        read_file_lines(&symbol.file_path, symbol.line_start, symbol.line_end)
+                    {
                         output.push_str(&format!("{} {}\n", "Code for".cyan(), symbol.name.bold()));
                         output.push_str(&body);
                         output.push_str("\n");
@@ -389,7 +473,8 @@ impl OutputFormatter {
 
         for symbol in symbols {
             let export_tag = if symbol.is_exported { "|exp" } else { "" };
-            output.push_str(&format!("{}|{}|{}|{}-{}{}",
+            output.push_str(&format!(
+                "{}|{}|{}|{}-{}{}",
                 symbol.name,
                 match symbol.symbol_type {
                     SymbolType::Function => "f",
@@ -420,7 +505,9 @@ impl OutputFormatter {
             if show_body {
                 let line_count = symbol.line_end - symbol.line_start + 1;
                 if line_count <= 50 {
-                    if let Some(body) = read_file_lines(&symbol.file_path, symbol.line_start, symbol.line_end) {
+                    if let Some(body) =
+                        read_file_lines(&symbol.file_path, symbol.line_start, symbol.line_end)
+                    {
                         // Compact format: include body on separate lines with indentation
                         output.push_str("|body:");
                         for line in body.lines() {
@@ -448,7 +535,7 @@ impl OutputFormatter {
         let mut output = String::new();
         output.push_str(&format!("# Dependencies for {}\n\n", target));
         output.push_str(&format!("Direction: {}\n\n", direction));
-        
+
         for dep in deps {
             output.push_str(&format!("- {}\n", dep));
         }
@@ -458,7 +545,11 @@ impl OutputFormatter {
 
     fn format_deps_human(&self, target: &str, deps: Vec<String>, direction: &str) -> String {
         let mut output = String::new();
-        output.push_str(&format!("{} {}\n", "Dependencies for".green(), target.bold()));
+        output.push_str(&format!(
+            "{} {}\n",
+            "Dependencies for".green(),
+            target.bold()
+        ));
         output.push_str(&format!("{}: {}\n\n", "Direction".cyan(), direction));
 
         let mut table = Table::new();
@@ -478,7 +569,7 @@ impl OutputFormatter {
     fn format_deps_ai(&self, target: &str, deps: Vec<String>, direction: &str) -> String {
         let mut output = String::new();
         output.push_str(&format!("[DEPS:{}|{}]\n", target, direction));
-        
+
         for dep in deps {
             output.push_str(&format!("{}\n", dep));
         }
@@ -500,7 +591,7 @@ impl OutputFormatter {
 
         let mut lang_counts: HashMap<&str, usize> = HashMap::new();
         let mut total_loc = 0u64;
-        
+
         for file in index.files() {
             *lang_counts.entry(file.language.as_str()).or_insert(0) += 1;
             total_loc += file.size;
@@ -512,13 +603,34 @@ impl OutputFormatter {
         }
 
         output.push_str("\n## Symbols by Type\n");
-        output.push_str(&format!("- Functions: {}\n", index.symbols_by_type(SymbolType::Function)));
-        output.push_str(&format!("- Classes: {}\n", index.symbols_by_type(SymbolType::Class)));
-        output.push_str(&format!("- Methods: {}\n", index.symbols_by_type(SymbolType::Method)));
-        output.push_str(&format!("- Enums: {}\n", index.symbols_by_type(SymbolType::Enum)));
-        output.push_str(&format!("- Static Fields: {}\n", index.symbols_by_type(SymbolType::StaticField)));
-        output.push_str(&format!("- Headings: {}\n", index.symbols_by_type(SymbolType::Heading)));
-        output.push_str(&format!("- Code Blocks: {}\n", index.symbols_by_type(SymbolType::CodeBlock)));
+        output.push_str(&format!(
+            "- Functions: {}\n",
+            index.symbols_by_type(SymbolType::Function)
+        ));
+        output.push_str(&format!(
+            "- Classes: {}\n",
+            index.symbols_by_type(SymbolType::Class)
+        ));
+        output.push_str(&format!(
+            "- Methods: {}\n",
+            index.symbols_by_type(SymbolType::Method)
+        ));
+        output.push_str(&format!(
+            "- Enums: {}\n",
+            index.symbols_by_type(SymbolType::Enum)
+        ));
+        output.push_str(&format!(
+            "- Static Fields: {}\n",
+            index.symbols_by_type(SymbolType::StaticField)
+        ));
+        output.push_str(&format!(
+            "- Headings: {}\n",
+            index.symbols_by_type(SymbolType::Heading)
+        ));
+        output.push_str(&format!(
+            "- Code Blocks: {}\n",
+            index.symbols_by_type(SymbolType::CodeBlock)
+        ));
 
         output.push_str(&format!("\n## Totals\n"));
         output.push_str(&format!("- Total Files: {}\n", index.total_files()));
@@ -540,7 +652,7 @@ impl OutputFormatter {
 
         let mut lang_counts: HashMap<&str, usize> = HashMap::new();
         let mut total_loc = 0u64;
-        
+
         for file in index.files() {
             *lang_counts.entry(file.language.as_str()).or_insert(0) += 1;
             total_loc += file.size;
@@ -559,13 +671,34 @@ impl OutputFormatter {
             .apply_modifier(UTF8_ROUND_CORNERS)
             .set_header(vec!["Type", "Count"]);
 
-        symbol_table.add_row(vec!["Functions", &index.symbols_by_type(SymbolType::Function).to_string()]);
-        symbol_table.add_row(vec!["Classes", &index.symbols_by_type(SymbolType::Class).to_string()]);
-        symbol_table.add_row(vec!["Methods", &index.symbols_by_type(SymbolType::Method).to_string()]);
-        symbol_table.add_row(vec!["Enums", &index.symbols_by_type(SymbolType::Enum).to_string()]);
-        symbol_table.add_row(vec!["Static Fields", &index.symbols_by_type(SymbolType::StaticField).to_string()]);
-        symbol_table.add_row(vec!["Headings", &index.symbols_by_type(SymbolType::Heading).to_string()]);
-        symbol_table.add_row(vec!["Code Blocks", &index.symbols_by_type(SymbolType::CodeBlock).to_string()]);
+        symbol_table.add_row(vec![
+            "Functions",
+            &index.symbols_by_type(SymbolType::Function).to_string(),
+        ]);
+        symbol_table.add_row(vec![
+            "Classes",
+            &index.symbols_by_type(SymbolType::Class).to_string(),
+        ]);
+        symbol_table.add_row(vec![
+            "Methods",
+            &index.symbols_by_type(SymbolType::Method).to_string(),
+        ]);
+        symbol_table.add_row(vec![
+            "Enums",
+            &index.symbols_by_type(SymbolType::Enum).to_string(),
+        ]);
+        symbol_table.add_row(vec![
+            "Static Fields",
+            &index.symbols_by_type(SymbolType::StaticField).to_string(),
+        ]);
+        symbol_table.add_row(vec![
+            "Headings",
+            &index.symbols_by_type(SymbolType::Heading).to_string(),
+        ]);
+        symbol_table.add_row(vec![
+            "Code Blocks",
+            &index.symbols_by_type(SymbolType::CodeBlock).to_string(),
+        ]);
 
         output.push_str(&format!("{}\n", "Symbols by Type".cyan()));
         output.push_str(&format!("{}\n\n", symbol_table));
@@ -592,7 +725,7 @@ impl OutputFormatter {
 
         let mut lang_counts: HashMap<&str, usize> = HashMap::new();
         let mut total_loc = 0u64;
-        
+
         for file in index.files() {
             *lang_counts.entry(file.language.as_str()).or_insert(0) += 1;
             total_loc += file.size;
@@ -604,7 +737,8 @@ impl OutputFormatter {
         }
         output.push('\n');
 
-        output.push_str(&format!("SYMS: f:{} c:{} m:{} e:{} s:{} h:{} cb:{}\n",
+        output.push_str(&format!(
+            "SYMS: f:{} c:{} m:{} e:{} s:{} h:{} cb:{}\n",
             index.symbols_by_type(SymbolType::Function),
             index.symbols_by_type(SymbolType::Class),
             index.symbols_by_type(SymbolType::Method),
@@ -614,7 +748,8 @@ impl OutputFormatter {
             index.symbols_by_type(SymbolType::CodeBlock)
         ));
 
-        output.push_str(&format!("TOTALS: files:{} syms:{} bytes:{}\n",
+        output.push_str(&format!(
+            "TOTALS: files:{} syms:{} bytes:{}\n",
             index.total_files(),
             index.total_symbols(),
             total_loc
@@ -634,7 +769,10 @@ impl OutputFormatter {
     fn format_diff_default(&self, result: &DiffResult) -> String {
         let mut output = String::new();
         output.push_str(&format!("# Symbol Diff\n\n"));
-        output.push_str(&format!("Comparing HEAD to commit: `{}`\n\n", &result.commit[..8.min(result.commit.len())]));
+        output.push_str(&format!(
+            "Comparing HEAD to commit: `{}`\n\n",
+            &result.commit[..8.min(result.commit.len())]
+        ));
         output.push_str(&format!("Files analyzed: {}\n", result.files_analyzed));
         output.push_str(&format!("Symbol changes: {}\n\n", result.symbols.len()));
 
@@ -648,11 +786,21 @@ impl OutputFormatter {
             by_type.entry(sym.change_type).or_default().push(sym);
         }
 
-        for change_type in [ChangeType::Added, ChangeType::Deleted, ChangeType::Modified, ChangeType::SignatureChanged] {
+        for change_type in [
+            ChangeType::Added,
+            ChangeType::Deleted,
+            ChangeType::Modified,
+            ChangeType::SignatureChanged,
+        ] {
             if let Some(symbols) = by_type.get(&change_type) {
-                output.push_str(&format!("## {} ({})\n\n", change_type.as_str(), symbols.len()));
+                output.push_str(&format!(
+                    "## {} ({})\n\n",
+                    change_type.as_str(),
+                    symbols.len()
+                ));
                 for sym in symbols {
-                    output.push_str(&format!("- **{}** ({}) in `{}`",
+                    output.push_str(&format!(
+                        "- **{}** ({}) in `{}`",
                         sym.name,
                         sym.symbol_type.as_str(),
                         sym.file_path.display()
@@ -663,7 +811,7 @@ impl OutputFormatter {
                         output.push_str(&format!(" @ lines {}-{} (deleted)", start, end));
                     }
                     output.push('\n');
-                    
+
                     if change_type == ChangeType::SignatureChanged {
                         if let Some(ref old_sig) = sym.old_signature {
                             output.push_str(&format!("  - Old: `{}`\n", old_sig));
@@ -683,9 +831,18 @@ impl OutputFormatter {
     fn format_diff_human(&self, result: &DiffResult) -> String {
         let mut output = String::new();
         output.push_str(&format!("{}\n\n", "Symbol Diff".bold().green()));
-        output.push_str(&format!("Commit: {}\n", result.commit[..8.min(result.commit.len())].cyan()));
-        output.push_str(&format!("Files analyzed: {}\n", result.files_analyzed.to_string().bold()));
-        output.push_str(&format!("Symbol changes: {}\n\n", result.symbols.len().to_string().bold()));
+        output.push_str(&format!(
+            "Commit: {}\n",
+            result.commit[..8.min(result.commit.len())].cyan()
+        ));
+        output.push_str(&format!(
+            "Files analyzed: {}\n",
+            result.files_analyzed.to_string().bold()
+        ));
+        output.push_str(&format!(
+            "Symbol changes: {}\n\n",
+            result.symbols.len().to_string().bold()
+        ));
 
         if result.symbols.is_empty() {
             output.push_str(&format!("{}\n", "No symbol changes detected.".yellow()));
@@ -705,7 +862,7 @@ impl OutputFormatter {
                 ChangeType::Modified => format!("{}", "~".yellow()),
                 ChangeType::SignatureChanged => format!("{}", "!".magenta()),
             };
-            
+
             let lines = if let Some((start, end)) = sym.new_lines {
                 format!("{}-{}", start, end)
             } else if let Some((start, end)) = sym.old_lines {
@@ -725,10 +882,12 @@ impl OutputFormatter {
 
         output.push_str(&format!("{}\n", table));
 
-        let sig_changes: Vec<&SymbolDiff> = result.symbols.iter()
+        let sig_changes: Vec<&SymbolDiff> = result
+            .symbols
+            .iter()
             .filter(|s| s.change_type == ChangeType::SignatureChanged)
             .collect();
-        
+
         if !sig_changes.is_empty() {
             output.push_str(&format!("\n{}\n", "Signature Changes:".cyan()));
             for sym in sig_changes {
@@ -742,12 +901,17 @@ impl OutputFormatter {
             }
         }
 
-        output.push_str(&format!("\n{}: {} {} {} {} {} {} {} {}\n",
+        output.push_str(&format!(
+            "\n{}: {} {} {} {} {} {} {} {}\n",
             "Legend".cyan(),
-            "+".green(), "added".dimmed(),
-            "-".red(), "deleted".dimmed(),
-            "~".yellow(), "modified".dimmed(),
-            "!".magenta(), "signature".dimmed()
+            "+".green(),
+            "added".dimmed(),
+            "-".red(),
+            "deleted".dimmed(),
+            "~".yellow(),
+            "modified".dimmed(),
+            "!".magenta(),
+            "signature".dimmed()
         ));
 
         output
@@ -755,8 +919,15 @@ impl OutputFormatter {
 
     fn format_diff_ai(&self, result: &DiffResult) -> String {
         let mut output = String::new();
-        output.push_str(&format!("[DIFF:{}]\n", &result.commit[..8.min(result.commit.len())]));
-        output.push_str(&format!("FILES:{} CHANGES:{}\n", result.files_analyzed, result.symbols.len()));
+        output.push_str(&format!(
+            "[DIFF:{}]\n",
+            &result.commit[..8.min(result.commit.len())]
+        ));
+        output.push_str(&format!(
+            "FILES:{} CHANGES:{}\n",
+            result.files_analyzed,
+            result.symbols.len()
+        ));
 
         if result.symbols.is_empty() {
             output.push_str("NO_CHANGES\n");
@@ -764,7 +935,8 @@ impl OutputFormatter {
         }
 
         for sym in &result.symbols {
-            output.push_str(&format!("{}|{}|{}|{}",
+            output.push_str(&format!(
+                "{}|{}|{}|{}",
                 sym.change_type.short(),
                 sym.name,
                 match sym.symbol_type {
@@ -775,8 +947,8 @@ impl OutputFormatter {
                     SymbolType::StaticField => "s",
                     SymbolType::Heading => "h",
                     SymbolType::CodeBlock => "cb",
-                                SymbolType::Interface => "if",
-                                SymbolType::TypeAlias => "ty",
+                    SymbolType::Interface => "if",
+                    SymbolType::TypeAlias => "ty",
                 },
                 sym.file_path.display()
             ));
@@ -813,27 +985,38 @@ impl OutputFormatter {
     fn format_breaking_default(&self, result: &DiffResult) -> String {
         let mut output = String::new();
         output.push_str("# Breaking Changes\n\n");
-        output.push_str(&format!("Since commit: `{}`\n\n", &result.commit[..8.min(result.commit.len())]));
+        output.push_str(&format!(
+            "Since commit: `{}`\n\n",
+            &result.commit[..8.min(result.commit.len())]
+        ));
 
         if result.symbols.is_empty() {
             output.push_str("No breaking changes detected.\n");
             return output;
         }
 
-        output.push_str(&format!("**{} breaking change(s) found**\n\n", result.symbols.len()));
+        output.push_str(&format!(
+            "**{} breaking change(s) found**\n\n",
+            result.symbols.len()
+        ));
 
-        let deleted: Vec<&SymbolDiff> = result.symbols.iter()
+        let deleted: Vec<&SymbolDiff> = result
+            .symbols
+            .iter()
             .filter(|s| s.change_type == ChangeType::Deleted)
             .collect();
-        
-        let sig_changed: Vec<&SymbolDiff> = result.symbols.iter()
+
+        let sig_changed: Vec<&SymbolDiff> = result
+            .symbols
+            .iter()
             .filter(|s| s.change_type == ChangeType::SignatureChanged)
             .collect();
 
         if !deleted.is_empty() {
             output.push_str("## REMOVED (callers will break)\n\n");
             for sym in &deleted {
-                output.push_str(&format!("- **{}** ({}) in `{}`",
+                output.push_str(&format!(
+                    "- **{}** ({}) in `{}`",
                     sym.name,
                     sym.symbol_type.as_str(),
                     sym.file_path.display()
@@ -852,7 +1035,8 @@ impl OutputFormatter {
         if !sig_changed.is_empty() {
             output.push_str("## SIGNATURE CHANGED (callers may need updates)\n\n");
             for sym in &sig_changed {
-                output.push_str(&format!("- **{}** ({}) in `{}`\n",
+                output.push_str(&format!(
+                    "- **{}** ({}) in `{}`\n",
                     sym.name,
                     sym.symbol_type.as_str(),
                     sym.file_path.display()
@@ -873,27 +1057,39 @@ impl OutputFormatter {
     fn format_breaking_human(&self, result: &DiffResult) -> String {
         let mut output = String::new();
         output.push_str(&format!("{}\n\n", "Breaking Changes".bold().red()));
-        output.push_str(&format!("Since commit: {}\n\n", result.commit[..8.min(result.commit.len())].cyan()));
+        output.push_str(&format!(
+            "Since commit: {}\n\n",
+            result.commit[..8.min(result.commit.len())].cyan()
+        ));
 
         if result.symbols.is_empty() {
             output.push_str(&format!("{}\n", "No breaking changes detected.".green()));
             return output;
         }
 
-        output.push_str(&format!("{} breaking change(s) found\n\n", 
-            result.symbols.len().to_string().bold().red()));
+        output.push_str(&format!(
+            "{} breaking change(s) found\n\n",
+            result.symbols.len().to_string().bold().red()
+        ));
 
-        let deleted: Vec<&SymbolDiff> = result.symbols.iter()
+        let deleted: Vec<&SymbolDiff> = result
+            .symbols
+            .iter()
             .filter(|s| s.change_type == ChangeType::Deleted)
             .collect();
-        
-        let sig_changed: Vec<&SymbolDiff> = result.symbols.iter()
+
+        let sig_changed: Vec<&SymbolDiff> = result
+            .symbols
+            .iter()
             .filter(|s| s.change_type == ChangeType::SignatureChanged)
             .collect();
 
         if !deleted.is_empty() {
-            output.push_str(&format!("{}\n\n", "REMOVED (callers will break)".bold().red()));
-            
+            output.push_str(&format!(
+                "{}\n\n",
+                "REMOVED (callers will break)".bold().red()
+            ));
+
             let mut table = Table::new();
             table
                 .load_preset(UTF8_FULL)
@@ -913,10 +1109,20 @@ impl OutputFormatter {
         }
 
         if !sig_changed.is_empty() {
-            output.push_str(&format!("{}\n\n", "SIGNATURE CHANGED (callers may need updates)".bold().yellow()));
+            output.push_str(&format!(
+                "{}\n\n",
+                "SIGNATURE CHANGED (callers may need updates)"
+                    .bold()
+                    .yellow()
+            ));
 
             for sym in &sig_changed {
-                output.push_str(&format!("  {} {} ({})\n", "→".cyan(), sym.name.bold(), sym.symbol_type.as_str()));
+                output.push_str(&format!(
+                    "  {} {} ({})\n",
+                    "→".cyan(),
+                    sym.name.bold(),
+                    sym.symbol_type.as_str()
+                ));
                 output.push_str(&format!("    File: {}\n", sym.file_path.display()));
                 if let Some(ref old_sig) = sym.old_signature {
                     output.push_str(&format!("    Old: {}\n", old_sig.red()));
@@ -933,7 +1139,10 @@ impl OutputFormatter {
 
     fn format_breaking_ai(&self, result: &DiffResult) -> String {
         let mut output = String::new();
-        output.push_str(&format!("[BREAKING:{}]\n", &result.commit[..8.min(result.commit.len())]));
+        output.push_str(&format!(
+            "[BREAKING:{}]\n",
+            &result.commit[..8.min(result.commit.len())]
+        ));
         output.push_str(&format!("COUNT:{}\n", result.symbols.len()));
 
         if result.symbols.is_empty() {
@@ -947,8 +1156,9 @@ impl OutputFormatter {
                 ChangeType::SignatureChanged => "SIG_CHANGED",
                 _ => continue,
             };
-            
-            output.push_str(&format!("{}|{}|{}|{}",
+
+            output.push_str(&format!(
+                "{}|{}|{}|{}",
                 change_marker,
                 sym.name,
                 match sym.symbol_type {
@@ -959,8 +1169,8 @@ impl OutputFormatter {
                     SymbolType::StaticField => "s",
                     SymbolType::Heading => "h",
                     SymbolType::CodeBlock => "cb",
-                                SymbolType::Interface => "if",
-                                SymbolType::TypeAlias => "ty",
+                    SymbolType::Interface => "if",
+                    SymbolType::TypeAlias => "ty",
                 },
                 sym.file_path.display()
             ));
@@ -998,7 +1208,11 @@ impl OutputFormatter {
         output.push_str(&format!("Found {} call site(s)\n\n", callers.len()));
 
         for caller in callers {
-            output.push_str(&format!("## {} ({})\n", caller.caller_name, caller.caller_type.as_str()));
+            output.push_str(&format!(
+                "## {} ({})\n",
+                caller.caller_name,
+                caller.caller_type.as_str()
+            ));
             output.push_str(&format!("- File: {}:{}\n", caller.file_path, caller.line));
             if !caller.context.is_empty() {
                 output.push_str(&format!("- Context: `{}`\n", caller.context));
@@ -1011,7 +1225,11 @@ impl OutputFormatter {
 
     fn format_callers_human(&self, callers: &[CallInfo], symbol_name: &str) -> String {
         let mut output = String::new();
-        output.push_str(&format!("{} {}\n\n", "Callers of".green(), symbol_name.bold()));
+        output.push_str(&format!(
+            "{} {}\n\n",
+            "Callers of".green(),
+            symbol_name.bold()
+        ));
 
         let mut table = Table::new();
         table
@@ -1041,7 +1259,8 @@ impl OutputFormatter {
         output.push_str(&format!("[CALLERS:{}|{}]\n", symbol_name, callers.len()));
 
         for caller in callers {
-            output.push_str(&format!("{}|{}|{}:{}",
+            output.push_str(&format!(
+                "{}|{}|{}:{}",
                 caller.caller_name,
                 match caller.caller_type {
                     SymbolType::Function => "f",
@@ -1051,8 +1270,8 @@ impl OutputFormatter {
                     SymbolType::StaticField => "s",
                     SymbolType::Heading => "h",
                     SymbolType::CodeBlock => "cb",
-                                SymbolType::Interface => "if",
-                                SymbolType::TypeAlias => "ty",
+                    SymbolType::Interface => "if",
+                    SymbolType::TypeAlias => "ty",
                 },
                 caller.file_path,
                 caller.line
@@ -1077,9 +1296,16 @@ impl OutputFormatter {
         output.push_str(&format!("Found {} callee(s)\n\n", callees.len()));
 
         for callee in callees {
-            output.push_str(&format!("## {} ({})\n", callee.caller_name, callee.caller_type.as_str()));
+            output.push_str(&format!(
+                "## {} ({})\n",
+                callee.caller_name,
+                callee.caller_type.as_str()
+            ));
             if callee.file_path != "<external>" {
-                output.push_str(&format!("- Definition: {}:{}\n", callee.file_path, callee.line));
+                output.push_str(&format!(
+                    "- Definition: {}:{}\n",
+                    callee.file_path, callee.line
+                ));
             } else {
                 output.push_str("- External/built-in function\n");
             }
@@ -1094,7 +1320,11 @@ impl OutputFormatter {
 
     fn format_callees_human(&self, callees: &[CallInfo], symbol_name: &str) -> String {
         let mut output = String::new();
-        output.push_str(&format!("{} {}\n\n", "Functions called by".green(), symbol_name.bold()));
+        output.push_str(&format!(
+            "{} {}\n\n",
+            "Functions called by".green(),
+            symbol_name.bold()
+        ));
 
         let mut table = Table::new();
         table
@@ -1130,7 +1360,8 @@ impl OutputFormatter {
         output.push_str(&format!("[CALLEES:{}|{}]\n", symbol_name, callees.len()));
 
         for callee in callees {
-            output.push_str(&format!("{}|{}|{}:{}",
+            output.push_str(&format!(
+                "{}|{}|{}:{}",
                 callee.caller_name,
                 match callee.caller_type {
                     SymbolType::Function => "f",
@@ -1140,8 +1371,8 @@ impl OutputFormatter {
                     SymbolType::StaticField => "s",
                     SymbolType::Heading => "h",
                     SymbolType::CodeBlock => "cb",
-                                SymbolType::Interface => "if",
-                                SymbolType::TypeAlias => "ty",
+                    SymbolType::Interface => "if",
+                    SymbolType::TypeAlias => "ty",
                 },
                 callee.file_path,
                 callee.line
@@ -1169,8 +1400,15 @@ impl OutputFormatter {
         output.push_str(&format!("Found {} test(s)\n\n", tests.len()));
 
         for test in tests {
-            output.push_str(&format!("## {} ({})\n", test.test_name, test.test_type.as_str()));
-            output.push_str(&format!("- Test definition: {}:{}\n", test.file_path, test.line));
+            output.push_str(&format!(
+                "## {} ({})\n",
+                test.test_name,
+                test.test_type.as_str()
+            ));
+            output.push_str(&format!(
+                "- Test definition: {}:{}\n",
+                test.file_path, test.line
+            ));
             output.push_str(&format!("- Calls symbol at: line {}\n", test.call_line));
             if !test.context.is_empty() {
                 output.push_str(&format!("- Context: `{}`\n", test.context));
@@ -1183,7 +1421,11 @@ impl OutputFormatter {
 
     fn format_tests_human(&self, tests: &[TestInfo], symbol_name: &str) -> String {
         let mut output = String::new();
-        output.push_str(&format!("{} {}\n\n", "Tests covering".green(), symbol_name.bold()));
+        output.push_str(&format!(
+            "{} {}\n\n",
+            "Tests covering".green(),
+            symbol_name.bold()
+        ));
 
         let mut table = Table::new();
         table
@@ -1214,7 +1456,8 @@ impl OutputFormatter {
         output.push_str(&format!("[TESTS:{}|{}]\n", symbol_name, tests.len()));
 
         for test in tests {
-            output.push_str(&format!("{}|{}|{}:{}|call:{}",
+            output.push_str(&format!(
+                "{}|{}|{}:{}|call:{}",
                 test.test_name,
                 match test.test_type {
                     SymbolType::Function => "f",
@@ -1224,8 +1467,8 @@ impl OutputFormatter {
                     SymbolType::StaticField => "s",
                     SymbolType::Heading => "h",
                     SymbolType::CodeBlock => "cb",
-                                SymbolType::Interface => "if",
-                                SymbolType::TypeAlias => "ty",
+                    SymbolType::Interface => "if",
+                    SymbolType::TypeAlias => "ty",
                 },
                 test.file_path,
                 test.line,
@@ -1248,7 +1491,10 @@ impl OutputFormatter {
     fn format_test_deps_default(&self, deps: &[TestDep], test_file: &str) -> String {
         let mut output = String::new();
         output.push_str(&format!("# Production dependencies of `{}`\n\n", test_file));
-        output.push_str(&format!("Found {} production symbol(s) called\n\n", deps.len()));
+        output.push_str(&format!(
+            "Found {} production symbol(s) called\n\n",
+            deps.len()
+        ));
 
         let mut current_file = String::new();
         for dep in deps {
@@ -1256,8 +1502,9 @@ impl OutputFormatter {
                 current_file = dep.file_path.clone();
                 output.push_str(&format!("\n## {}\n\n", current_file));
             }
-            
-            output.push_str(&format!("- **{}** ({}) @ line {} (called from test line {})\n",
+
+            output.push_str(&format!(
+                "- **{}** ({}) @ line {} (called from test line {})\n",
                 dep.name,
                 dep.symbol_type.as_str(),
                 dep.line,
@@ -1270,8 +1517,15 @@ impl OutputFormatter {
 
     fn format_test_deps_human(&self, deps: &[TestDep], test_file: &str) -> String {
         let mut output = String::new();
-        output.push_str(&format!("{} {}\n\n", "Production dependencies of".green(), test_file.bold()));
-        output.push_str(&format!("Found {} production symbol(s)\n\n", deps.len().to_string().bold()));
+        output.push_str(&format!(
+            "{} {}\n\n",
+            "Production dependencies of".green(),
+            test_file.bold()
+        ));
+        output.push_str(&format!(
+            "Found {} production symbol(s)\n\n",
+            deps.len().to_string().bold()
+        ));
 
         let mut table = Table::new();
         table
@@ -1297,7 +1551,8 @@ impl OutputFormatter {
         output.push_str(&format!("[TEST_DEPS:{}|{}]\n", test_file, deps.len()));
 
         for dep in deps {
-            output.push_str(&format!("{}|{}|{}:{}|from:{}",
+            output.push_str(&format!(
+                "{}|{}|{}:{}|from:{}",
                 dep.name,
                 match dep.symbol_type {
                     SymbolType::Function => "f",
@@ -1307,8 +1562,8 @@ impl OutputFormatter {
                     SymbolType::StaticField => "s",
                     SymbolType::Heading => "h",
                     SymbolType::CodeBlock => "cb",
-                                SymbolType::Interface => "if",
-                                SymbolType::TypeAlias => "ty",
+                    SymbolType::Interface => "if",
+                    SymbolType::TypeAlias => "ty",
                 },
                 dep.file_path,
                 dep.line,
@@ -1331,16 +1586,18 @@ impl OutputFormatter {
     fn format_untested_default(&self, untested: &[UntestedInfo], total_symbols: usize) -> String {
         let mut output = String::new();
         output.push_str("# Untested Symbols\n\n");
-        
+
         let tested_count = total_symbols.saturating_sub(untested.len());
         let coverage_pct = if total_symbols > 0 {
             (tested_count as f64 / total_symbols as f64) * 100.0
         } else {
             100.0
         };
-        
-        output.push_str(&format!("**Coverage**: {:.1}% ({} of {} symbols tested)\n", 
-            coverage_pct, tested_count, total_symbols));
+
+        output.push_str(&format!(
+            "**Coverage**: {:.1}% ({} of {} symbols tested)\n",
+            coverage_pct, tested_count, total_symbols
+        ));
         output.push_str(&format!("**Untested**: {} symbols\n\n", untested.len()));
 
         let mut current_file = String::new();
@@ -1349,9 +1606,10 @@ impl OutputFormatter {
                 current_file = info.file_path.clone();
                 output.push_str(&format!("\n## {}\n\n", current_file));
             }
-            
-            output.push_str(&format!("- **{}** ({}) @ line {}", 
-                info.name, 
+
+            output.push_str(&format!(
+                "- **{}** ({}) @ line {}",
+                info.name,
                 info.symbol_type.as_str(),
                 info.line
             ));
@@ -1383,13 +1641,15 @@ impl OutputFormatter {
             format!("{:.1}%", coverage_pct).red()
         };
 
-        output.push_str(&format!("{}: {} ({} of {} symbols tested)\n",
+        output.push_str(&format!(
+            "{}: {} ({} of {} symbols tested)\n",
             "Coverage".cyan(),
             coverage_color,
             tested_count,
             total_symbols
         ));
-        output.push_str(&format!("{}: {}\n\n",
+        output.push_str(&format!(
+            "{}: {}\n\n",
             "Untested".cyan(),
             untested.len().to_string().bold()
         ));
@@ -1416,7 +1676,7 @@ impl OutputFormatter {
 
     fn format_untested_ai(&self, untested: &[UntestedInfo], total_symbols: usize) -> String {
         let mut output = String::new();
-        
+
         let tested_count = total_symbols.saturating_sub(untested.len());
         let coverage_pct = if total_symbols > 0 {
             (tested_count as f64 / total_symbols as f64) * 100.0
@@ -1424,11 +1684,19 @@ impl OutputFormatter {
             100.0
         };
 
-        output.push_str(&format!("[UNTESTED:{}|{:.1}%]\n", untested.len(), coverage_pct));
-        output.push_str(&format!("TESTED:{} TOTAL:{}\n", tested_count, total_symbols));
+        output.push_str(&format!(
+            "[UNTESTED:{}|{:.1}%]\n",
+            untested.len(),
+            coverage_pct
+        ));
+        output.push_str(&format!(
+            "TESTED:{} TOTAL:{}\n",
+            tested_count, total_symbols
+        ));
 
         for info in untested {
-            output.push_str(&format!("{}|{}|{}:{}",
+            output.push_str(&format!(
+                "{}|{}|{}:{}",
                 info.name,
                 match info.symbol_type {
                     SymbolType::Function => "f",
@@ -1438,8 +1706,8 @@ impl OutputFormatter {
                     SymbolType::StaticField => "s",
                     SymbolType::Heading => "h",
                     SymbolType::CodeBlock => "cb",
-                                SymbolType::Interface => "if",
-                                SymbolType::TypeAlias => "ty",
+                    SymbolType::Interface => "if",
+                    SymbolType::TypeAlias => "ty",
                 },
                 info.file_path,
                 info.line
@@ -1466,21 +1734,29 @@ impl OutputFormatter {
         output.push_str("# Entrypoints (Uncalled Exported Symbols)\n\n");
         output.push_str(&format!("Found {} entrypoint(s)\n\n", entrypoints.len()));
 
-        let main_entries: Vec<_> = entrypoints.iter()
+        let main_entries: Vec<_> = entrypoints
+            .iter()
             .filter(|e| e.category == EntrypointCategory::MainEntry)
             .collect();
-        let api_funcs: Vec<_> = entrypoints.iter()
+        let api_funcs: Vec<_> = entrypoints
+            .iter()
             .filter(|e| e.category == EntrypointCategory::ApiFunction)
             .collect();
-        let unused: Vec<_> = entrypoints.iter()
+        let unused: Vec<_> = entrypoints
+            .iter()
             .filter(|e| e.category == EntrypointCategory::PossiblyUnused)
             .collect();
 
         if !main_entries.is_empty() {
             output.push_str("## Main Entrypoints\n\n");
             for entry in &main_entries {
-                output.push_str(&format!("- **{}** ({}) @ `{}:{}`",
-                    entry.name, entry.symbol_type.as_str(), entry.file_path, entry.line));
+                output.push_str(&format!(
+                    "- **{}** ({}) @ `{}:{}`",
+                    entry.name,
+                    entry.symbol_type.as_str(),
+                    entry.file_path,
+                    entry.line
+                ));
                 if let Some(ref sig) = entry.signature {
                     output.push_str(&format!("\n  `{}`", sig));
                 }
@@ -1492,8 +1768,13 @@ impl OutputFormatter {
         if !api_funcs.is_empty() {
             output.push_str("## API Functions\n\n");
             for entry in &api_funcs {
-                output.push_str(&format!("- **{}** ({}) @ `{}:{}`",
-                    entry.name, entry.symbol_type.as_str(), entry.file_path, entry.line));
+                output.push_str(&format!(
+                    "- **{}** ({}) @ `{}:{}`",
+                    entry.name,
+                    entry.symbol_type.as_str(),
+                    entry.file_path,
+                    entry.line
+                ));
                 if let Some(ref sig) = entry.signature {
                     output.push_str(&format!("\n  `{}`", sig));
                 }
@@ -1505,8 +1786,13 @@ impl OutputFormatter {
         if !unused.is_empty() {
             output.push_str("## Possibly Unused\n\n");
             for entry in &unused {
-                output.push_str(&format!("- **{}** ({}) @ `{}:{}`",
-                    entry.name, entry.symbol_type.as_str(), entry.file_path, entry.line));
+                output.push_str(&format!(
+                    "- **{}** ({}) @ `{}:{}`",
+                    entry.name,
+                    entry.symbol_type.as_str(),
+                    entry.file_path,
+                    entry.line
+                ));
                 if let Some(ref sig) = entry.signature {
                     output.push_str(&format!("\n  `{}`", sig));
                 }
@@ -1520,13 +1806,26 @@ impl OutputFormatter {
 
     fn format_entrypoints_human(&self, entrypoints: &[EntrypointInfo]) -> String {
         let mut output = String::new();
-        output.push_str(&format!("{}\n\n", "Entrypoints (Uncalled Exported Symbols)".bold().green()));
+        output.push_str(&format!(
+            "{}\n\n",
+            "Entrypoints (Uncalled Exported Symbols)".bold().green()
+        ));
 
-        let main_count = entrypoints.iter().filter(|e| e.category == EntrypointCategory::MainEntry).count();
-        let api_count = entrypoints.iter().filter(|e| e.category == EntrypointCategory::ApiFunction).count();
-        let unused_count = entrypoints.iter().filter(|e| e.category == EntrypointCategory::PossiblyUnused).count();
+        let main_count = entrypoints
+            .iter()
+            .filter(|e| e.category == EntrypointCategory::MainEntry)
+            .count();
+        let api_count = entrypoints
+            .iter()
+            .filter(|e| e.category == EntrypointCategory::ApiFunction)
+            .count();
+        let unused_count = entrypoints
+            .iter()
+            .filter(|e| e.category == EntrypointCategory::PossiblyUnused)
+            .count();
 
-        output.push_str(&format!("{}: {} total ({} main, {} API, {} possibly unused)\n\n",
+        output.push_str(&format!(
+            "{}: {} total ({} main, {} API, {} possibly unused)\n\n",
             "Found".cyan(),
             entrypoints.len().to_string().bold(),
             main_count.to_string().green(),
@@ -1538,7 +1837,14 @@ impl OutputFormatter {
         table
             .load_preset(UTF8_FULL)
             .apply_modifier(UTF8_ROUND_CORNERS)
-            .set_header(vec!["Category", "Symbol", "Type", "File", "Line", "Signature"]);
+            .set_header(vec![
+                "Category",
+                "Symbol",
+                "Type",
+                "File",
+                "Line",
+                "Signature",
+            ]);
 
         for entry in entrypoints {
             let category_str = match entry.category {
@@ -1562,13 +1868,25 @@ impl OutputFormatter {
 
     fn format_entrypoints_ai(&self, entrypoints: &[EntrypointInfo]) -> String {
         let mut output = String::new();
-        
-        let main_count = entrypoints.iter().filter(|e| e.category == EntrypointCategory::MainEntry).count();
-        let api_count = entrypoints.iter().filter(|e| e.category == EntrypointCategory::ApiFunction).count();
-        let unused_count = entrypoints.iter().filter(|e| e.category == EntrypointCategory::PossiblyUnused).count();
+
+        let main_count = entrypoints
+            .iter()
+            .filter(|e| e.category == EntrypointCategory::MainEntry)
+            .count();
+        let api_count = entrypoints
+            .iter()
+            .filter(|e| e.category == EntrypointCategory::ApiFunction)
+            .count();
+        let unused_count = entrypoints
+            .iter()
+            .filter(|e| e.category == EntrypointCategory::PossiblyUnused)
+            .count();
 
         output.push_str(&format!("[ENTRYPOINTS:{}]\n", entrypoints.len()));
-        output.push_str(&format!("MAIN:{} API:{} UNUSED:{}\n", main_count, api_count, unused_count));
+        output.push_str(&format!(
+            "MAIN:{} API:{} UNUSED:{}\n",
+            main_count, api_count, unused_count
+        ));
 
         for entry in entrypoints {
             let cat_short = match entry.category {
@@ -1576,7 +1894,8 @@ impl OutputFormatter {
                 EntrypointCategory::ApiFunction => "api",
                 EntrypointCategory::PossiblyUnused => "unused",
             };
-            output.push_str(&format!("{}|{}|{}|{}:{}",
+            output.push_str(&format!(
+                "{}|{}|{}|{}:{}",
                 cat_short,
                 entry.name,
                 match entry.symbol_type {
@@ -1587,8 +1906,8 @@ impl OutputFormatter {
                     SymbolType::StaticField => "s",
                     SymbolType::Heading => "h",
                     SymbolType::CodeBlock => "cb",
-                                SymbolType::Interface => "if",
-                                SymbolType::TypeAlias => "ty",
+                    SymbolType::Interface => "if",
+                    SymbolType::TypeAlias => "ty",
                 },
                 entry.file_path,
                 entry.line
@@ -1614,14 +1933,17 @@ impl OutputFormatter {
         let mut output = String::new();
         output.push_str(&format!("# Blame for `{}`\n\n", result.symbol_name));
         output.push_str(&format!("Type: {}\n", result.symbol_type.as_str()));
-        output.push_str(&format!("Lines: {}-{}\n\n", result.current_lines.0, result.current_lines.1));
-        
+        output.push_str(&format!(
+            "Lines: {}-{}\n\n",
+            result.current_lines.0, result.current_lines.1
+        ));
+
         output.push_str("## Last Modification\n\n");
         output.push_str(&format!("- Commit: `{}`\n", result.last_commit.short_hash));
         output.push_str(&format!("- Author: {}\n", result.last_commit.author));
         output.push_str(&format!("- Date: {}\n", result.last_commit.date));
         output.push_str(&format!("- Message: {}\n", result.last_commit.message));
-        
+
         if result.old_signature.is_some() || result.new_signature.is_some() {
             output.push_str("\n## Signature Change\n\n");
             if let Some(ref old_sig) = result.old_signature {
@@ -1631,14 +1953,19 @@ impl OutputFormatter {
                 output.push_str(&format!("- New: `{}`\n", new_sig));
             }
         }
-        
+
         output
     }
 
     fn format_blame_human(&self, result: &BlameResult) -> String {
         let mut output = String::new();
-        output.push_str(&format!("{} {}\n\n", "Blame for".green(), result.symbol_name.bold()));
-        output.push_str(&format!("Type: {} | Lines: {}-{}\n\n", 
+        output.push_str(&format!(
+            "{} {}\n\n",
+            "Blame for".green(),
+            result.symbol_name.bold()
+        ));
+        output.push_str(&format!(
+            "Type: {} | Lines: {}-{}\n\n",
             result.symbol_type.as_str().cyan(),
             result.current_lines.0,
             result.current_lines.1
@@ -1678,15 +2005,23 @@ impl OutputFormatter {
 
     fn format_blame_ai(&self, result: &BlameResult) -> String {
         let mut output = String::new();
-        output.push_str(&format!("[BLAME:{}|{}]\n", result.symbol_name, result.symbol_type.as_str()));
-        output.push_str(&format!("LINES:{}-{}\n", result.current_lines.0, result.current_lines.1));
-        output.push_str(&format!("COMMIT:{}|{}|{}|{}\n",
+        output.push_str(&format!(
+            "[BLAME:{}|{}]\n",
+            result.symbol_name,
+            result.symbol_type.as_str()
+        ));
+        output.push_str(&format!(
+            "LINES:{}-{}\n",
+            result.current_lines.0, result.current_lines.1
+        ));
+        output.push_str(&format!(
+            "COMMIT:{}|{}|{}|{}\n",
             result.last_commit.short_hash,
             result.last_commit.author,
             result.last_commit.date,
             result.last_commit.message
         ));
-        
+
         if let Some(ref old_sig) = result.old_signature {
             output.push_str(&format!("OLD_SIG:{}\n", old_sig));
         }
@@ -1713,13 +2048,13 @@ impl OutputFormatter {
         for (i, entry) in history.iter().enumerate() {
             let version_num = history.len() - i;
             let status = if entry.existed { "exists" } else { "deleted" };
-            
+
             output.push_str(&format!("## Version {} ({})\n\n", version_num, status));
             output.push_str(&format!("- Commit: `{}`\n", entry.commit.short_hash));
             output.push_str(&format!("- Author: {}\n", entry.commit.author));
             output.push_str(&format!("- Date: {}\n", entry.commit.date));
             output.push_str(&format!("- Message: {}\n", entry.commit.message));
-            
+
             if let Some((start, end)) = entry.lines {
                 output.push_str(&format!("- Lines: {}-{}\n", start, end));
             }
@@ -1734,8 +2069,15 @@ impl OutputFormatter {
 
     fn format_history_human(&self, history: &[HistoryEntry], symbol_name: &str) -> String {
         let mut output = String::new();
-        output.push_str(&format!("{} {}\n\n", "History for".green(), symbol_name.bold()));
-        output.push_str(&format!("Found {} version(s)\n\n", history.len().to_string().bold()));
+        output.push_str(&format!(
+            "{} {}\n\n",
+            "History for".green(),
+            symbol_name.bold()
+        ));
+        output.push_str(&format!(
+            "Found {} version(s)\n\n",
+            history.len().to_string().bold()
+        ));
 
         let mut table = Table::new();
         table
@@ -1745,12 +2087,12 @@ impl OutputFormatter {
 
         for (i, entry) in history.iter().enumerate() {
             let version_num = history.len() - i;
-            let status = if entry.existed { 
-                "✓".green().to_string() 
-            } else { 
-                "✗".red().to_string() 
+            let status = if entry.existed {
+                "✓".green().to_string()
+            } else {
+                "✗".red().to_string()
             };
-            
+
             let sig = entry.signature.as_deref().unwrap_or("-");
             let sig_display = if sig.len() > 40 {
                 format!("{}...", &sig[..37])
@@ -1777,13 +2119,11 @@ impl OutputFormatter {
 
         for entry in history {
             let status = if entry.existed { "+" } else { "-" };
-            output.push_str(&format!("{}|{}|{}|{}",
-                status,
-                entry.commit.short_hash,
-                entry.commit.date,
-                entry.commit.message
+            output.push_str(&format!(
+                "{}|{}|{}|{}",
+                status, entry.commit.short_hash, entry.commit.date, entry.commit.message
             ));
-            
+
             if let Some((start, end)) = entry.lines {
                 output.push_str(&format!("|{}-{}", start, end));
             }
@@ -1813,7 +2153,10 @@ impl OutputFormatter {
             return output;
         }
 
-        output.push_str(&format!("**Path length**: {} step(s)\n\n", trace.steps.len()));
+        output.push_str(&format!(
+            "**Path length**: {} step(s)\n\n",
+            trace.steps.len()
+        ));
         output.push_str("## Call Chain\n\n");
         output.push_str("```\n");
 
@@ -1821,7 +2164,8 @@ impl OutputFormatter {
             if i > 0 {
                 output.push_str("    ↓\n");
             }
-            output.push_str(&format!("[{}] {} ({})\n", 
+            output.push_str(&format!(
+                "[{}] {} ({})\n",
                 i + 1,
                 step.symbol_name,
                 step.symbol_type.as_str()
@@ -1835,7 +2179,8 @@ impl OutputFormatter {
 
     fn format_trace_human(&self, trace: &TracePath, from: &str, to: &str) -> String {
         let mut output = String::new();
-        output.push_str(&format!("{} {} {} {}\n\n", 
+        output.push_str(&format!(
+            "{} {} {} {}\n\n",
             "Call Path:".green(),
             from.bold(),
             "→".cyan(),
@@ -1843,11 +2188,18 @@ impl OutputFormatter {
         ));
 
         if !trace.found {
-            output.push_str(&format!("{} No call path found between these symbols.\n", "✗".yellow()));
+            output.push_str(&format!(
+                "{} No call path found between these symbols.\n",
+                "✗".yellow()
+            ));
             return output;
         }
 
-        output.push_str(&format!("{}: {} step(s)\n\n", "Path length".cyan(), trace.steps.len()));
+        output.push_str(&format!(
+            "{}: {} step(s)\n\n",
+            "Path length".cyan(),
+            trace.steps.len()
+        ));
 
         let mut table = Table::new();
         table
@@ -1896,7 +2248,8 @@ impl OutputFormatter {
         output.push_str(&format!("PATH:{}\n", names.join("|")));
 
         for step in &trace.steps {
-            output.push_str(&format!("{}|{}|{}:{}\n",
+            output.push_str(&format!(
+                "{}|{}|{}:{}\n",
                 step.symbol_name,
                 match step.symbol_type {
                     SymbolType::Function => "f",
@@ -1906,8 +2259,8 @@ impl OutputFormatter {
                     SymbolType::StaticField => "s",
                     SymbolType::Heading => "h",
                     SymbolType::CodeBlock => "cb",
-                                SymbolType::Interface => "if",
-                                SymbolType::TypeAlias => "ty",
+                    SymbolType::Interface => "if",
+                    SymbolType::TypeAlias => "ty",
                 },
                 step.file_path,
                 step.line
@@ -1925,33 +2278,62 @@ impl OutputFormatter {
         }
     }
 
-    fn format_implements_default(&self, implementations: &[Implementation], interface: &str) -> String {
+    fn format_implements_default(
+        &self,
+        implementations: &[Implementation],
+        interface: &str,
+    ) -> String {
         let mut output = String::new();
         output.push_str(&format!("# Implementations of `{}`\n\n", interface));
-        output.push_str(&format!("Found {} implementation(s)\n\n", implementations.len()));
+        output.push_str(&format!(
+            "Found {} implementation(s)\n\n",
+            implementations.len()
+        ));
 
         for imp in implementations {
             output.push_str(&format!("## {}\n", imp.implementor_name));
             output.push_str(&format!("- Interface: {}\n", imp.interface_name));
             output.push_str(&format!("- Kind: {}\n", imp.kind.as_str()));
             output.push_str(&format!("- Language: {}\n", imp.language.as_str()));
-            output.push_str(&format!("- Location: `{}:{}`\n", imp.file_path.display(), imp.line));
+            output.push_str(&format!(
+                "- Location: `{}:{}`\n",
+                imp.file_path.display(),
+                imp.line
+            ));
             output.push('\n');
         }
 
         output
     }
 
-    fn format_implements_human(&self, implementations: &[Implementation], interface: &str) -> String {
+    fn format_implements_human(
+        &self,
+        implementations: &[Implementation],
+        interface: &str,
+    ) -> String {
         let mut output = String::new();
-        output.push_str(&format!("{} {}\n\n", "Implementations of".green(), interface.bold()));
-        output.push_str(&format!("{} {} implementation(s)\n\n", "Found".cyan(), implementations.len().to_string().bold()));
+        output.push_str(&format!(
+            "{} {}\n\n",
+            "Implementations of".green(),
+            interface.bold()
+        ));
+        output.push_str(&format!(
+            "{} {} implementation(s)\n\n",
+            "Found".cyan(),
+            implementations.len().to_string().bold()
+        ));
 
         let mut table = Table::new();
         table
             .load_preset(UTF8_FULL)
             .apply_modifier(UTF8_ROUND_CORNERS)
-            .set_header(vec!["Implementor", "Interface", "Kind", "Language", "Location"]);
+            .set_header(vec![
+                "Implementor",
+                "Interface",
+                "Kind",
+                "Language",
+                "Location",
+            ]);
 
         for imp in implementations {
             table.add_row(vec![
@@ -1969,10 +2351,15 @@ impl OutputFormatter {
 
     fn format_implements_ai(&self, implementations: &[Implementation], interface: &str) -> String {
         let mut output = String::new();
-        output.push_str(&format!("[IMPLEMENTS:{}|{}]\n", interface, implementations.len()));
+        output.push_str(&format!(
+            "[IMPLEMENTS:{}|{}]\n",
+            interface,
+            implementations.len()
+        ));
 
         for imp in implementations {
-            output.push_str(&format!("{}|{}|{}|{}|{}:{}\n",
+            output.push_str(&format!(
+                "{}|{}|{}|{}|{}:{}\n",
                 imp.implementor_name,
                 imp.interface_name,
                 imp.kind.as_str(),
@@ -2001,8 +2388,11 @@ impl OutputFormatter {
         for symbol in types_info {
             output.push_str(&format!("## {}\n\n", symbol.symbol_name));
             output.push_str(&format!("- Type: {}\n", symbol.symbol_type.as_str()));
-            output.push_str(&format!("- Location: `{}:{}`\n", symbol.file_path, symbol.line));
-            
+            output.push_str(&format!(
+                "- Location: `{}:{}`\n",
+                symbol.file_path, symbol.line
+            ));
+
             if let Some(ref sig) = symbol.signature {
                 output.push_str(&format!("- Signature: `{}`\n", sig));
             }
@@ -2014,8 +2404,10 @@ impl OutputFormatter {
                 output.push_str("|------|------|------------|\n");
                 for param in &symbol.params {
                     let defined = param.defined_in.as_deref().unwrap_or("-");
-                    output.push_str(&format!("| {} | `{}` | {} |\n", 
-                        param.name, param.type_name, defined));
+                    output.push_str(&format!(
+                        "| {} | `{}` | {} |\n",
+                        param.name, param.type_name, defined
+                    ));
                 }
                 output.push('\n');
             }
@@ -2023,7 +2415,10 @@ impl OutputFormatter {
             if let Some(ref ret) = symbol.return_type {
                 output.push_str("### Return Type\n\n");
                 let defined = ret.defined_in.as_deref().unwrap_or("-");
-                output.push_str(&format!("- `{}` (defined in: {})\n\n", ret.type_name, defined));
+                output.push_str(&format!(
+                    "- `{}` (defined in: {})\n\n",
+                    ret.type_name, defined
+                ));
             }
         }
 
@@ -2033,16 +2428,24 @@ impl OutputFormatter {
     fn format_types_human(&self, types_info: &[SymbolTypes]) -> String {
         let mut output = String::new();
         output.push_str(&format!("{}\n\n", "Type Analysis".bold().green()));
-        output.push_str(&format!("{} {} symbol(s)\n\n", "Found".cyan(), types_info.len().to_string().bold()));
+        output.push_str(&format!(
+            "{} {} symbol(s)\n\n",
+            "Found".cyan(),
+            types_info.len().to_string().bold()
+        ));
 
         for symbol in types_info {
-            output.push_str(&format!("{} {} ({})\n", 
-                "→".cyan(), 
+            output.push_str(&format!(
+                "{} {} ({})\n",
+                "→".cyan(),
                 symbol.symbol_name.bold(),
                 symbol.symbol_type.as_str()
             ));
-            output.push_str(&format!("  Location: {}:{}\n", symbol.file_path, symbol.line));
-            
+            output.push_str(&format!(
+                "  Location: {}:{}\n",
+                symbol.file_path, symbol.line
+            ));
+
             if let Some(ref sig) = symbol.signature {
                 output.push_str(&format!("  Signature: {}\n", sig.cyan()));
             }
@@ -2087,7 +2490,8 @@ impl OutputFormatter {
         output.push_str(&format!("[TYPES:{}]\n", types_info.len()));
 
         for symbol in types_info {
-            output.push_str(&format!("SYM:{}|{}|{}:{}\n", 
+            output.push_str(&format!(
+                "SYM:{}|{}|{}:{}\n",
                 symbol.symbol_name,
                 match symbol.symbol_type {
                     SymbolType::Function => "f",
@@ -2097,8 +2501,8 @@ impl OutputFormatter {
                     SymbolType::StaticField => "s",
                     SymbolType::Heading => "h",
                     SymbolType::CodeBlock => "cb",
-                                SymbolType::Interface => "if",
-                                SymbolType::TypeAlias => "ty",
+                    SymbolType::Interface => "if",
+                    SymbolType::TypeAlias => "ty",
                 },
                 symbol.file_path,
                 symbol.line
@@ -2110,8 +2514,10 @@ impl OutputFormatter {
 
             for param in &symbol.params {
                 let defined = param.defined_in.as_deref().unwrap_or("-");
-                output.push_str(&format!("P:{}|{}|{}\n", 
-                    param.name, param.type_name, defined));
+                output.push_str(&format!(
+                    "P:{}|{}|{}\n",
+                    param.name, param.type_name, defined
+                ));
             }
 
             if let Some(ref ret) = symbol.return_type {
@@ -2144,21 +2550,25 @@ impl OutputFormatter {
 
     fn format_snapshot_saved_human(&self, snapshot: &Snapshot) -> String {
         let mut output = String::new();
-        output.push_str(&format!("{} {}\n\n", "Snapshot Saved:".green(), snapshot.name.bold()));
-        
+        output.push_str(&format!(
+            "{} {}\n\n",
+            "Snapshot Saved:".green(),
+            snapshot.name.bold()
+        ));
+
         let mut table = Table::new();
         table
             .load_preset(UTF8_FULL)
             .apply_modifier(UTF8_ROUND_CORNERS)
             .set_header(vec!["Property", "Value"]);
-        
+
         table.add_row(vec!["Name", &snapshot.name]);
         table.add_row(vec!["Files", &snapshot.file_count.to_string()]);
         table.add_row(vec!["Symbols", &snapshot.symbol_count.to_string()]);
         if let Some(ref commit) = snapshot.commit {
             table.add_row(vec!["Git Commit", commit]);
         }
-        
+
         output.push_str(&format!("{}\n", table));
         output
     }
@@ -2166,7 +2576,10 @@ impl OutputFormatter {
     fn format_snapshot_saved_ai(&self, snapshot: &Snapshot) -> String {
         let mut output = String::new();
         output.push_str(&format!("[SNAPSHOT_SAVED:{}]\n", snapshot.name));
-        output.push_str(&format!("FILES:{} SYMBOLS:{}", snapshot.file_count, snapshot.symbol_count));
+        output.push_str(&format!(
+            "FILES:{} SYMBOLS:{}",
+            snapshot.file_count, snapshot.symbol_count
+        ));
         if let Some(ref commit) = snapshot.commit {
             output.push_str(&format!(" COMMIT:{}", commit));
         }
@@ -2193,23 +2606,27 @@ impl OutputFormatter {
 
     fn format_snapshot_list_human(&self, snapshots: &[String]) -> String {
         let mut output = String::new();
-        output.push_str(&format!("{} {} snapshot(s)\n\n", "Found".green(), snapshots.len().to_string().bold()));
-        
+        output.push_str(&format!(
+            "{} {} snapshot(s)\n\n",
+            "Found".green(),
+            snapshots.len().to_string().bold()
+        ));
+
         if snapshots.is_empty() {
             output.push_str("No snapshots found. Create one with 'cm snapshot <name>'\n");
             return output;
         }
-        
+
         let mut table = Table::new();
         table
             .load_preset(UTF8_FULL)
             .apply_modifier(UTF8_ROUND_CORNERS)
             .set_header(vec!["Snapshot Name"]);
-        
+
         for name in snapshots {
             table.add_row(vec![name.clone()]);
         }
-        
+
         output.push_str(&format!("{}\n", table));
         output
     }
@@ -2237,9 +2654,17 @@ impl OutputFormatter {
         output.push_str(&format!("Found {} schema(s)\n\n", schemas.len()));
 
         for schema in schemas {
-            output.push_str(&format!("## {} ({})\n\n", schema.symbol_name, schema.symbol_type.as_str()));
+            output.push_str(&format!(
+                "## {} ({})\n\n",
+                schema.symbol_name,
+                schema.symbol_type.as_str()
+            ));
             output.push_str(&format!("- Language: {}\n", schema.language.as_str()));
-            output.push_str(&format!("- Location: `{}:{}`\n", schema.file_path.display(), schema.line));
+            output.push_str(&format!(
+                "- Location: `{}:{}`\n",
+                schema.file_path.display(),
+                schema.line
+            ));
             output.push_str(&format!("- Fields: {}\n\n", schema.fields.len()));
 
             if schema.fields.is_empty() {
@@ -2250,8 +2675,10 @@ impl OutputFormatter {
                 for field in &schema.fields {
                     let optional = if field.is_optional { "✓" } else { "" };
                     let default = field.default_value.as_deref().unwrap_or("-");
-                    output.push_str(&format!("| {} | `{}` | {} | {} |\n",
-                        field.name, field.type_name, optional, default));
+                    output.push_str(&format!(
+                        "| {} | `{}` | {} | {} |\n",
+                        field.name, field.type_name, optional, default
+                    ));
                 }
                 output.push('\n');
             }
@@ -2263,15 +2690,21 @@ impl OutputFormatter {
     fn format_schema_human(&self, schemas: &[SchemaInfo]) -> String {
         let mut output = String::new();
         output.push_str(&format!("{}\n\n", "Schema Analysis".bold().green()));
-        output.push_str(&format!("{} {} schema(s)\n\n", "Found".cyan(), schemas.len().to_string().bold()));
+        output.push_str(&format!(
+            "{} {} schema(s)\n\n",
+            "Found".cyan(),
+            schemas.len().to_string().bold()
+        ));
 
         for schema in schemas {
-            output.push_str(&format!("{} {} ({})\n",
+            output.push_str(&format!(
+                "{} {} ({})\n",
                 "→".cyan(),
                 schema.symbol_name.bold(),
                 schema.symbol_type.as_str()
             ));
-            output.push_str(&format!("  Language: {} | Location: {}:{}\n\n",
+            output.push_str(&format!(
+                "  Language: {} | Location: {}:{}\n\n",
                 schema.language.as_str(),
                 schema.file_path.display(),
                 schema.line
@@ -2313,7 +2746,8 @@ impl OutputFormatter {
         output.push_str(&format!("[SCHEMA:{}]\n", schemas.len()));
 
         for schema in schemas {
-            output.push_str(&format!("SYM:{}|{}|{}|{}:{}\n",
+            output.push_str(&format!(
+                "SYM:{}|{}|{}|{}:{}\n",
                 schema.symbol_name,
                 match schema.symbol_type {
                     SymbolType::Class => "c",
@@ -2329,9 +2763,15 @@ impl OutputFormatter {
                 let opt_marker = if field.is_optional { "?" } else { "" };
                 let default = field.default_value.as_deref().unwrap_or("");
                 if default.is_empty() {
-                    output.push_str(&format!("F:{}{}|{}\n", field.name, opt_marker, field.type_name));
+                    output.push_str(&format!(
+                        "F:{}{}|{}\n",
+                        field.name, opt_marker, field.type_name
+                    ));
                 } else {
-                    output.push_str(&format!("F:{}{}|{}|={}\n", field.name, opt_marker, field.type_name, default));
+                    output.push_str(&format!(
+                        "F:{}{}|{}|={}\n",
+                        field.name, opt_marker, field.type_name, default
+                    ));
                 }
             }
         }

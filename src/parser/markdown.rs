@@ -1,4 +1,4 @@
-use super::{Parser as ParserTrait, ParseResult};
+use super::{ParseResult, Parser as ParserTrait};
 use crate::models::{Symbol, SymbolType};
 use anyhow::{Context, Result};
 use std::path::Path;
@@ -35,7 +35,8 @@ impl MarkdownParser {
                 && child.kind() != "atx_h3_marker"
                 && child.kind() != "atx_h4_marker"
                 && child.kind() != "atx_h5_marker"
-                && child.kind() != "atx_h6_marker" {
+                && child.kind() != "atx_h6_marker"
+            {
                 if let Some(text) = self.extract_text(child, source) {
                     parts.push(text);
                 }
@@ -194,7 +195,11 @@ impl MarkdownParser {
                         name: format!("[code: {}]", language),
                         symbol_type: SymbolType::CodeBlock,
                         signature: Some(language.clone()),
-                        docstring: if code_content.is_empty() { None } else { Some(code_content) },
+                        docstring: if code_content.is_empty() {
+                            None
+                        } else {
+                            Some(code_content)
+                        },
                         line_start,
                         line_end,
                         parent_id: None,
@@ -269,7 +274,9 @@ Even more content.
         let result = parser.parse(source, Path::new("test.md"))?;
         assert!(result.symbols.len() >= 3);
 
-        let heading_symbols: Vec<_> = result.symbols.iter()
+        let heading_symbols: Vec<_> = result
+            .symbols
+            .iter()
             .filter(|s| s.symbol_type == SymbolType::Heading)
             .collect();
         assert_eq!(heading_symbols.len(), 3);
@@ -296,16 +303,26 @@ def hello():
 "#;
         let result = parser.parse(source, Path::new("test.md"))?;
 
-        let code_blocks: Vec<_> = result.symbols.iter()
+        let code_blocks: Vec<_> = result
+            .symbols
+            .iter()
             .filter(|s| s.symbol_type == SymbolType::CodeBlock)
             .collect();
 
         assert!(code_blocks.len() >= 2);
 
-        let has_json = code_blocks.iter()
-            .any(|s| s.signature.as_ref().map(|sig| sig.contains("json")).unwrap_or(false));
-        let has_python = code_blocks.iter()
-            .any(|s| s.signature.as_ref().map(|sig| sig.contains("python")).unwrap_or(false));
+        let has_json = code_blocks.iter().any(|s| {
+            s.signature
+                .as_ref()
+                .map(|sig| sig.contains("json"))
+                .unwrap_or(false)
+        });
+        let has_python = code_blocks.iter().any(|s| {
+            s.signature
+                .as_ref()
+                .map(|sig| sig.contains("python"))
+                .unwrap_or(false)
+        });
 
         assert!(has_json);
         assert!(has_python);

@@ -298,14 +298,17 @@ fn extract_python_fields_fallback(content: &str, symbol: &Symbol) -> Result<Vec<
     for line in &lines[start_idx..end_idx] {
         let trimmed = line.trim();
 
-        if trimmed.starts_with("def ") || trimmed.starts_with("class ") || trimmed.starts_with('#') {
+        if trimmed.starts_with("def ") || trimmed.starts_with("class ") || trimmed.starts_with('#')
+        {
             continue;
         }
 
         if let Some(colon_pos) = trimmed.find(':') {
             let potential_name = trimmed[..colon_pos].trim();
 
-            if potential_name.chars().all(|c| c.is_alphanumeric() || c == '_')
+            if potential_name
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '_')
                 && !potential_name.is_empty()
                 && !potential_name.starts_with("return")
                 && !potential_name.starts_with("self")

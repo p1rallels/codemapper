@@ -22,18 +22,13 @@ pub struct HistoryEntry {
     pub existed: bool,
 }
 
-pub fn blame_symbol(
-    repo_path: &Path,
-    file_path: &Path,
-    symbol_name: &str,
-) -> Result<BlameResult> {
+pub fn blame_symbol(repo_path: &Path, file_path: &Path, symbol_name: &str) -> Result<BlameResult> {
     if !git::is_git_repo(repo_path) {
         anyhow::bail!("Not a git repository: {}", repo_path.display());
     }
 
-    let canonical_file = std::fs::canonicalize(file_path)
-        .context("Failed to resolve file path")?;
-    
+    let canonical_file = std::fs::canonicalize(file_path).context("Failed to resolve file path")?;
+
     if !canonical_file.exists() {
         anyhow::bail!("File does not exist: {}", file_path.display());
     }
@@ -43,53 +38,55 @@ pub fn blame_symbol(
         anyhow::bail!("Unknown or unsupported file type: {}", file_path.display());
     }
 
-    let current_content = std::fs::read_to_string(&canonical_file)
-        .context("Failed to read current file")?;
+    let current_content =
+        std::fs::read_to_string(&canonical_file).context("Failed to read current file")?;
     let current_file_info = indexer::index_file(&canonical_file, &current_content, language, None)?;
-    
-    let current_symbol = current_file_info.symbols.iter()
+
+    let current_symbol = current_file_info
+        .symbols
+        .iter()
         .find(|s| s.name == symbol_name)
         .ok_or_else(|| anyhow::anyhow!("Symbol '{}' not found in current file", symbol_name))?;
 
     let commits = git::get_commits_for_file(repo_path, &canonical_file, Some(100))?;
-    
+
     if commits.is_empty() {
         anyhow::bail!("No git history found for file: {}", file_path.display());
     }
 
     let repo_root = git::get_repo_root(repo_path)?;
-    
+
     let mut last_modifying_commit: Option<&CommitInfo> = None;
     let mut previous_signature: Option<String> = None;
-    
+
     for i in 0..commits.len() {
         let commit = &commits[i];
-        
+
         let symbol_at_commit = get_symbol_at_commit(
-            &repo_root, 
-            &canonical_file, 
-            &commit.hash, 
-            symbol_name, 
-            language
+            &repo_root,
+            &canonical_file,
+            &commit.hash,
+            symbol_name,
+            language,
         )?;
-        
+
         if i == 0 {
             last_modifying_commit = Some(commit);
             continue;
         }
-        
+
         let prev_commit = &commits[i - 1];
         let symbol_at_prev = get_symbol_at_commit(
             &repo_root,
             &canonical_file,
             &prev_commit.hash,
             symbol_name,
-            language
+            language,
         )?;
-        
+
         let current_sig = symbol_at_prev.as_ref().and_then(|s| s.signature.clone());
         let prev_sig = symbol_at_commit.as_ref().and_then(|s| s.signature.clone());
-        
+
         match (&symbol_at_prev, &symbol_at_commit) {
             (Some(_), None) => {
                 last_modifying_commit = Some(&commits[i - 1]);
@@ -99,7 +96,7 @@ pub fn blame_symbol(
             (Some(curr), Some(prev)) => {
                 let curr_lines = curr.line_end - curr.line_start;
                 let prev_lines = prev.line_end - prev.line_start;
-                
+
                 if current_sig != prev_sig || curr_lines != prev_lines {
                     last_modifying_commit = Some(&commits[i - 1]);
                     previous_signature = prev_sig;
@@ -110,15 +107,15 @@ pub fn blame_symbol(
         }
     }
 
-    let last_commit = last_modifying_commit
-        .cloned()
-        .unwrap_or_else(|| commits.first().cloned().unwrap_or_else(|| CommitInfo {
+    let last_commit = last_modifying_commit.cloned().unwrap_or_else(|| {
+        commits.first().cloned().unwrap_or_else(|| CommitInfo {
             hash: "unknown".to_string(),
             short_hash: "unknown".to_string(),
             author: "unknown".to_string(),
             date: "unknown".to_string(),
             message: "unknown".to_string(),
-        }));
+        })
+    });
 
     Ok(BlameResult {
         symbol_name: current_symbol.name.clone(),
@@ -139,9 +136,8 @@ pub fn history_symbol(
         anyhow::bail!("Not a git repository: {}", repo_path.display());
     }
 
-    let canonical_file = std::fs::canonicalize(file_path)
-        .context("Failed to resolve file path")?;
-    
+    let canonical_file = std::fs::canonicalize(file_path).context("Failed to resolve file path")?;
+
     if !canonical_file.exists() {
         anyhow::bail!("File does not exist: {}", file_path.display());
     }
@@ -152,7 +148,7 @@ pub fn history_symbol(
     }
 
     let commits = git::get_commits_for_file(repo_path, &canonical_file, None)?;
-    
+
     if commits.is_empty() {
         anyhow::bail!("No git history found for file: {}", file_path.display());
     }
@@ -168,19 +164,17 @@ pub fn history_symbol(
             &canonical_file,
             &commit.hash,
             symbol_name,
-            language
+            language,
         )?;
 
         match symbol_at_commit {
             Some(sym) => {
                 let current_sig = sym.signature.clone();
                 let current_lines = Some((sym.line_start, sym.line_end));
-                
+
                 let sig_changed = prev_signature.as_ref() != current_sig.as_ref();
                 let lines_changed = match (prev_lines, current_lines) {
-                    (Some((ps, pe)), Some((cs, ce))) => {
-                        (pe - ps) != (ce - cs)
-                    }
+                    (Some((ps, pe)), Some((cs, ce))) => (pe - ps) != (ce - cs),
                     (None, Some(_)) => true,
                     _ => false,
                 };
@@ -232,7 +226,9 @@ fn get_symbol_at_commit(
     let file_info = indexer::index_file(file_path, &content, language, None)
         .context("Failed to parse file at commit")?;
 
-    let symbol = file_info.symbols.into_iter()
+    let symbol = file_info
+        .symbols
+        .into_iter()
         .find(|s| s.name == symbol_name);
 
     Ok(symbol)
@@ -247,7 +243,7 @@ mod tests {
         let result = blame_symbol(
             Path::new("/nonexistent"),
             Path::new("/nonexistent/file.rs"),
-            "test_symbol"
+            "test_symbol",
         );
         assert!(result.is_err());
     }

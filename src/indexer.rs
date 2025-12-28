@@ -1,6 +1,10 @@
 use crate::index::CodeIndex;
 use crate::models::{FileInfo, Language};
-use crate::parser::{c::CParser, go::GoParser, java::JavaParser, javascript::JavaScriptParser, markdown::MarkdownParser, python::PythonParser, rust::RustParser, typescript::TypeScriptParser, Parser};
+use crate::parser::{
+    c::CParser, go::GoParser, java::JavaParser, javascript::JavaScriptParser,
+    markdown::MarkdownParser, python::PythonParser, rust::RustParser, typescript::TypeScriptParser,
+    Parser,
+};
 use anyhow::{Context, Result};
 use indicatif::ProgressBar;
 use rayon::prelude::*;
@@ -27,8 +31,7 @@ pub fn detect_language(path: &Path) -> Language {
 }
 
 fn read_file_content(path: &Path) -> Result<String> {
-    fs::read_to_string(path)
-        .with_context(|| format!("Failed to read file: {}", path.display()))
+    fs::read_to_string(path).with_context(|| format!("Failed to read file: {}", path.display()))
 }
 
 fn hash_content_blake3(content: &str) -> String {
@@ -44,7 +47,9 @@ pub fn index_file(
     prehashed: Option<&str>,
 ) -> Result<FileInfo> {
     let size = content.len() as u64;
-    let hash = prehashed.map(|h| h.to_string()).unwrap_or_else(|| hash_content_blake3(content));
+    let hash = prehashed
+        .map(|h| h.to_string())
+        .unwrap_or_else(|| hash_content_blake3(content));
     let mut file_info = FileInfo::new(path.to_path_buf(), language, size, hash);
 
     match language {

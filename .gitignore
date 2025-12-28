@@ -20,9 +20,9 @@
 # Test files
 /test_files/
 
-# Documentation
+# Documentation (keep README.md only)
 *.md
-*.txt
+!README.md
 
 # Cache directory (created by project)
 .codemapper/

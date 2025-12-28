@@ -1,4 +1,4 @@
-use super::{Parser as ParserTrait, ParseResult};
+use super::{ParseResult, Parser as ParserTrait};
 use crate::models::{Dependency, Symbol, SymbolType};
 use anyhow::{Context, Result};
 use std::path::Path;
@@ -75,9 +75,7 @@ impl JavaParser {
             if parent.kind() == "class_declaration" || parent.kind() == "interface_declaration" {
                 let parent_line = parent.start_position().row + 1;
                 for (idx, symbol) in symbols.iter().enumerate() {
-                    if symbol.symbol_type == SymbolType::Class
-                        && symbol.line_start == parent_line
-                    {
+                    if symbol.symbol_type == SymbolType::Class && symbol.line_start == parent_line {
                         return Some(idx);
                     }
                 }
@@ -133,7 +131,8 @@ impl JavaParser {
 
                 match capture_name {
                     Some("class.name") => {
-                        class_name = capture.node
+                        class_name = capture
+                            .node
                             .utf8_text(source.as_bytes())
                             .ok()
                             .map(|s| s.to_string());
@@ -203,7 +202,8 @@ impl JavaParser {
 
                 match capture_name {
                     Some("interface.name") => {
-                        interface_name = capture.node
+                        interface_name = capture
+                            .node
                             .utf8_text(source.as_bytes())
                             .ok()
                             .map(|s| s.to_string());
@@ -273,7 +273,8 @@ impl JavaParser {
 
                 match capture_name {
                     Some("method.name") => {
-                        method_name = capture.node
+                        method_name = capture
+                            .node
                             .utf8_text(source.as_bytes())
                             .ok()
                             .map(|s| s.to_string());
@@ -356,7 +357,8 @@ impl JavaParser {
 
                 match capture_name {
                     Some("enum.name") => {
-                        enum_name = capture.node
+                        enum_name = capture
+                            .node
                             .utf8_text(source.as_bytes())
                             .ok()
                             .map(|s| s.to_string());
@@ -430,7 +432,8 @@ impl JavaParser {
 
                 match capture_name {
                     Some("field.name") => {
-                        field_name = capture.node
+                        field_name = capture
+                            .node
                             .utf8_text(source.as_bytes())
                             .ok()
                             .map(|s| s.to_string());
@@ -510,7 +513,8 @@ impl JavaParser {
 
                 match capture_name {
                     Some("constructor.name") => {
-                        constructor_name = capture.node
+                        constructor_name = capture
+                            .node
                             .utf8_text(source.as_bytes())
                             .ok()
                             .map(|s| s.to_string());

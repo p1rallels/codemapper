@@ -67,8 +67,7 @@ impl GrepFilter {
             format!("(?i){}", regex::escape(&self.pattern))
         };
 
-        let matcher = RegexMatcher::new(&pattern)
-            .context("Failed to create regex matcher")?;
+        let matcher = RegexMatcher::new(&pattern).context("Failed to create regex matcher")?;
 
         let mut collector = CandidateCollector::new();
         let mut searcher = SearcherBuilder::new()
