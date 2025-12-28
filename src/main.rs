@@ -109,7 +109,7 @@ OUTPUT FORMATS:
   --format ai       → Compact (token-efficient for LLMs)
 
 COMMON FLAGS (available on multiple commands):
-  --skip-anonymous  Filter out anonymous/lambda functions (query, inspect, diff)
+  --full            Show anonymous/lambda functions (default: hidden)
   --exports-only    Show only exported/public symbols (query, inspect)
   --show-body       Display actual code implementation
   --fuzzy           Flexible symbol matching (case-insensitive)
@@ -353,9 +353,9 @@ WHEN TO USE:
         #[arg(long, default_value_t = false)]
         rebuild_cache: bool,
 
-        /// Filter out anonymous functions from results
+        /// Show anonymous/lambda functions (default: filtered out)
         #[arg(long, default_value_t = false)]
-        skip_anonymous: bool,
+        full: bool,
 
         /// Show only exported/public symbols (functions/classes with export keyword, pub visibility, etc.)
         #[arg(long, default_value_t = false)]
@@ -402,9 +402,9 @@ WHEN TO USE:
         #[arg(long, default_value = "false")]
         show_body: bool,
 
-        /// Filter out anonymous functions from results
+        /// Show anonymous/lambda functions (default: filtered out)
         #[arg(long, default_value_t = false)]
-        skip_anonymous: bool,
+        full: bool,
 
         /// Show only exported/public symbols (functions/classes with export keyword, pub visibility, etc.)
         #[arg(long, default_value_t = false)]
@@ -569,9 +569,9 @@ WHEN TO USE:
         #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,md")]
         extensions: String,
 
-        /// Filter out anonymous functions from results
+        /// Show anonymous/lambda functions (default: filtered out)
         #[arg(long, default_value_t = false)]
-        skip_anonymous: bool,
+        full: bool,
     },
 
     /// [ANALYSIS] Find all call sites of a function (reverse call graph)
@@ -1358,11 +1358,11 @@ fn main() -> Result<()> {
         Commands::Map { path, level, extensions, no_cache, rebuild_cache } => {
             cmd_map(path, level, extensions, no_cache, rebuild_cache, format)?;
         }
-        Commands::Query { symbol, path, fuzzy, r#type, context, show_body, fast, extensions, no_cache, rebuild_cache, skip_anonymous, exports_only } => {
-            cmd_query(symbol, path, context, fuzzy, fast, show_body, r#type, extensions, no_cache, rebuild_cache, skip_anonymous, exports_only, format)?;
+        Commands::Query { symbol, path, fuzzy, r#type, context, show_body, fast, extensions, no_cache, rebuild_cache, full, exports_only } => {
+            cmd_query(symbol, path, context, fuzzy, fast, show_body, r#type, extensions, no_cache, rebuild_cache, !full, exports_only, format)?;
         }
-        Commands::Inspect { file_path, show_body, skip_anonymous, exports_only } => {
-            cmd_inspect(file_path, show_body, skip_anonymous, exports_only, format)?;
+        Commands::Inspect { file_path, show_body, full, exports_only } => {
+            cmd_inspect(file_path, show_body, !full, exports_only, format)?;
         }
         Commands::Deps { target, path, direction, extensions, no_cache, rebuild_cache } => {
             cmd_deps(target, path, direction, extensions, no_cache, rebuild_cache, format)?;
@@ -1370,8 +1370,8 @@ fn main() -> Result<()> {
         Commands::Index { path, extensions } => {
             cmd_index(path, extensions)?;
         }
-        Commands::Diff { commit, path, extensions, skip_anonymous } => {
-            cmd_diff(commit, path, extensions, skip_anonymous, format)?;
+        Commands::Diff { commit, path, extensions, full } => {
+            cmd_diff(commit, path, extensions, !full, format)?;
         }
         Commands::Callers { symbol, path, fuzzy, extensions, no_cache, rebuild_cache } => {
             cmd_callers(symbol, path, fuzzy, extensions, no_cache, rebuild_cache, format)?;
