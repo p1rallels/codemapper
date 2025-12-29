@@ -154,61 +154,66 @@ pub fn find_callees(index: &CodeIndex, symbol_name: &str, fuzzy: bool) -> Result
         return Ok(Vec::new());
     }
 
-    let symbol = symbols.first().context("No symbol found")?;
+    let mut all_callees = Vec::new();
+    let mut global_seen = HashSet::new();
 
-    let content = fs::read_to_string(&symbol.file_path).context("Failed to read symbol file")?;
+    // Process ALL symbols with this name, not just the first one
+    for symbol in &symbols {
+        let content = match fs::read_to_string(&symbol.file_path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
 
-    let lines: Vec<&str> = content.lines().collect();
-    let start_idx = symbol.line_start.saturating_sub(1);
-    let end_idx = symbol.line_end.min(lines.len());
+        let lines: Vec<&str> = content.lines().collect();
+        let start_idx = symbol.line_start.saturating_sub(1);
+        let end_idx = symbol.line_end.min(lines.len());
 
-    if start_idx >= lines.len() {
-        return Ok(Vec::new());
-    }
-
-    let symbol_body: String = lines[start_idx..end_idx].join("\n");
-
-    let language = Language::from_extension(
-        symbol
-            .file_path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or(""),
-    );
-
-    let calls = extract_calls_from_source(&symbol_body, language)?;
-
-    let mut callees = Vec::new();
-    let mut seen = HashSet::new();
-
-    for (call_name, relative_line, context) in calls {
-        if seen.contains(&call_name) {
+        if start_idx >= lines.len() {
             continue;
         }
-        seen.insert(call_name.clone());
 
-        let target_symbols = index.query_symbol(&call_name);
+        let symbol_body: String = lines[start_idx..end_idx].join("\n");
 
-        if let Some(target) = target_symbols.first() {
-            callees.push(CallInfo {
-                caller_name: call_name,
-                caller_type: target.symbol_type,
-                file_path: target.file_path.display().to_string(),
-                line: target.line_start,
-                context: target.signature.clone().unwrap_or_default(),
-            });
-        } else {
-            callees.push(CallInfo {
-                caller_name: call_name,
-                caller_type: SymbolType::Function,
-                file_path: "<external>".to_string(),
-                line: symbol.line_start + relative_line,
-                context: context.trim().to_string(),
-            });
+        let language = Language::from_extension(
+            symbol
+                .file_path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or(""),
+        );
+
+        let calls = extract_calls_from_source(&symbol_body, language)?;
+
+        for (call_name, relative_line, context) in calls {
+            let dedup_key = format!("{}:{}:{}", symbol.file_path.display(), call_name, relative_line);
+            if global_seen.contains(&dedup_key) {
+                continue;
+            }
+            global_seen.insert(dedup_key);
+
+            let target_symbols = index.query_symbol(&call_name);
+
+            if let Some(target) = target_symbols.first() {
+                all_callees.push(CallInfo {
+                    caller_name: call_name,
+                    caller_type: target.symbol_type,
+                    file_path: target.file_path.display().to_string(),
+                    line: target.line_start,
+                    context: target.signature.clone().unwrap_or_default(),
+                });
+            } else {
+                all_callees.push(CallInfo {
+                    caller_name: call_name,
+                    caller_type: SymbolType::Function,
+                    file_path: "<external>".to_string(),
+                    line: symbol.line_start + relative_line,
+                    context: context.trim().to_string(),
+                });
+            }
         }
     }
 
-    Ok(callees)
+    Ok(all_callees)
 }
 
 fn find_enclosing_symbol<'a>(index: &'a CodeIndex, path: &Path, line: usize) -> Option<&'a Symbol> {
@@ -1131,27 +1136,42 @@ pub fn trace_path(index: &CodeIndex, from: &str, to: &str, fuzzy: bool) -> Resul
         .map(|s| s.name.to_lowercase())
         .collect();
 
-    let source = source_symbols.first().context("No source symbol")?;
-
-    let start_step = TraceStep {
-        symbol_name: source.name.clone(),
-        symbol_type: source.symbol_type,
-        file_path: source.file_path.display().to_string(),
-        line: source.line_start,
-    };
-
     let mut queue: VecDeque<(TraceStep, Vec<TraceStep>)> = VecDeque::new();
-    queue.push_back((start_step.clone(), vec![start_step]));
-
     let mut visited: HashSet<String> = HashSet::new();
-    visited.insert(source.name.to_lowercase());
+
+    // Start BFS from ALL matching source symbols, not just the first one
+    for source in &source_symbols {
+        let start_step = TraceStep {
+            symbol_name: source.name.clone(),
+            symbol_type: source.symbol_type,
+            file_path: source.file_path.display().to_string(),
+            line: source.line_start,
+        };
+        
+        let visit_key = format!("{}:{}", source.file_path.display(), source.name.to_lowercase());
+        if !visited.contains(&visit_key) {
+            visited.insert(visit_key);
+            queue.push_back((start_step.clone(), vec![start_step]));
+        }
+    }
 
     while let Some((current, path)) = queue.pop_front() {
         if path.len() > MAX_TRACE_DEPTH {
             continue;
         }
 
-        let callees = find_callees_by_name(index, &current.symbol_name)?;
+        // Find the specific symbol instance from the current step
+        let current_symbols = index.query_symbol(&current.symbol_name);
+        let current_symbol = current_symbols.iter().find(|s| {
+            s.file_path.display().to_string() == current.file_path
+                && s.line_start == current.line
+        });
+
+        if current_symbol.is_none() {
+            continue;
+        }
+
+        let callees = find_callees_for_symbol(index, current_symbol.unwrap())?;
 
         for callee in callees {
             let callee_lower = callee.caller_name.to_lowercase();
@@ -1170,8 +1190,9 @@ pub fn trace_path(index: &CodeIndex, from: &str, to: &str, fuzzy: bool) -> Resul
                 });
             }
 
-            if !visited.contains(&callee_lower) {
-                visited.insert(callee_lower);
+            let visit_key = format!("{}:{}", callee.file_path, callee_lower);
+            if !visited.contains(&visit_key) {
+                visited.insert(visit_key);
 
                 let next_step = TraceStep {
                     symbol_name: callee.caller_name.clone(),
@@ -1190,18 +1211,7 @@ pub fn trace_path(index: &CodeIndex, from: &str, to: &str, fuzzy: bool) -> Resul
     Ok(TracePath::not_found())
 }
 
-fn find_callees_by_name(index: &CodeIndex, symbol_name: &str) -> Result<Vec<CallInfo>> {
-    let symbols = index.query_symbol(symbol_name);
-
-    if symbols.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let symbol = match symbols.first() {
-        Some(s) => s,
-        None => return Ok(Vec::new()),
-    };
-
+fn find_callees_for_symbol(index: &CodeIndex, symbol: &Symbol) -> Result<Vec<CallInfo>> {
     let content = match fs::read_to_string(&symbol.file_path) {
         Ok(c) => c,
         Err(_) => return Ok(Vec::new()),
@@ -1258,6 +1268,75 @@ fn find_callees_by_name(index: &CodeIndex, symbol_name: &str) -> Result<Vec<Call
     }
 
     Ok(callees)
+}
+
+fn find_callees_by_name(index: &CodeIndex, symbol_name: &str) -> Result<Vec<CallInfo>> {
+    let symbols = index.query_symbol(symbol_name);
+
+    if symbols.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut all_callees = Vec::new();
+    let mut global_seen = HashSet::new();
+
+    // Process ALL symbols with this name, not just the first one
+    for symbol in &symbols {
+        let content = match fs::read_to_string(&symbol.file_path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        let lines: Vec<&str> = content.lines().collect();
+        let start_idx = symbol.line_start.saturating_sub(1);
+        let end_idx = symbol.line_end.min(lines.len());
+
+        if start_idx >= lines.len() {
+            continue;
+        }
+
+        let symbol_body: String = lines[start_idx..end_idx].join("\n");
+
+        let language = Language::from_extension(
+            symbol
+                .file_path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or(""),
+        );
+
+        let calls = extract_calls_from_source(&symbol_body, language)?;
+
+        for (call_name, relative_line, context) in calls {
+            let dedup_key = format!("{}:{}:{}", symbol.file_path.display(), call_name, relative_line);
+            if global_seen.contains(&dedup_key) {
+                continue;
+            }
+            global_seen.insert(dedup_key);
+
+            let target_symbols = index.query_symbol(&call_name);
+
+            if let Some(target) = target_symbols.first() {
+                all_callees.push(CallInfo {
+                    caller_name: call_name,
+                    caller_type: target.symbol_type,
+                    file_path: target.file_path.display().to_string(),
+                    line: target.line_start,
+                    context: target.signature.clone().unwrap_or_default(),
+                });
+            } else {
+                all_callees.push(CallInfo {
+                    caller_name: call_name,
+                    caller_type: SymbolType::Function,
+                    file_path: "<external>".to_string(),
+                    line: symbol.line_start + relative_line,
+                    context: context.trim().to_string(),
+                });
+            }
+        }
+    }
+
+    Ok(all_callees)
 }
 
 #[cfg(test)]

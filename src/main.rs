@@ -43,14 +43,14 @@ TYPICAL WORKFLOWS
    Step 2: cm map . --level 2 --format ai
    → File structure (where's the logic?)
    
-   Step 3: cm query <symbol> --fuzzy
+   Step 3: cm query <symbol>
    → Find code (where exactly?)
    
    Step 4: cm inspect ./path/to/file
    → Deep dive (what's in this module?)
 
 2. FINDING A BUG (you know the symptom, need the source)
-   Step 1: cm query <suspected_function> --fuzzy --show-body
+   Step 1: cm query <suspected_function> --show-body
    → See the implementation
    
    Step 2: cm callers <function>
@@ -153,8 +153,8 @@ CACHING:
 
 SEARCH MODES:
   Exact   → cm query MyClass           (case-sensitive, precise)
-  Fuzzy   → cm query myclass --fuzzy   (case-insensitive, flexible)
-  → DEFAULT: Always use --fuzzy, more forgiving
+  Fuzzy   → cm query myclass          (DEFAULT: case-insensitive, flexible)
+  Exact   → cm query myclass --exact  (strict matching)
 
 LANGUAGES SUPPORTED:
   ✓ Python       → Functions, classes, methods, imports
@@ -177,7 +177,7 @@ GIT REQUIREMENTS:
 
 COMMON FLAGS
 
---fuzzy              → Flexible matching (auth finds authenticate, Authorization)
+--exact              → Strict matching (default is fuzzy)
 --format <format>    → Output style: default (markdown), human (tables), ai (compact)
 --show-body          → Include actual code (not just signatures)
 --exports-only       → Public symbols only (functions with export, pub, etc.)
@@ -193,7 +193,7 @@ COMMON FLAGS
 TROUBLESHOOTING
 
 NO SYMBOLS FOUND?
-  ✓ Use --fuzzy (matches more)
+  ✓ Fuzzy matching by default (matches more)
   ✓ Check --extensions py,js,ts (default: py,js,ts,jsx,tsx,rs,java,go,c,h,md)
   ✓ Verify file encoding is UTF-8
   ✓ Run: cm stats . (to see what's indexed)
@@ -224,7 +224,7 @@ EXAMPLES:
   cm map . --level 2 --format ai       # File structure
   
   # Find and explore
-  cm query authenticate --fuzzy        # Search
+  cm query authenticate                # Search (fuzzy by default)
   cm inspect ./src/auth.py             # Deep dive
   cm query Parser --show-body          # See implementation
   
@@ -374,7 +374,8 @@ TYPICAL WORKFLOW:
 
 SEARCH MODES:
   Exact   → cm query MyClass              (case-sensitive, precise)
-  Fuzzy   → cm query myclass --fuzzy      (case-insensitive, flexible)
+  Fuzzy   → cm query myclass              (DEFAULT: case-insensitive, flexible)
+Exact   → cm query myclass --exact      (strict matching)
 
 CONTEXT OPTIONS:
   --context minimal → Signatures only (default, fast)
@@ -392,7 +393,7 @@ TIP: Start with fuzzy search, it's more forgiving"
     #[command(after_help = "EXAMPLES:
   # Basic searches
   cm query authenticate                      # Exact match (case-sensitive)
-  cm query auth --fuzzy                      # Fuzzy search (flexible)
+  cm query auth                              # Fuzzy search (default)
 
   # With context
   cm query process_payment --context full    # Include docstrings
@@ -400,7 +401,7 @@ TIP: Start with fuzzy search, it's more forgiving"
 
   # Fast mode (for large codebases)
   cm query MyClass /large/repo --fast        # Explicit fast mode
-  cm query auth /monorepo --fuzzy            # Auto-enabled for 1000+ files
+  cm query auth /monorepo                    # Auto-enabled fast mode for 1000+ files
 
   # Output formats
   cm query Parser --format human             # Pretty tables
@@ -425,9 +426,9 @@ WHEN TO USE:
         #[arg(default_value = ".")]
         path: PathBuf,
 
-        /// Enable fuzzy matching for flexible search (recommended)
+        /// Use exact matching instead of fuzzy matching (default is fuzzy)
         #[arg(long, default_value = "false")]
-        fuzzy: bool,
+        exact: bool,
 
         /// Filter by symbol type: 'function', 'class', 'method', 'enum', 'static', 'heading', 'code_block'
         #[arg(long)]
@@ -464,6 +465,10 @@ WHEN TO USE:
         /// Show only exported/public symbols (functions/classes with export keyword, pub visibility, etc.)
         #[arg(long, default_value_t = false)]
         exports_only: bool,
+
+        /// Maximum number of results to return (prevents overwhelming output)
+        #[arg(long)]
+        limit: Option<usize>,
     },
 
     /// [SEARCH] Explore a single file in detail - see all symbols with their signatures
@@ -1480,7 +1485,7 @@ fn main() -> Result<()> {
         Commands::Query {
             symbol,
             path,
-            fuzzy,
+            exact,
             r#type,
             context,
             show_body,
@@ -1490,12 +1495,13 @@ fn main() -> Result<()> {
             rebuild_cache,
             full,
             exports_only,
+            limit,
         } => {
             cmd_query(
                 symbol,
                 path,
                 context,
-                fuzzy,
+                !exact,  // Invert: default is fuzzy, --exact disables it
                 fast,
                 show_body,
                 r#type,
@@ -1505,6 +1511,7 @@ fn main() -> Result<()> {
                 !full,
                 exports_only,
                 format,
+                limit,
             )?;
         }
         Commands::Inspect {
@@ -2018,6 +2025,7 @@ fn cmd_query(
     skip_anonymous: bool,
     exports_only: bool,
     format: OutputFormat,
+    limit: Option<usize>,
 ) -> Result<()> {
     use fast_search::GrepFilter;
     use models::SymbolType;
@@ -2109,6 +2117,11 @@ fn cmd_query(
                 symbols.retain(|s| s.is_exported);
             }
 
+            // Apply limit if specified
+            if let Some(n) = limit {
+                symbols.truncate(n);
+            }
+
             if symbols.is_empty() {
                 println!(
                     "{} No symbols found matching '{}'",
@@ -2145,6 +2158,11 @@ fn cmd_query(
             // Filter to exports only if requested
             if exports_only {
                 owned_symbols.retain(|s| s.is_exported);
+            }
+
+            // Apply limit if specified
+            if let Some(n) = limit {
+                owned_symbols.truncate(n);
             }
 
             if owned_symbols.is_empty() {
@@ -2188,6 +2206,11 @@ fn cmd_query(
         // Filter to exports only if requested
         if exports_only {
             symbols.retain(|s| s.is_exported);
+        }
+
+        // Apply limit if specified
+        if let Some(n) = limit {
+            symbols.truncate(n);
         }
 
         if symbols.is_empty() {
