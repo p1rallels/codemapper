@@ -23,12 +23,15 @@ pub enum OutputFormat {
 }
 
 impl OutputFormat {
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn from_str(s: &str) -> Result<Self, String> {
         match s.to_lowercase().as_str() {
-            "default" => Some(Self::Default),
-            "human" => Some(Self::Human),
-            "ai" => Some(Self::AI),
-            _ => None,
+            "default" => Ok(Self::Default),
+            "human" => Ok(Self::Human),
+            "ai" => Ok(Self::AI),
+            _ => Err(format!(
+                "Invalid format '{}'. Valid options: default, human, ai",
+                s
+            )),
         }
     }
 }

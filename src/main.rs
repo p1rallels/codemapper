@@ -730,6 +730,10 @@ TYPICAL WORKFLOW:
         /// Force rebuild cache
         #[arg(long, default_value_t = false)]
         rebuild_cache: bool,
+
+        /// Maximum number of results to return (prevents overwhelming output)
+        #[arg(long)]
+        limit: Option<usize>,
     },
 
     /// [ANALYSIS] Find all functions called by a symbol (forward call graph)
@@ -779,6 +783,10 @@ TYPICAL WORKFLOW:
         /// Force rebuild cache
         #[arg(long, default_value_t = false)]
         rebuild_cache: bool,
+
+        /// Maximum number of results to return (prevents overwhelming output)
+        #[arg(long)]
+        limit: Option<usize>,
     },
 
     /// [ANALYSIS] Find tests that call a symbol
@@ -1223,6 +1231,10 @@ WHEN TO USE:
         /// Force rebuild cache
         #[arg(long, default_value_t = false)]
         rebuild_cache: bool,
+
+        /// Only show trait implementations (filter out inherent impls)
+        #[arg(long, default_value_t = false)]
+        trait_only: bool,
     },
 
     /// [ANALYSIS] Show type information for a symbol's parameters and return type
@@ -1455,13 +1467,9 @@ TYPICAL WORKFLOW:
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let format = OutputFormat::from_str(&cli.format).unwrap_or_else(|| {
-        eprintln!(
-            "{} Invalid format '{}', using default",
-            "Warning:".yellow(),
-            cli.format
-        );
-        OutputFormat::Default
+    let format = OutputFormat::from_str(&cli.format).unwrap_or_else(|err| {
+        eprintln!("{}", err);
+        std::process::exit(1);
     });
 
     match cli.command {
@@ -1558,6 +1566,7 @@ fn main() -> Result<()> {
             extensions,
             no_cache,
             rebuild_cache,
+            limit,
         } => {
             cmd_callers(
                 symbol,
@@ -1566,6 +1575,7 @@ fn main() -> Result<()> {
                 extensions,
                 no_cache,
                 rebuild_cache,
+                limit,
                 format,
             )?;
         }
@@ -1576,6 +1586,7 @@ fn main() -> Result<()> {
             extensions,
             no_cache,
             rebuild_cache,
+            limit,
         } => {
             cmd_callees(
                 symbol,
@@ -1584,6 +1595,7 @@ fn main() -> Result<()> {
                 extensions,
                 no_cache,
                 rebuild_cache,
+                limit,
                 format,
             )?;
         }
@@ -1671,6 +1683,7 @@ fn main() -> Result<()> {
             extensions,
             no_cache,
             rebuild_cache,
+            trait_only,
         } => {
             cmd_implements(
                 interface,
@@ -1679,6 +1692,7 @@ fn main() -> Result<()> {
                 extensions,
                 no_cache,
                 rebuild_cache,
+                trait_only,
                 format,
             )?;
         }
@@ -2056,6 +2070,13 @@ fn cmd_query(
     } else {
         None
     };
+
+    // Validate context level
+    let context_lower = context.to_lowercase();
+    if context_lower != "minimal" && context_lower != "full" {
+        eprintln!("Invalid context '{}'. Valid options: minimal, full", context);
+        std::process::exit(1);
+    }
 
     // Check if user wants all symbols of a specific type (empty symbol name with type filter)
     let search_all = symbol.trim().is_empty() && type_filter.is_some();
@@ -2657,6 +2678,7 @@ fn cmd_callers(
     extensions: String,
     no_cache: bool,
     rebuild_cache: bool,
+    limit: Option<usize>,
     format: OutputFormat,
 ) -> Result<()> {
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
@@ -2664,24 +2686,56 @@ fn cmd_callers(
 
     eprintln!("{} Finding callers of '{}'...", "→".cyan(), symbol.bold());
 
-    let start = Instant::now();
-    let callers = callgraph::find_callers(&index, &symbol, fuzzy)?;
-    let elapsed_ms = start.elapsed().as_millis();
+    let symbols = if fuzzy {
+        index.fuzzy_search(&symbol)
+    } else {
+        index.query_symbol(&symbol)
+    };
 
-    if callers.is_empty() {
+    if symbols.is_empty() {
         println!(
-            "{} No call sites found for '{}'",
+            "{} Symbol '{}' not found in codebase",
             "✗".yellow(),
             symbol.bold()
         );
         return Ok(());
     }
 
+    let start = Instant::now();
+    let mut callers = callgraph::find_callers(&index, &symbol, fuzzy)?;
+    let elapsed_ms = start.elapsed().as_millis();
+
+    if callers.is_empty() {
+        println!(
+            "{} No callers found for '{}'",
+            "✗".yellow(),
+            symbol.bold()
+        );
+        return Ok(());
+    }
+
+    let total_count = callers.len();
+    let truncated = if let Some(lim) = limit {
+        if callers.len() > lim {
+            callers.truncate(lim);
+            true
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
     eprintln!(
-        "{} Found {} call site(s) in {}ms\n",
+        "{} Found {} call site(s) in {}ms{}\n",
         "✓".green(),
-        callers.len().to_string().bold(),
-        elapsed_ms.to_string().bold()
+        total_count.to_string().bold(),
+        elapsed_ms.to_string().bold(),
+        if truncated {
+            format!(" (showing first {})", limit.unwrap())
+        } else {
+            String::new()
+        }
     );
 
     let formatter = OutputFormatter::new(format);
@@ -2698,6 +2752,7 @@ fn cmd_callees(
     extensions: String,
     no_cache: bool,
     rebuild_cache: bool,
+    limit: Option<usize>,
     format: OutputFormat,
 ) -> Result<()> {
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
@@ -2705,24 +2760,56 @@ fn cmd_callees(
 
     eprintln!("{} Finding callees of '{}'...", "→".cyan(), symbol.bold());
 
-    let start = Instant::now();
-    let callees = callgraph::find_callees(&index, &symbol, fuzzy)?;
-    let elapsed_ms = start.elapsed().as_millis();
+    let symbols = if fuzzy {
+        index.fuzzy_search(&symbol)
+    } else {
+        index.query_symbol(&symbol)
+    };
 
-    if callees.is_empty() {
+    if symbols.is_empty() {
         println!(
-            "{} No function calls found in '{}'",
+            "{} Symbol '{}' not found in codebase",
             "✗".yellow(),
             symbol.bold()
         );
         return Ok(());
     }
 
+    let start = Instant::now();
+    let mut callees = callgraph::find_callees(&index, &symbol, fuzzy)?;
+    let elapsed_ms = start.elapsed().as_millis();
+
+    if callees.is_empty() {
+        println!(
+            "{} No callees found for '{}'",
+            "✗".yellow(),
+            symbol.bold()
+        );
+        return Ok(());
+    }
+
+    let total_count = callees.len();
+    let truncated = if let Some(lim) = limit {
+        if callees.len() > lim {
+            callees.truncate(lim);
+            true
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
     eprintln!(
-        "{} Found {} callee(s) in {}ms\n",
+        "{} Found {} callee(s) in {}ms{}\n",
         "✓".green(),
-        callees.len().to_string().bold(),
-        elapsed_ms.to_string().bold()
+        total_count.to_string().bold(),
+        elapsed_ms.to_string().bold(),
+        if truncated {
+            format!(" (showing first {})", limit.unwrap())
+        } else {
+            String::new()
+        }
     );
 
     let formatter = OutputFormatter::new(format);
@@ -3029,6 +3116,7 @@ fn cmd_implements(
     extensions: String,
     no_cache: bool,
     rebuild_cache: bool,
+    trait_only: bool,
     format: OutputFormat,
 ) -> Result<()> {
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
@@ -3043,7 +3131,7 @@ fn cmd_implements(
     );
 
     let start = Instant::now();
-    let implementations = implements::find_implementations(&index, &interface, fuzzy)?;
+    let implementations = implements::find_implementations(&index, &interface, fuzzy, trait_only)?;
     let elapsed_ms = start.elapsed().as_millis();
 
     if implementations.is_empty() {
