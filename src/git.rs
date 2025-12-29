@@ -98,52 +98,6 @@ pub fn get_file_at_commit(
     Ok(Some(String::from_utf8_lossy(&output.stdout).to_string()))
 }
 
-pub fn list_files_at_commit(
-    repo_path: &Path,
-    commit: &str,
-    subpath: Option<&Path>,
-) -> Result<Vec<PathBuf>> {
-    let repo_root = get_repo_root(repo_path)?;
-
-    let mut args = vec![
-        "-C".to_string(),
-        repo_root.to_string_lossy().to_string(),
-        "ls-tree".to_string(),
-        "-r".to_string(),
-        "--name-only".to_string(),
-        commit.to_string(),
-    ];
-
-    if let Some(sp) = subpath {
-        let relative = if sp.is_absolute() {
-            sp.strip_prefix(&repo_root).unwrap_or(sp)
-        } else {
-            sp
-        };
-        if relative != Path::new(".") && relative != Path::new("") {
-            args.push("--".to_string());
-            args.push(relative.to_string_lossy().to_string());
-        }
-    }
-
-    let output = Command::new("git")
-        .args(&args)
-        .output()
-        .context("Failed to execute git ls-tree")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git ls-tree failed: {}", stderr.trim());
-    }
-
-    let files: Vec<PathBuf> = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .map(|line| repo_root.join(line))
-        .collect();
-
-    Ok(files)
-}
-
 pub fn get_changed_files(
     repo_path: &Path,
     commit: &str,
@@ -284,40 +238,6 @@ pub fn get_commits_for_file(
         .collect();
 
     Ok(commits)
-}
-
-pub fn get_commit_info(repo_path: &Path, commit_ref: &str) -> Result<CommitInfo> {
-    let output = Command::new("git")
-        .args([
-            "-C",
-            repo_path.to_string_lossy().as_ref(),
-            "log",
-            "-1",
-            "--format=%H|%h|%an|%ai|%s",
-            commit_ref,
-        ])
-        .output()
-        .context("Failed to execute git log")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git log failed for '{}': {}", commit_ref, stderr.trim());
-    }
-
-    let line = String::from_utf8_lossy(&output.stdout);
-    let parts: Vec<&str> = line.trim().splitn(5, '|').collect();
-
-    if parts.len() < 5 {
-        anyhow::bail!("Failed to parse commit info for '{}'", commit_ref);
-    }
-
-    Ok(CommitInfo {
-        hash: parts[0].to_string(),
-        short_hash: parts[1].to_string(),
-        author: parts[2].to_string(),
-        date: parts[3].to_string(),
-        message: parts[4].to_string(),
-    })
 }
 
 #[cfg(test)]
