@@ -39,6 +39,7 @@ pub fn find_implementations(
     index: &CodeIndex,
     interface: &str,
     fuzzy: bool,
+    trait_only: bool,
 ) -> Result<Vec<Implementation>> {
     let mut results = Vec::new();
     let interface_lower = interface.to_lowercase();
@@ -67,6 +68,13 @@ pub fn find_implementations(
         };
 
         for (implementor, iface, line, kind) in file_impls {
+            // For inherent impls (impl Type), implementor_name == interface_name
+            // Filter these out if trait_only is true
+            let is_inherent = implementor == iface;
+            if trait_only && is_inherent {
+                continue;
+            }
+
             results.push(Implementation {
                 implementor_name: implementor,
                 interface_name: iface,
@@ -460,5 +468,25 @@ impl IntoIterator for MyCollection {}
 "#;
         let results = find_rust_implementations(content, "iter", true, "iter");
         assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn test_inherent_impl_filtering() {
+        let content = r#"
+impl Parser {
+    fn new() -> Self {}
+}
+impl Display for Parser {
+    fn fmt(&self, f: &mut Formatter) -> Result {}
+}
+"#;
+        let all_results = find_rust_implementations(content, "Parser", false, "parser");
+        // Should find both: inherent impl and trait impl
+        assert_eq!(all_results.len(), 2);
+        
+        // The inherent impl has implementor == interface_name
+        let inherent = all_results.iter().find(|r| r.0 == r.1).unwrap();
+        assert_eq!(inherent.0, "Parser");
+        assert_eq!(inherent.1, "Parser");
     }
 }

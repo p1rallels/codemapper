@@ -903,6 +903,10 @@ pub fn find_untested(index: &CodeIndex) -> Result<Vec<UntestedInfo>> {
                 continue;
             }
 
+            if matches!(symbol.symbol_type, SymbolType::Heading | SymbolType::CodeBlock) {
+                continue;
+            }
+
             if !tested_symbols.contains(&symbol.name) {
                 untested.push(UntestedInfo {
                     name: symbol.name.clone(),
