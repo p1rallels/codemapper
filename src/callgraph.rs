@@ -88,7 +88,13 @@ pub fn find_callers(index: &CodeIndex, symbol_name: &str, fuzzy: bool) -> Result
     let mut callers = Vec::new();
     let mut seen = HashSet::new();
 
-    let needle = normalize_qualified_name(symbol_name);
+    // if user gave `Type::method`, match the call name as usual *and* filter by qualifier in the line context
+    let raw = symbol_name.trim();
+    let needle = normalize_qualified_name(raw);
+    let qualified_needle = raw.to_string();
+
+    let qualified_context = qualifier_context_pattern(raw);
+    let qualified_context_lower = qualified_context.as_ref().map(|s| s.to_lowercase());
 
     for file_info in index.files() {
         let content = match fs::read_to_string(&file_info.path) {
@@ -101,10 +107,28 @@ pub fn find_callers(index: &CodeIndex, symbol_name: &str, fuzzy: bool) -> Result
         for (call_name, line, context) in calls {
             let call_needle = normalize_qualified_name(&call_name);
 
-            let matches = if fuzzy {
+            let base_matches = if fuzzy {
                 call_needle.to_lowercase().contains(&needle.to_lowercase())
+                    || call_name
+                        .to_lowercase()
+                        .contains(&qualified_needle.to_lowercase())
             } else {
-                call_needle == needle
+                call_needle == needle || call_name == qualified_needle
+            };
+
+            let matches = if let Some(ref qual) = qualified_context_lower {
+                if !base_matches {
+                    false
+                } else {
+                    let ctx_no_ws: String = context
+                        .chars()
+                        .filter(|c| !c.is_whitespace())
+                        .collect::<String>()
+                        .to_lowercase();
+                    ctx_no_ws.contains(qual)
+                }
+            } else {
+                base_matches
             };
 
             if matches {
@@ -226,6 +250,15 @@ fn normalize_qualified_name(name: &str) -> String {
     }
 
     trimmed.to_string()
+}
+
+fn qualifier_context_pattern(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.contains("::") || trimmed.contains('.') {
+        Some(trimmed.chars().filter(|c| !c.is_whitespace()).collect())
+    } else {
+        None
+    }
 }
 
 fn find_enclosing_symbol<'a>(index: &'a CodeIndex, path: &Path, line: usize) -> Option<&'a Symbol> {
