@@ -28,7 +28,9 @@ use std::time::Instant;
 
 #[derive(clap::Parser)]
 #[command(name = "cm")]
-#[command(about = "CodeMapper (cm) - Code Analysis at LLM Speed
+#[command(
+    about = "codemapper (cm) - fast code analysis at llm speed",
+    long_about = "CodeMapper (cm) - Code Analysis at LLM Speed
 
 Analyze codebases instantly by mapping symbols (functions, classes, methods)
 using tree-sitter AST parsing. Everything runs in-memory, no databases.
@@ -253,7 +255,8 @@ EXAMPLES:
   cm entrypoints .                     # Public API surface
 
 For detailed help on any command: cm <command> --help
-")]
+"
+)]
 struct Cli {
     /// Output format: 'default' (markdown), 'human' (tables), 'ai' (token-efficient)
     #[arg(short, long, global = true, default_value = "default")]

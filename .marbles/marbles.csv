@@ -360,7 +360,7 @@ Commands:
 
 Options:
   -f, --format <FORMAT>  Output format: 'default' (markdown), 'human' (tables), 'ai' (token-efficient) [default: default]
-  -h, --help             Print help prints long rich help (257 lines) from src/main.rs clap about=. if issue was missing/incorrect help, seems resolved; if it meant subcommand-specific help, specify which cmd.",open,1,Pi,Pi,,2025-12-30T03:22:34.997Z,2026-01-11T01:32:11.184Z,,
+  -h, --help             Print help prints long rich help (257 lines) from src/main.rs clap about=. if issue was missing/incorrect help, seems resolved; if it meant subcommand-specific help, specify which cmd.",closed,1,Pi,Pi,Pi,2025-12-30T03:22:34.997Z,2026-01-11T03:11:26.241Z,,
 m-c7bb,cm callers floods with results for common method names,"callers currently matches only extracted callee name string; no type/receiver disambiguation. logic in src/callgraph.rs find_callers + extract_*_calls; needs class/struct-aware resolution, or at least accept qualified method syntax (Type::method / Type.method) and filter by receiver type.",open,2,Pi,Pi,,2025-12-30T03:22:48.147Z,2026-01-11T01:32:43.775Z,,
 m-df5c,m-2e72 is FALSE POSITIVE: documented flags work correctly,tested --limit and --exact flags with cm query and cm callers - both work. help text is correct. issue description outdated.,closed,3,Pi,Pi,Pi,2025-12-30T03:22:55.537Z,2026-01-11T01:32:11.195Z,,
 m-ceb6,cross-check src/ vs ready marbles issues,map each ready issue to concrete src modules/lines; add pointers + close false positives,closed,1,Pi,Pi,Pi,2026-01-11T01:30:27.115Z,2026-01-11T01:32:50.120Z,,
@@ -378,3 +378,521 @@ m-57f7,p0: polish cm impact output + flags,"implement: impact defaults (top-n), 
 m-494e,"implement: impact defaults (top-n), add limit, filter to code symbols, reduce warning noise","work m-57f7: improve impact UX defaults, add --limit, avoid docs/headings by default, show disambiguation list for fuzzy, suppress self-calls; fix rust dead_code warnings",closed,0,Pi,Pi,Pi,2026-01-11T02:32:09.868Z,2026-01-11T02:32:18.805Z,,m-57f7
 m-e870,p0: cm impact ux polish,"implement m-57f7: impact defaults to top-n, supports --limit, filters docs by default, shows disambiguation list for fuzzy matches, and reduces rustc warning noise",closed,0,Pi,Pi,Pi,2026-01-11T02:36:52.082Z,2026-01-11T02:36:58.863Z,m-57f7,
 m-be59,implement m-57f7 (impact ux polish + warning cleanup),add impact limit/top-n defaults + code-symbol filtering + fuzzy disambiguation; remove dead_code warnings in callgraph,closed,0,Pi,Pi,Pi,2026-01-11T02:38:33.846Z,2026-01-11T02:42:12.214Z,,m-57f7
+m-7c2a,dx: add short help mode (-h) and keep long help (--help),"make CodeMapper (cm) - Code Analysis at LLM Speed
+
+Analyze codebases instantly by mapping symbols (functions, classes, methods)
+using tree-sitter AST parsing. Everything runs in-memory, no databases.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+TYPICAL WORKFLOWS
+
+1. EXPLORING UNKNOWN CODE
+   Step 1: cm stats .
+   → Size and composition (how big? what languages?)
+   
+   Step 2: cm map . --level 2 --format ai
+   → File structure (where's the logic?)
+   
+   Step 3: cm query <symbol>
+   → Find code (where exactly?)
+   
+   Step 4: cm inspect ./path/to/file
+   → Deep dive (what's in this module?)
+
+2. FINDING A BUG (you know the symptom, need the source)
+   Step 1: cm query <suspected_function> --show-body
+   → See the implementation
+   
+   Step 2: cm callers <function>
+   → Who calls this? (Is it called from where the bug manifests?)
+   
+   Step 3: cm trace <entry_point> <suspected_function>
+   → Trace the call path (how does the bug get triggered?)
+   
+   Step 4: cm tests <function>
+   → Find tests (are there existing tests for this?)
+
+3. BEFORE REFACTORING
+   Step 1: cm callers <function>
+   → Understand impact (who depends on this?)
+   
+   Step 2: cm callees <function>
+   → What does it depend on? (what breaks if we change this?)
+   
+   Step 3: cm tests <function>
+   → Run tests (verify nothing breaks)
+   
+   Step 4: cm since main --breaking
+   → (After refactor) Did we break anything vs main?
+
+4. UNDERSTANDING AN API
+   Step 1: cm entrypoints .
+   → What's exported? (what's the public surface?)
+   
+   Step 2: cm implements <interface>
+   → Find all implementations (how many ways is this used?)
+   
+   Step 3: cm schema <DataClass>
+   → See field structure (what does the data look like?)
+
+5. VALIDATING CODE HEALTH
+   Step 1: cm untested .
+   → Find uncovered symbols (what's not tested?)
+   
+   Step 2: cm since <last_release> --breaking
+   → Did we break anything? (breaking changes since release?)
+   
+   Step 3: cm since <last_release>
+   → Full changelog (what changed?)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+COMMANDS (organized by task)
+
+[DISCOVERY - Start here]
+  stats        → Project size and composition (functions, classes, imports)
+  map          → File listing with symbol counts (3 detail levels)
+  query        → Find symbols by name (main search tool)
+  inspect      → List all symbols in one file
+  deps         → Track imports and usage
+
+[CALL GRAPH - Understand code flow]
+  callers      → WHO calls this function? (reverse dependencies)
+  callees      → What DOES this function call? (forward dependencies)
+  trace        → CALL PATH from A → B (shortest route)
+  entrypoints  → Public APIs with no internal callers (dead code?)
+  tests        → Which tests call this symbol?
+  test-deps    → What production code does a test touch?
+
+[GIT HISTORY - Blame and timeline]
+  diff         → Symbol-level changes vs a commit (what changed?)
+  since        → Breaking changes since commit (what broke?)
+  blame        → Who last touched this symbol? (when, commit, author)
+  history      → Full evolution of a symbol (all commits touching it)
+
+[TYPE ANALYSIS - Understand data flow]
+  types        → Parameter types and return type (where are they defined?)
+  implements   → Find all implementations of an interface
+  schema       → Field structure (structs, classes, dataclasses)
+
+[SNAPSHOTS - Compare over time]
+  snapshot     → Save current state (named checkpoint)
+  compare      → Diff current vs saved snapshot (what changed?)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+KEY FACTS
+
+OUTPUT FORMATS:
+  --format default  → Markdown (documentation, readable)
+  --format human    → Tables (terminal viewing, pretty)
+  --format ai       → Compact (LLM context, token-efficient) ← RECOMMENDED
+
+PERFORMANCE:
+  Small repos (< 100 files)    → < 20ms instant
+  Medium repos (100-1000)      → Cached, ~0.5s load
+  Large repos (1000+)          → Fast mode auto-enabled (10-100x speedup)
+  Incremental rebuilds         → 45-55x faster than full reindex
+
+CACHING:
+  Auto-enabled on projects ≥ 300ms to parse
+  Small projects never create cache (no .codemapper/ clutter)
+  Subsequent runs load from cache (~0.5s)
+  File changes auto-detected (you don't manage cache)
+  Flags: --no-cache (skip), --rebuild-cache (force rebuild)
+
+SEARCH MODES:
+  Exact   → cm query MyClass           (case-sensitive, precise)
+  Fuzzy   → cm query myclass          (DEFAULT: case-insensitive, flexible)
+  Exact   → cm query myclass --exact  (strict matching)
+
+LANGUAGES SUPPORTED:
+  ✓ Python       → Functions, classes, methods, imports
+  ✓ JavaScript   → Functions, classes, methods, imports
+  ✓ TypeScript   → Functions, classes, methods, interfaces, types, enums
+  ✓ Rust         → Functions, structs, impl blocks, traits, enums
+  ✓ Java         → Classes, interfaces, methods, enums, javadoc
+  ✓ Go           → Functions, structs, methods, interfaces
+  ✓ C            → Functions, structs, includes
+  ✓ Markdown     → Headings, code blocks
+
+GIT REQUIREMENTS:
+  diff      → Must be in a git repo
+  since     → Must be in a git repo
+  blame     → Must be in a git repo
+  history   → Must be in a git repo
+  (Other commands work anywhere)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+COMMON FLAGS
+
+--exact              → Strict matching (default is fuzzy)
+--format <format>    → Output style: default (markdown), human (tables), ai (compact)
+--show-body          → Include actual code (not just signatures)
+--exports-only       → Public symbols only (functions with export, pub, etc.)
+--full               → Include anonymous/lambda functions (normally hidden)
+--context minimal    → Signatures only (default, fast)
+--context full       → Include docstrings and metadata
+--no-cache           → Skip cache, always reindex (troubleshooting)
+--rebuild-cache      → Force cache rebuild
+--extensions py,rs   → Comma-separated file types to include
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+TROUBLESHOOTING
+
+NO SYMBOLS FOUND?
+  ✓ Fuzzy matching by default (matches more)
+  ✓ Check --extensions py,js,ts (default: py,js,ts,jsx,tsx,rs,java,go,c,h,md)
+  ✓ Verify file encoding is UTF-8
+  ✓ Run: cm stats . (to see what's indexed)
+
+SLOW QUERIES?
+  ✓ Large repo (1000+ files)? Fast mode auto-enables (use --fast explicitly)
+  ✓ First run builds cache (~10s), cache hits ~0.5s after
+  ✓ Try --no-cache if cache is stale (rare)
+
+GIT COMMANDS FAIL?
+  ✓ Must be in a git repository (diff, since, blame, history need git)
+  ✓ Commit must exist (HEAD~1, abc123, main, v1.0 all work)
+  ✓ File must have git history (blame, history)
+
+OUTPUT TOO VERBOSE?
+  ✓ Use --format ai (most compact, LLM-optimized)
+  ✓ Use --format human (pretty tables for terminal)
+  ✓ Use --context minimal (signatures only)
+
+NO TEST COVERAGE?
+  ✓ Run: cm untested .
+  ✓ Test detection by file pattern (_test.rs, test_*.py, *.test.js, etc.)
+  ✓ Test detection by naming convention (test*, Test*, #[test], @Test, etc.)
+
+EXAMPLES:
+  # Get the lay of the land
+  cm stats .                           # Project overview
+  cm map . --level 2 --format ai       # File structure
+  
+  # Find and explore
+  cm query authenticate                # Search (fuzzy by default)
+  cm inspect ./src/auth.py             # Deep dive
+  cm query Parser --show-body          # See implementation
+  
+  # Understand flow
+  cm callers process_payment           # Who calls it?
+  cm callees process_payment           # What does it call?
+  cm trace main process_payment        # Call path
+  
+  # Before refactoring
+  cm callers my_function               # Impact radius
+  cm tests my_function                 # Verify coverage exists
+  
+  # Git analysis
+  cm diff main                         # Changes vs main
+  cm since v1.0 --breaking             # Breaking changes since v1.0
+  cm blame authenticate ./auth.py      # Who last touched it?
+  
+  # Type analysis
+  cm types process_payment             # What types flow through?
+  cm schema Order                      # Field structure
+  cm implements Iterator               # Find all implementations
+  
+  # Health check
+  cm untested .                        # What's not tested?
+  cm entrypoints .                     # Public API surface
+
+For detailed help on any command: cm <command> --help
+
+
+Usage: cm [OPTIONS] <COMMAND>
+
+Commands:
+  stats        Display statistics: file counts, symbol breakdown, and parse performance
+  map          Generate a map showing project organization at different detail levels (1-3)
+  query        Search for functions, classes, and methods across your codebase
+  inspect      Analyze one file and list all functions, classes, and methods it contains
+  deps         Analyze import relationships and symbol usage across the codebase
+  index        Test that files can be indexed correctly (reports file count and timing)
+  diff         Show symbol-level changes between current code and a git commit
+  callers      Find all places where a function/method is called
+  callees      Find all functions/methods that a symbol calls
+  tests        Find test functions that call a given symbol
+  untested     Find functions and methods that are not called by any test
+  since        Show breaking API changes since a git commit (removed symbols, signature changes)
+  entrypoints  Find entrypoints: exported symbols that are not called internally
+  trace        Show the shortest call path from symbol A to symbol B
+  impact       Quick breakage report for a symbol (definition + callers + tests)
+  test-deps    List production (non-test) symbols called by a test file
+  blame        Show who last modified a symbol and when
+  history      Show the evolution of a symbol across git history
+  implements   Find all classes/structs that implement a given interface or trait
+  types        Analyze types used in a symbol's signature and locate their definitions
+  schema       Display field schema for data structures (structs, classes, dataclasses, etc.)
+  snapshot     Save a snapshot of current codebase symbols for later comparison
+  compare      Show symbol-level changes between current code and a saved snapshot
+  help         Print this message or the help of the given subcommand(s)
+
+Options:
+  -f, --format <FORMAT>  Output format: 'default' (markdown), 'human' (tables), 'ai' (token-efficient) [default: default]
+  -h, --help             Print help concise (commands + key flags, ~30-60 lines) and keep current long narrative for CodeMapper (cm) - Code Analysis at LLM Speed
+
+Analyze codebases instantly by mapping symbols (functions, classes, methods)
+using tree-sitter AST parsing. Everything runs in-memory, no databases.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+TYPICAL WORKFLOWS
+
+1. EXPLORING UNKNOWN CODE
+   Step 1: cm stats .
+   → Size and composition (how big? what languages?)
+   
+   Step 2: cm map . --level 2 --format ai
+   → File structure (where's the logic?)
+   
+   Step 3: cm query <symbol>
+   → Find code (where exactly?)
+   
+   Step 4: cm inspect ./path/to/file
+   → Deep dive (what's in this module?)
+
+2. FINDING A BUG (you know the symptom, need the source)
+   Step 1: cm query <suspected_function> --show-body
+   → See the implementation
+   
+   Step 2: cm callers <function>
+   → Who calls this? (Is it called from where the bug manifests?)
+   
+   Step 3: cm trace <entry_point> <suspected_function>
+   → Trace the call path (how does the bug get triggered?)
+   
+   Step 4: cm tests <function>
+   → Find tests (are there existing tests for this?)
+
+3. BEFORE REFACTORING
+   Step 1: cm callers <function>
+   → Understand impact (who depends on this?)
+   
+   Step 2: cm callees <function>
+   → What does it depend on? (what breaks if we change this?)
+   
+   Step 3: cm tests <function>
+   → Run tests (verify nothing breaks)
+   
+   Step 4: cm since main --breaking
+   → (After refactor) Did we break anything vs main?
+
+4. UNDERSTANDING AN API
+   Step 1: cm entrypoints .
+   → What's exported? (what's the public surface?)
+   
+   Step 2: cm implements <interface>
+   → Find all implementations (how many ways is this used?)
+   
+   Step 3: cm schema <DataClass>
+   → See field structure (what does the data look like?)
+
+5. VALIDATING CODE HEALTH
+   Step 1: cm untested .
+   → Find uncovered symbols (what's not tested?)
+   
+   Step 2: cm since <last_release> --breaking
+   → Did we break anything? (breaking changes since release?)
+   
+   Step 3: cm since <last_release>
+   → Full changelog (what changed?)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+COMMANDS (organized by task)
+
+[DISCOVERY - Start here]
+  stats        → Project size and composition (functions, classes, imports)
+  map          → File listing with symbol counts (3 detail levels)
+  query        → Find symbols by name (main search tool)
+  inspect      → List all symbols in one file
+  deps         → Track imports and usage
+
+[CALL GRAPH - Understand code flow]
+  callers      → WHO calls this function? (reverse dependencies)
+  callees      → What DOES this function call? (forward dependencies)
+  trace        → CALL PATH from A → B (shortest route)
+  entrypoints  → Public APIs with no internal callers (dead code?)
+  tests        → Which tests call this symbol?
+  test-deps    → What production code does a test touch?
+
+[GIT HISTORY - Blame and timeline]
+  diff         → Symbol-level changes vs a commit (what changed?)
+  since        → Breaking changes since commit (what broke?)
+  blame        → Who last touched this symbol? (when, commit, author)
+  history      → Full evolution of a symbol (all commits touching it)
+
+[TYPE ANALYSIS - Understand data flow]
+  types        → Parameter types and return type (where are they defined?)
+  implements   → Find all implementations of an interface
+  schema       → Field structure (structs, classes, dataclasses)
+
+[SNAPSHOTS - Compare over time]
+  snapshot     → Save current state (named checkpoint)
+  compare      → Diff current vs saved snapshot (what changed?)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+KEY FACTS
+
+OUTPUT FORMATS:
+  --format default  → Markdown (documentation, readable)
+  --format human    → Tables (terminal viewing, pretty)
+  --format ai       → Compact (LLM context, token-efficient) ← RECOMMENDED
+
+PERFORMANCE:
+  Small repos (< 100 files)    → < 20ms instant
+  Medium repos (100-1000)      → Cached, ~0.5s load
+  Large repos (1000+)          → Fast mode auto-enabled (10-100x speedup)
+  Incremental rebuilds         → 45-55x faster than full reindex
+
+CACHING:
+  Auto-enabled on projects ≥ 300ms to parse
+  Small projects never create cache (no .codemapper/ clutter)
+  Subsequent runs load from cache (~0.5s)
+  File changes auto-detected (you don't manage cache)
+  Flags: --no-cache (skip), --rebuild-cache (force rebuild)
+
+SEARCH MODES:
+  Exact   → cm query MyClass           (case-sensitive, precise)
+  Fuzzy   → cm query myclass          (DEFAULT: case-insensitive, flexible)
+  Exact   → cm query myclass --exact  (strict matching)
+
+LANGUAGES SUPPORTED:
+  ✓ Python       → Functions, classes, methods, imports
+  ✓ JavaScript   → Functions, classes, methods, imports
+  ✓ TypeScript   → Functions, classes, methods, interfaces, types, enums
+  ✓ Rust         → Functions, structs, impl blocks, traits, enums
+  ✓ Java         → Classes, interfaces, methods, enums, javadoc
+  ✓ Go           → Functions, structs, methods, interfaces
+  ✓ C            → Functions, structs, includes
+  ✓ Markdown     → Headings, code blocks
+
+GIT REQUIREMENTS:
+  diff      → Must be in a git repo
+  since     → Must be in a git repo
+  blame     → Must be in a git repo
+  history   → Must be in a git repo
+  (Other commands work anywhere)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+COMMON FLAGS
+
+--exact              → Strict matching (default is fuzzy)
+--format <format>    → Output style: default (markdown), human (tables), ai (compact)
+--show-body          → Include actual code (not just signatures)
+--exports-only       → Public symbols only (functions with export, pub, etc.)
+--full               → Include anonymous/lambda functions (normally hidden)
+--context minimal    → Signatures only (default, fast)
+--context full       → Include docstrings and metadata
+--no-cache           → Skip cache, always reindex (troubleshooting)
+--rebuild-cache      → Force cache rebuild
+--extensions py,rs   → Comma-separated file types to include
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+TROUBLESHOOTING
+
+NO SYMBOLS FOUND?
+  ✓ Fuzzy matching by default (matches more)
+  ✓ Check --extensions py,js,ts (default: py,js,ts,jsx,tsx,rs,java,go,c,h,md)
+  ✓ Verify file encoding is UTF-8
+  ✓ Run: cm stats . (to see what's indexed)
+
+SLOW QUERIES?
+  ✓ Large repo (1000+ files)? Fast mode auto-enables (use --fast explicitly)
+  ✓ First run builds cache (~10s), cache hits ~0.5s after
+  ✓ Try --no-cache if cache is stale (rare)
+
+GIT COMMANDS FAIL?
+  ✓ Must be in a git repository (diff, since, blame, history need git)
+  ✓ Commit must exist (HEAD~1, abc123, main, v1.0 all work)
+  ✓ File must have git history (blame, history)
+
+OUTPUT TOO VERBOSE?
+  ✓ Use --format ai (most compact, LLM-optimized)
+  ✓ Use --format human (pretty tables for terminal)
+  ✓ Use --context minimal (signatures only)
+
+NO TEST COVERAGE?
+  ✓ Run: cm untested .
+  ✓ Test detection by file pattern (_test.rs, test_*.py, *.test.js, etc.)
+  ✓ Test detection by naming convention (test*, Test*, #[test], @Test, etc.)
+
+EXAMPLES:
+  # Get the lay of the land
+  cm stats .                           # Project overview
+  cm map . --level 2 --format ai       # File structure
+  
+  # Find and explore
+  cm query authenticate                # Search (fuzzy by default)
+  cm inspect ./src/auth.py             # Deep dive
+  cm query Parser --show-body          # See implementation
+  
+  # Understand flow
+  cm callers process_payment           # Who calls it?
+  cm callees process_payment           # What does it call?
+  cm trace main process_payment        # Call path
+  
+  # Before refactoring
+  cm callers my_function               # Impact radius
+  cm tests my_function                 # Verify coverage exists
+  
+  # Git analysis
+  cm diff main                         # Changes vs main
+  cm since v1.0 --breaking             # Breaking changes since v1.0
+  cm blame authenticate ./auth.py      # Who last touched it?
+  
+  # Type analysis
+  cm types process_payment             # What types flow through?
+  cm schema Order                      # Field structure
+  cm implements Iterator               # Find all implementations
+  
+  # Health check
+  cm untested .                        # What's not tested?
+  cm entrypoints .                     # Public API surface
+
+For detailed help on any command: cm <command> --help
+
+
+Usage: cm [OPTIONS] <COMMAND>
+
+Commands:
+  stats        Display statistics: file counts, symbol breakdown, and parse performance
+  map          Generate a map showing project organization at different detail levels (1-3)
+  query        Search for functions, classes, and methods across your codebase
+  inspect      Analyze one file and list all functions, classes, and methods it contains
+  deps         Analyze import relationships and symbol usage across the codebase
+  index        Test that files can be indexed correctly (reports file count and timing)
+  diff         Show symbol-level changes between current code and a git commit
+  callers      Find all places where a function/method is called
+  callees      Find all functions/methods that a symbol calls
+  tests        Find test functions that call a given symbol
+  untested     Find functions and methods that are not called by any test
+  since        Show breaking API changes since a git commit (removed symbols, signature changes)
+  entrypoints  Find entrypoints: exported symbols that are not called internally
+  trace        Show the shortest call path from symbol A to symbol B
+  impact       Quick breakage report for a symbol (definition + callers + tests)
+  test-deps    List production (non-test) symbols called by a test file
+  blame        Show who last modified a symbol and when
+  history      Show the evolution of a symbol across git history
+  implements   Find all classes/structs that implement a given interface or trait
+  types        Analyze types used in a symbol's signature and locate their definitions
+  schema       Display field schema for data structures (structs, classes, dataclasses, etc.)
+  snapshot     Save a snapshot of current codebase symbols for later comparison
+  compare      Show symbol-level changes between current code and a saved snapshot
+  help         Print this message or the help of the given subcommand(s)
+
+Options:
+  -f, --format <FORMAT>  Output format: 'default' (markdown), 'human' (tables), 'ai' (token-efficient) [default: default]
+  -h, --help             Print help; reduce repetition and keep examples minimal",closed,1,Pi,Pi,Pi,2026-01-11T03:08:46.273Z,2026-01-11T03:11:06.550Z,,m-b6a5
+m-5daf,"dx: tighten help text (reduce repetition, clearer defaults)",trim repeated sections across subcommands; ensure each command has 1 ai example; clarify impact default top-10 + --all; mention callers ambiguity,closed,2,Pi,Pi,Pi,2026-01-11T03:08:51.404Z,2026-01-11T03:11:06.550Z,,m-b6a5
+m-6ce0,dx: add disambiguation flags (impact/callers/query),add optional flags like --pick <n> and/or --prefer-file <path> to select among fuzzy matches without extra steps,open,1,Pi,Pi,,2026-01-11T03:08:56.228Z,2026-01-11T03:11:15.513Z,,m-b6a5
+m-b6a5,dx pass: help system overhaul,"umbrella: implement short help (-h) vs long help (--help), tighten text, and (if time) add disambiguation flags",closed,1,Pi,Pi,Pi,2026-01-11T03:09:01.568Z,2026-01-11T03:11:06.550Z,m-7c2a|m-5daf|m-6ce0,
