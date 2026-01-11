@@ -127,7 +127,11 @@ fn find_rust_implementations(
             let trait_name = caps.get(1).map(|m| m.as_str()).unwrap_or_default();
             let type_name = caps.get(2).map(|m| m.as_str()).unwrap_or_default();
 
-            if matches_interface(trait_name, interface, fuzzy, interface_lower) {
+            // allow searching either by trait name ("Display") OR by implementor type name ("Parser")
+            // since users may ask "what does Parser implement?".
+            if matches_interface(trait_name, interface, fuzzy, interface_lower)
+                || matches_interface(type_name, interface, fuzzy, interface_lower)
+            {
                 results.push((
                     type_name.to_string(),
                     trait_name.to_string(),
@@ -483,7 +487,7 @@ impl Display for Parser {
         let all_results = find_rust_implementations(content, "Parser", false, "parser");
         // Should find both: inherent impl and trait impl
         assert_eq!(all_results.len(), 2);
-        
+
         // The inherent impl has implementor == interface_name
         let inherent = all_results.iter().find(|r| r.0 == r.1).unwrap();
         assert_eq!(inherent.0, "Parser");

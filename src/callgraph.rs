@@ -185,7 +185,12 @@ pub fn find_callees(index: &CodeIndex, symbol_name: &str, fuzzy: bool) -> Result
         let calls = extract_calls_from_source(&symbol_body, language)?;
 
         for (call_name, relative_line, context) in calls {
-            let dedup_key = format!("{}:{}:{}", symbol.file_path.display(), call_name, relative_line);
+            let dedup_key = format!(
+                "{}:{}:{}",
+                symbol.file_path.display(),
+                call_name,
+                relative_line
+            );
             if global_seen.contains(&dedup_key) {
                 continue;
             }
@@ -296,17 +301,59 @@ fn extract_rust_calls(content: &str) -> Result<Vec<(String, usize, String)>> {
                 .get(capture.index as usize)
                 .map(|s| s.as_ref());
 
-            let is_name = matches!(
-                capture_name,
-                Some("call.name") | Some("call.method") | Some("call.scoped") | Some("macro.name")
-            );
+            let capture_name = match capture_name {
+                Some(n) => n,
+                None => continue,
+            };
 
-            if is_name {
-                let name = capture
-                    .node
-                    .utf8_text(content.as_bytes())
-                    .unwrap_or_default()
-                    .to_string();
+            let mut name_opt: Option<String> = None;
+
+            match capture_name {
+                "call.name" | "call.method" | "call.scoped" => {
+                    name_opt = Some(
+                        capture
+                            .node
+                            .utf8_text(content.as_bytes())
+                            .unwrap_or_default()
+                            .to_string(),
+                    );
+                }
+                "macro.name" => {
+                    // treat `println!(...)` as a call to `println`, etc.
+                    name_opt = Some(
+                        capture
+                            .node
+                            .utf8_text(content.as_bytes())
+                            .unwrap_or_default()
+                            .to_string(),
+                    );
+
+                    // also scan the token_tree for call-ish patterns like `x.foo(...)` inside macros
+                    if let Some(macro_node) = match_.captures.iter().find_map(|c| {
+                        let n: &str = &query.capture_names()[c.index as usize];
+                        if n == "macro.expr" {
+                            Some(c.node)
+                        } else {
+                            None
+                        }
+                    }) {
+                        let mut cursor = macro_node.walk();
+                        for child in macro_node.children(&mut cursor) {
+                            if child.kind() == "token_tree" {
+                                collect_identifiers_from_token_tree(
+                                    child,
+                                    content,
+                                    &mut calls,
+                                    &mut seen_lines,
+                                );
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+
+            if let Some(name) = name_opt {
                 let line = capture.node.start_position().row + 1;
 
                 if seen_lines.contains(&(name.clone(), line)) {
@@ -321,6 +368,59 @@ fn extract_rust_calls(content: &str) -> Result<Vec<(String, usize, String)>> {
     }
 
     Ok(calls)
+}
+
+fn collect_identifiers_from_token_tree(
+    token_tree: tree_sitter::Node,
+    source: &str,
+    calls: &mut Vec<(String, usize, String)>,
+    seen_lines: &mut HashSet<(String, usize)>,
+) {
+    let mut cursor = token_tree.walk();
+    let children: Vec<tree_sitter::Node> = token_tree.children(&mut cursor).collect();
+
+    // heuristic: capture `foo` in patterns like `x.foo(...)` or `Type::foo(...)` inside macro token trees
+    for window in children.windows(4) {
+        if window[0].kind() == "identifier"
+            && window[1].kind() == "."
+            && window[2].kind() == "identifier"
+            && window[3].kind() == "token_tree"
+        {
+            let name = window[2]
+                .utf8_text(source.as_bytes())
+                .unwrap_or_default()
+                .to_string();
+            let line = window[2].start_position().row + 1;
+            if seen_lines.insert((name.clone(), line)) {
+                let context = source.lines().nth(line - 1).unwrap_or("").to_string();
+                calls.push((name, line, context));
+            }
+        }
+
+        if window[0].kind() == "identifier"
+            && window[1].kind() == "::"
+            && window[2].kind() == "identifier"
+            && window[3].kind() == "token_tree"
+        {
+            let name = window[2]
+                .utf8_text(source.as_bytes())
+                .unwrap_or_default()
+                .to_string();
+            let line = window[2].start_position().row + 1;
+            if seen_lines.insert((name.clone(), line)) {
+                let context = source.lines().nth(line - 1).unwrap_or("").to_string();
+                calls.push((name, line, context));
+            }
+        }
+    }
+
+    // recurse
+    let mut cursor = token_tree.walk();
+    for child in token_tree.children(&mut cursor) {
+        if child.kind() == "token_tree" {
+            collect_identifiers_from_token_tree(child, source, calls, seen_lines);
+        }
+    }
 }
 
 fn extract_python_calls(content: &str) -> Result<Vec<(String, usize, String)>> {
@@ -903,7 +1003,10 @@ pub fn find_untested(index: &CodeIndex) -> Result<Vec<UntestedInfo>> {
                 continue;
             }
 
-            if matches!(symbol.symbol_type, SymbolType::Heading | SymbolType::CodeBlock) {
+            if matches!(
+                symbol.symbol_type,
+                SymbolType::Heading | SymbolType::CodeBlock
+            ) {
                 continue;
             }
 
@@ -1151,8 +1254,12 @@ pub fn trace_path(index: &CodeIndex, from: &str, to: &str, fuzzy: bool) -> Resul
             file_path: source.file_path.display().to_string(),
             line: source.line_start,
         };
-        
-        let visit_key = format!("{}:{}", source.file_path.display(), source.name.to_lowercase());
+
+        let visit_key = format!(
+            "{}:{}",
+            source.file_path.display(),
+            source.name.to_lowercase()
+        );
         if !visited.contains(&visit_key) {
             visited.insert(visit_key);
             queue.push_back((start_step.clone(), vec![start_step]));
@@ -1167,8 +1274,7 @@ pub fn trace_path(index: &CodeIndex, from: &str, to: &str, fuzzy: bool) -> Resul
         // Find the specific symbol instance from the current step
         let current_symbols = index.query_symbol(&current.symbol_name);
         let current_symbol = current_symbols.iter().find(|s| {
-            s.file_path.display().to_string() == current.file_path
-                && s.line_start == current.line
+            s.file_path.display().to_string() == current.file_path && s.line_start == current.line
         });
 
         if current_symbol.is_none() {
@@ -1312,7 +1418,12 @@ fn find_callees_by_name(index: &CodeIndex, symbol_name: &str) -> Result<Vec<Call
         let calls = extract_calls_from_source(&symbol_body, language)?;
 
         for (call_name, relative_line, context) in calls {
-            let dedup_key = format!("{}:{}:{}", symbol.file_path.display(), call_name, relative_line);
+            let dedup_key = format!(
+                "{}:{}:{}",
+                symbol.file_path.display(),
+                call_name,
+                relative_line
+            );
             if global_seen.contains(&dedup_key) {
                 continue;
             }

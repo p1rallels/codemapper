@@ -4,6 +4,7 @@ mod callgraph;
 mod diff;
 mod fast_search;
 mod git;
+mod impact;
 mod implements;
 mod index;
 mod indexer;
@@ -1062,6 +1063,45 @@ WHEN TO USE:
         rebuild_cache: bool,
     },
 
+    /// [ANALYSIS] Quick breakage report for a symbol (definition + callers + tests)
+    #[command(
+        about = "Quick breakage report for a symbol (definition + callers + tests)",
+        long_about = "USE CASE: Tight edit loop safety check
+  • After you edit a function, run this to see what you likely broke
+  • Shows definition + signature, all callers, and tests that touch it
+  • Intended to be fast enough to run repeatedly during refactors
+
+TIP: Run this after changing a function signature"
+    )]
+    #[command(after_help = "EXAMPLES:
+  cm impact symbols_by_type               # show definition + callers + tests
+  cm impact parse_file ./src --exact      # restrict scope + exact match
+  cm impact auth . --format ai            # token-efficient output")]
+    Impact {
+        /// Symbol name to analyze
+        symbol: String,
+
+        /// Directory path to search in
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Use exact matching (default is fuzzy)
+        #[arg(long, default_value = "false")]
+        exact: bool,
+
+        /// Comma-separated file extensions to include
+        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,md")]
+        extensions: String,
+
+        /// Disable cache (always reindex)
+        #[arg(long, default_value_t = false)]
+        no_cache: bool,
+
+        /// Force rebuild cache
+        #[arg(long, default_value_t = false)]
+        rebuild_cache: bool,
+    },
+
     /// [ANALYSIS] Show what production symbols a test file calls
     #[command(
         about = "List production (non-test) symbols called by a test file",
@@ -1509,7 +1549,7 @@ fn main() -> Result<()> {
                 symbol,
                 path,
                 context,
-                !exact,  // Invert: default is fuzzy, --exact disables it
+                !exact, // Invert: default is fuzzy, --exact disables it
                 fast,
                 show_body,
                 r#type,
@@ -1655,6 +1695,24 @@ fn main() -> Result<()> {
                 to,
                 path,
                 fuzzy,
+                extensions,
+                no_cache,
+                rebuild_cache,
+                format,
+            )?;
+        }
+        Commands::Impact {
+            symbol,
+            path,
+            exact,
+            extensions,
+            no_cache,
+            rebuild_cache,
+        } => {
+            impact::cmd_impact(
+                symbol,
+                path,
+                exact,
                 extensions,
                 no_cache,
                 rebuild_cache,
@@ -2074,7 +2132,10 @@ fn cmd_query(
     // Validate context level
     let context_lower = context.to_lowercase();
     if context_lower != "minimal" && context_lower != "full" {
-        eprintln!("Invalid context '{}'. Valid options: minimal, full", context);
+        eprintln!(
+            "Invalid context '{}'. Valid options: minimal, full",
+            context
+        );
         std::process::exit(1);
     }
 
@@ -2706,11 +2767,7 @@ fn cmd_callers(
     let elapsed_ms = start.elapsed().as_millis();
 
     if callers.is_empty() {
-        println!(
-            "{} No callers found for '{}'",
-            "✗".yellow(),
-            symbol.bold()
-        );
+        println!("{} No callers found for '{}'", "✗".yellow(), symbol.bold());
         return Ok(());
     }
 
@@ -2780,11 +2837,7 @@ fn cmd_callees(
     let elapsed_ms = start.elapsed().as_millis();
 
     if callees.is_empty() {
-        println!(
-            "{} No callees found for '{}'",
-            "✗".yellow(),
-            symbol.bold()
-        );
+        println!("{} No callees found for '{}'", "✗".yellow(), symbol.bold());
         return Ok(());
     }
 
