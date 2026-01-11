@@ -2755,6 +2755,19 @@ fn cmd_since(
     Ok(())
 }
 
+fn normalize_qualified_name(name: &str) -> String {
+    let trimmed = name.trim();
+
+    if let Some((_, tail)) = trimmed.rsplit_once("::") {
+        return tail.to_string();
+    }
+    if let Some((_, tail)) = trimmed.rsplit_once('.') {
+        return tail.to_string();
+    }
+
+    trimmed.to_string()
+}
+
 fn cmd_callers(
     symbol: String,
     path: PathBuf,
@@ -2767,6 +2780,8 @@ fn cmd_callers(
 ) -> Result<()> {
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
     let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
+
+    let symbol = normalize_qualified_name(&symbol);
 
     eprintln!("{} Finding callers of '{}'...", "→".cyan(), symbol.bold());
 
@@ -2838,6 +2853,8 @@ fn cmd_callees(
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
     let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
 
+    let symbol = normalize_qualified_name(&symbol);
+
     eprintln!("{} Finding callees of '{}'...", "→".cyan(), symbol.bold());
 
     let symbols = if fuzzy {
@@ -2906,6 +2923,8 @@ fn cmd_tests(
 ) -> Result<()> {
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
     let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
+
+    let symbol = normalize_qualified_name(&symbol);
 
     eprintln!("{} Finding tests for '{}'...", "→".cyan(), symbol.bold());
 

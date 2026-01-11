@@ -88,6 +88,8 @@ pub fn find_callers(index: &CodeIndex, symbol_name: &str, fuzzy: bool) -> Result
     let mut callers = Vec::new();
     let mut seen = HashSet::new();
 
+    let needle = normalize_qualified_name(symbol_name);
+
     for file_info in index.files() {
         let content = match fs::read_to_string(&file_info.path) {
             Ok(c) => c,
@@ -97,12 +99,12 @@ pub fn find_callers(index: &CodeIndex, symbol_name: &str, fuzzy: bool) -> Result
         let calls = extract_calls_from_file(&content, &file_info.path, file_info.language)?;
 
         for (call_name, line, context) in calls {
+            let call_needle = normalize_qualified_name(&call_name);
+
             let matches = if fuzzy {
-                call_name
-                    .to_lowercase()
-                    .contains(&symbol_name.to_lowercase())
+                call_needle.to_lowercase().contains(&needle.to_lowercase())
             } else {
-                call_name == symbol_name
+                call_needle == needle
             };
 
             if matches {
@@ -133,10 +135,12 @@ pub fn find_callers(index: &CodeIndex, symbol_name: &str, fuzzy: bool) -> Result
 }
 
 pub fn find_callees(index: &CodeIndex, symbol_name: &str, fuzzy: bool) -> Result<Vec<CallInfo>> {
+    let symbol_name = normalize_qualified_name(symbol_name);
+
     let symbols = if fuzzy {
-        index.fuzzy_search(symbol_name)
+        index.fuzzy_search(&symbol_name)
     } else {
-        index.query_symbol(symbol_name)
+        index.query_symbol(&symbol_name)
     };
 
     if symbols.is_empty() {
@@ -208,6 +212,20 @@ pub fn find_callees(index: &CodeIndex, symbol_name: &str, fuzzy: bool) -> Result
     }
 
     Ok(all_callees)
+}
+
+fn normalize_qualified_name(name: &str) -> String {
+    let trimmed = name.trim();
+
+    // allow callers/callees/impact to accept `Type::method` or `Type.method`
+    if let Some((_, tail)) = trimmed.rsplit_once("::") {
+        return tail.to_string();
+    }
+    if let Some((_, tail)) = trimmed.rsplit_once('.') {
+        return tail.to_string();
+    }
+
+    trimmed.to_string()
 }
 
 fn find_enclosing_symbol<'a>(index: &'a CodeIndex, path: &Path, line: usize) -> Option<&'a Symbol> {
