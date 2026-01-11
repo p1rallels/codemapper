@@ -695,6 +695,7 @@ WHEN TO USE:
   • Useful for impact analysis before refactoring
   • Shows the enclosing function/method making each call
   • Uses AST-based call detection (not text search)
+  • Tip: use qualified names (e.g. `Foo::new`) to reduce noise for common method names
 
 SUPPORTED LANGUAGES:
   Python, JavaScript, TypeScript, Rust, Go, Java, C
@@ -704,6 +705,7 @@ TIP: Great for understanding function usage patterns"
     #[command(after_help = "EXAMPLES:
   cm callers parse_file                    # Find all callers of parse_file
   cm callers parse ./src --fuzzy           # Fuzzy match 'parse' in src/
+  cm callers Foo::new                      # Disambiguate common method names
   cm callers validate --format human       # Pretty table output
   cm callers process_data . --format ai    # Token-efficient output
 
