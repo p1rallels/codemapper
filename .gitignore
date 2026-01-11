@@ -23,6 +23,7 @@
 # Documentation (keep README.md only)
 *.md
 !README.md
+ANNALS/
 
 # Cache directory (created by project)
 .codemapper/
