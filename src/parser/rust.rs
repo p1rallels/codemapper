@@ -172,7 +172,9 @@ impl RustParser {
         let mut symbols = Vec::new();
 
         let language = tree_sitter_rust::LANGUAGE.into();
-        let query = Query::new(
+
+        // capture enum definitions
+        let enum_query = Query::new(
             &language,
             r#"
             (enum_item
@@ -182,16 +184,14 @@ impl RustParser {
         .context("Failed to create Rust enum query")?;
 
         let mut cursor = QueryCursor::new();
-        let mut matches = cursor.matches(&query, tree_root, source.as_bytes());
+        let mut matches = cursor.matches(&enum_query, tree_root, source.as_bytes());
 
         while let Some(match_) = matches.next() {
-            let captures = match_.captures;
+            let mut enum_name: Option<String> = None;
+            let mut enum_node: Option<Node> = None;
 
-            let mut enum_name = None;
-            let mut enum_node = None;
-
-            for capture in captures {
-                let capture_name = query
+            for capture in match_.captures {
+                let capture_name = enum_query
                     .capture_names()
                     .get(capture.index as usize)
                     .map(|s| s.as_ref());
@@ -215,6 +215,7 @@ impl RustParser {
                 let docstring = self.extract_docstring(node, source);
                 let line_start = node.start_position().row + 1;
                 let line_end = node.end_position().row + 1;
+                let is_exported = has_pub_visibility(node, source);
 
                 symbols.push(Symbol {
                     name,
@@ -225,7 +226,77 @@ impl RustParser {
                     line_end,
                     parent_id: None,
                     file_path: file_path.to_path_buf(),
-                    is_exported: has_pub_visibility(node, source),
+                    is_exported,
+                });
+            }
+        }
+
+        // capture enum variants (clap-style command enums etc)
+        let variant_query = Query::new(
+            &language,
+            r#"
+            (enum_item
+                name: (type_identifier) @enum.name
+                body: (enum_variant_list
+                    (enum_variant
+                        (identifier) @variant.name) @variant.def))
+            "#,
+        )
+        .context("Failed to create Rust enum variant query")?;
+
+        let mut cursor = QueryCursor::new();
+        let mut matches = cursor.matches(&variant_query, tree_root, source.as_bytes());
+
+        while let Some(match_) = matches.next() {
+            let mut enum_name: Option<String> = None;
+            let mut variant_name: Option<String> = None;
+            let mut variant_node: Option<Node> = None;
+
+            for capture in match_.captures {
+                let capture_name = variant_query
+                    .capture_names()
+                    .get(capture.index as usize)
+                    .map(|s| s.as_ref());
+
+                match capture_name {
+                    Some("enum.name") => {
+                        enum_name = capture
+                            .node
+                            .utf8_text(source.as_bytes())
+                            .ok()
+                            .map(|s| s.to_string());
+                    }
+                    Some("variant.name") => {
+                        variant_name = capture
+                            .node
+                            .utf8_text(source.as_bytes())
+                            .ok()
+                            .map(|s| s.to_string());
+                    }
+                    Some("variant.def") => {
+                        variant_node = Some(capture.node);
+                    }
+                    _ => {}
+                }
+            }
+
+            if let (Some(enum_name), Some(variant_name), Some(node)) =
+                (enum_name, variant_name, variant_node)
+            {
+                let line_start = node.start_position().row + 1;
+                let line_end = node.end_position().row + 1;
+
+                symbols.push(Symbol {
+                    name: format!("{}::{}", enum_name, variant_name),
+                    symbol_type: SymbolType::Enum,
+                    signature: Some(format!("variant of {}", enum_name)),
+                    docstring: None,
+                    line_start,
+                    line_end,
+                    parent_id: None,
+                    file_path: file_path.to_path_buf(),
+                    // variants inherit enum visibility; we don't resolve that here, so keep this conservative
+                    is_exported: true,
                 });
             }
         }

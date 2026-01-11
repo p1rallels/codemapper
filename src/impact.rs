@@ -19,6 +19,8 @@ pub fn cmd_impact(
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
     let index = crate::try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
 
+    let symbol = normalize_qualified_name(&symbol);
+
     let raw_matches = if exact {
         index.query_symbol(&symbol)
     } else {
@@ -119,6 +121,19 @@ pub fn cmd_impact(
 
     println!("{}", out);
     Ok(())
+}
+
+fn normalize_qualified_name(name: &str) -> String {
+    let trimmed = name.trim();
+
+    if let Some((_, tail)) = trimmed.rsplit_once("::") {
+        return tail.to_string();
+    }
+    if let Some((_, tail)) = trimmed.rsplit_once('.') {
+        return tail.to_string();
+    }
+
+    trimmed.to_string()
 }
 
 fn truncate_vec<T>(items: &mut Vec<T>, limit: Option<usize>) -> (usize, bool) {
