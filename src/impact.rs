@@ -19,7 +19,8 @@ pub fn cmd_impact(
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
     let index = crate::try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
 
-    let symbol = normalize_qualified_name(&symbol);
+    let original_symbol = symbol;
+    let symbol = normalize_qualified_name(&original_symbol);
 
     let raw_matches = if exact {
         index.query_symbol(&symbol)
@@ -52,8 +53,8 @@ pub fn cmd_impact(
 
     let formatter = OutputFormatter::new(format);
 
-    let mut callers = callgraph::find_callers(&index, &target.name, !exact)?;
-    let mut tests = callgraph::find_tests(&index, &target.name, !exact)?;
+    let mut callers = callgraph::find_callers(&index, &original_symbol, !exact)?;
+    let mut tests = callgraph::find_tests(&index, &original_symbol, !exact)?;
 
     // reduce self/noise by default: drop entries where caller == target
     callers.retain(|c| c.caller_name != target.name);

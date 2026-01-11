@@ -2768,6 +2768,24 @@ fn normalize_qualified_name(name: &str) -> String {
     trimmed.to_string()
 }
 
+fn qualifier_pattern(name: &str) -> Option<String> {
+    let trimmed = name.trim();
+
+    if let Some((prefix, tail)) = trimmed.rsplit_once("::") {
+        if !prefix.is_empty() && !tail.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+
+    if let Some((prefix, tail)) = trimmed.rsplit_once('.') {
+        if !prefix.is_empty() && !tail.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+
+    None
+}
+
 fn cmd_callers(
     symbol: String,
     path: PathBuf,
@@ -2781,15 +2799,31 @@ fn cmd_callers(
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
     let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
 
-    let symbol = normalize_qualified_name(&symbol);
+    let original_symbol = symbol;
+    let symbol = normalize_qualified_name(&original_symbol);
 
-    eprintln!("{} Finding callers of '{}'...", "→".cyan(), symbol.bold());
+    eprintln!(
+        "{} Finding callers of '{}'...",
+        "→".cyan(),
+        original_symbol.bold()
+    );
 
-    let symbols = if fuzzy {
+    let mut symbols = if fuzzy {
         index.fuzzy_search(&symbol)
     } else {
         index.query_symbol(&symbol)
     };
+
+    if symbols.is_empty() {
+        // allow Enum::Variant lookup via our variant indexing
+        if let Some(pattern) = qualifier_pattern(&original_symbol) {
+            symbols = if fuzzy {
+                index.fuzzy_search(&pattern)
+            } else {
+                index.query_symbol(&pattern)
+            };
+        }
+    }
 
     if symbols.is_empty() {
         println!(
@@ -2801,7 +2835,7 @@ fn cmd_callers(
     }
 
     let start = Instant::now();
-    let mut callers = callgraph::find_callers(&index, &symbol, fuzzy)?;
+    let mut callers = callgraph::find_callers(&index, &original_symbol, fuzzy)?;
     let elapsed_ms = start.elapsed().as_millis();
 
     if callers.is_empty() {
@@ -2834,7 +2868,7 @@ fn cmd_callers(
     );
 
     let formatter = OutputFormatter::new(format);
-    let output = formatter.format_callers(&callers, &symbol);
+    let output = formatter.format_callers(&callers, &original_symbol);
     println!("{}", output);
 
     Ok(())
@@ -2853,15 +2887,30 @@ fn cmd_callees(
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
     let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
 
-    let symbol = normalize_qualified_name(&symbol);
+    let original_symbol = symbol;
+    let symbol = normalize_qualified_name(&original_symbol);
 
-    eprintln!("{} Finding callees of '{}'...", "→".cyan(), symbol.bold());
+    eprintln!(
+        "{} Finding callees of '{}'...",
+        "→".cyan(),
+        original_symbol.bold()
+    );
 
-    let symbols = if fuzzy {
+    let mut symbols = if fuzzy {
         index.fuzzy_search(&symbol)
     } else {
         index.query_symbol(&symbol)
     };
+
+    if symbols.is_empty() {
+        if let Some(pattern) = qualifier_pattern(&original_symbol) {
+            symbols = if fuzzy {
+                index.fuzzy_search(&pattern)
+            } else {
+                index.query_symbol(&pattern)
+            };
+        }
+    }
 
     if symbols.is_empty() {
         println!(
@@ -2906,7 +2955,7 @@ fn cmd_callees(
     );
 
     let formatter = OutputFormatter::new(format);
-    let output = formatter.format_callees(&callees, &symbol);
+    let output = formatter.format_callees(&callees, &original_symbol);
     println!("{}", output);
 
     Ok(())
@@ -2924,12 +2973,17 @@ fn cmd_tests(
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
     let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
 
-    let symbol = normalize_qualified_name(&symbol);
+    let original_symbol = symbol;
+    let symbol = normalize_qualified_name(&original_symbol);
 
-    eprintln!("{} Finding tests for '{}'...", "→".cyan(), symbol.bold());
+    eprintln!(
+        "{} Finding tests for '{}'...",
+        "→".cyan(),
+        original_symbol.bold()
+    );
 
     let start = Instant::now();
-    let tests = callgraph::find_tests(&index, &symbol, fuzzy)?;
+    let tests = callgraph::find_tests(&index, &original_symbol, fuzzy)?;
     let elapsed_ms = start.elapsed().as_millis();
 
     if tests.is_empty() {
@@ -2945,7 +2999,7 @@ fn cmd_tests(
     );
 
     let formatter = OutputFormatter::new(format);
-    let output = formatter.format_tests(&tests, &symbol);
+    let output = formatter.format_tests(&tests, &original_symbol);
     println!("{}", output);
 
     Ok(())
