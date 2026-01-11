@@ -65,16 +65,6 @@ pub enum EntrypointCategory {
     PossiblyUnused,
 }
 
-impl EntrypointCategory {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            EntrypointCategory::MainEntry => "Main Entrypoint",
-            EntrypointCategory::ApiFunction => "API Function",
-            EntrypointCategory::PossiblyUnused => "Possibly Unused",
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct EntrypointInfo {
     pub name: String,
@@ -82,7 +72,6 @@ pub struct EntrypointInfo {
     pub file_path: String,
     pub line: usize,
     pub signature: Option<String>,
-    pub is_exported: bool,
     pub category: EntrypointCategory,
 }
 
@@ -1094,7 +1083,6 @@ pub fn find_entrypoints(index: &CodeIndex) -> Result<Vec<EntrypointInfo>> {
                 file_path: file_info.path.display().to_string(),
                 line: symbol.line_start,
                 signature: symbol.signature.clone(),
-                is_exported,
                 category,
             });
         }
@@ -1378,80 +1366,6 @@ fn find_callees_for_symbol(index: &CodeIndex, symbol: &Symbol) -> Result<Vec<Cal
     }
 
     Ok(callees)
-}
-
-fn find_callees_by_name(index: &CodeIndex, symbol_name: &str) -> Result<Vec<CallInfo>> {
-    let symbols = index.query_symbol(symbol_name);
-
-    if symbols.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let mut all_callees = Vec::new();
-    let mut global_seen = HashSet::new();
-
-    // Process ALL symbols with this name, not just the first one
-    for symbol in &symbols {
-        let content = match fs::read_to_string(&symbol.file_path) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-
-        let lines: Vec<&str> = content.lines().collect();
-        let start_idx = symbol.line_start.saturating_sub(1);
-        let end_idx = symbol.line_end.min(lines.len());
-
-        if start_idx >= lines.len() {
-            continue;
-        }
-
-        let symbol_body: String = lines[start_idx..end_idx].join("\n");
-
-        let language = Language::from_extension(
-            symbol
-                .file_path
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or(""),
-        );
-
-        let calls = extract_calls_from_source(&symbol_body, language)?;
-
-        for (call_name, relative_line, context) in calls {
-            let dedup_key = format!(
-                "{}:{}:{}",
-                symbol.file_path.display(),
-                call_name,
-                relative_line
-            );
-            if global_seen.contains(&dedup_key) {
-                continue;
-            }
-            global_seen.insert(dedup_key);
-
-            let target_symbols = index.query_symbol(&call_name);
-
-            if let Some(target) = target_symbols.first() {
-                all_callees.push(CallInfo {
-                    caller_name: call_name,
-                    caller_type: target.symbol_type,
-                    file_path: target.file_path.display().to_string(),
-                    line: target.line_start,
-                    context: target.signature.clone().unwrap_or_default(),
-                });
-            } else {
-                all_callees.push(CallInfo {
-                    caller_name: call_name,
-                    caller_type: SymbolType::Function,
-                    file_path: "<external>".to_string(),
-                    line: symbol.line_start + relative_line,
-                    context: context.trim().to_string(),
-                });
-            }
-        }
-    }
-
-    Ok(all_callees)
 }
 
 #[cfg(test)]

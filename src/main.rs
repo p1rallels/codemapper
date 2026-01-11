@@ -1074,9 +1074,11 @@ WHEN TO USE:
 TIP: Run this after changing a function signature"
     )]
     #[command(after_help = "EXAMPLES:
-  cm impact symbols_by_type               # show definition + callers + tests
+  cm impact symbols_by_type               # quick: counts + top callsites/tests
   cm impact parse_file ./src --exact      # restrict scope + exact match
-  cm impact auth . --format ai            # token-efficient output")]
+  cm impact auth . --format ai            # token-efficient output
+  cm impact output --include-docs         # allow matching headings/code blocks
+  cm impact big_function --all            # print full lists (no truncation)")]
     Impact {
         /// Symbol name to analyze
         symbol: String,
@@ -1088,6 +1090,18 @@ TIP: Run this after changing a function signature"
         /// Use exact matching (default is fuzzy)
         #[arg(long, default_value = "false")]
         exact: bool,
+
+        /// Include markdown headings/code blocks as candidates (default: code symbols only)
+        #[arg(long, default_value_t = false)]
+        include_docs: bool,
+
+        /// Maximum number of callers/tests to show (default: 10 each)
+        #[arg(long)]
+        limit: Option<usize>,
+
+        /// Show full callers/tests lists (ignores --limit)
+        #[arg(long, default_value_t = false)]
+        all: bool,
 
         /// Comma-separated file extensions to include
         #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,md")]
@@ -1705,6 +1719,9 @@ fn main() -> Result<()> {
             symbol,
             path,
             exact,
+            include_docs,
+            limit,
+            all,
             extensions,
             no_cache,
             rebuild_cache,
@@ -1713,6 +1730,9 @@ fn main() -> Result<()> {
                 symbol,
                 path,
                 exact,
+                include_docs,
+                limit,
+                all,
                 extensions,
                 no_cache,
                 rebuild_cache,
