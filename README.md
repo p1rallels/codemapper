@@ -1,202 +1,232 @@
 # CodeMapper Rust - Fast Code Indexing and Mapping Tool
 
-**CodeMapper Rust** is a high-performance code analysis tool that indexes and maps your codebase in milliseconds. Built in Rust for maximum speed with no database overhead—everything runs in-memory using tree-sitter for accurate AST parsing.
+**CodeMapper (cm)** is a high-performance code analysis tool that indexes and maps your codebase in milliseconds. Built in Rust for maximum speed with no database overhead—everything runs in-memory using tree-sitter for accurate AST parsing.
 
 ## 🚀 Performance
 
-- **3 files**: 1-2ms total (170ms wall time including startup)
-- **Small projects**: <5ms
-- **Medium projects (50 files)**: <20ms
-- **Binary size**: 1.5MB (stripped)
+- **Small projects (< 100 files)**: < 20ms instant
+- **Medium projects (100-1000 files)**: Cached, ~0.5s load
+- **Large projects (1000+ files)**: Fast mode auto-enabled (10-100x speedup)
+- **Incremental rebuilds**: 45-55x faster than full reindex
+- **Binary size**: ~2MB (stripped)
 
 Compared to Python version: **10-50x faster** cold start performance.
 
-### ⚡ Fast Mode (NEW!)
+### ⚡ Fast Mode
 
-For large codebases (1000+ files), CodeMapper automatically enables **Fast Mode**—a ripgrep-powered two-stage search that provides **10-100x speedup**:
+For large codebases (1000+ files), CodeMapper automatically enables **Fast Mode**—a ripgrep-powered two-stage search:
 
-**Performance Results:**
-- **18,457 files**: 76s → 1.2s (**63x faster**)
-- **17,005 files**: 122s → 9.6s (**12x faster**)
-- **Small codebases** (< 1000 files): Uses normal mode (no overhead)
+| Codebase Size | Before | After | Speedup |
+|---------------|--------|-------|---------|
+| 18,457 files | 76s | 1.2s | **63x** |
+| 17,005 files | 122s | 9.6s | **12x** |
+| < 1000 files | Normal mode (no overhead) | | |
 
 **How it works:**
 1. **Stage 1**: Lightning-fast text search finds candidate files (milliseconds)
 2. **Stage 2**: AST validation ensures 100% accuracy (only parses candidates)
 3. **Fallback**: Automatically uses full scan if no text matches found
 
-**Usage:**
-```bash
-# Explicit fast mode
-cm query authenticate /huge/monorepo --fast
-
-# Auto-enabled for 1000+ files (no flag needed!)
-cm query MyClass /large/project --fuzzy
-
-# Works with all query options
-cm query validate . --fuzzy --fast --show-body --format ai
-```
-
 ## ✨ Features
 
+- **Smart Caching**: Auto-enabled for projects ≥300ms to parse; small projects stay fast with no `.codemapper/` clutter
 - **Fast Mode**: Ripgrep-powered search with 10-100x speedup (auto-enabled for 1000+ files)
-- **No Database**: Pure in-memory indexing for instant startup
 - **Tree-sitter Parsing**: Accurate AST-based symbol extraction
-- **Multi-language**: Python, JavaScript, TypeScript, Rust, Java, Go, C, Markdown support
+- **Multi-language**: Python, JavaScript, TypeScript, Rust, Java, Go, C, Markdown
 - **Parallel Processing**: Uses rayon for concurrent file parsing
-- **Fuzzy Search**: Levenshtein distance-based symbol matching
-- **3 Output Formats**: Default (markdown), Human (tables), AI (token-efficient)
+- **Fuzzy Search**: Case-insensitive matching by default (use `--exact` for strict)
+- **Call Graph Analysis**: callers, callees, trace, tests, entrypoints
+- **Git Integration**: diff, since, blame, history commands
+- **Type Analysis**: types, implements, schema commands
+- **3 Output Formats**: default (markdown), human (tables), ai (token-efficient)
 
 ## 📦 Installation
 
 ### Build from source:
 ```bash
-git clone https://github.com/auland2vs/codemapper.git
+git clone https://github.com/p1rallels/codemapper.git
 cd codemapper
 cargo build --release
 ```
 
 Binary location: `target/release/cm`
 
-## 🎯 Usage
+## 🎯 Quick Start
 
-### Commands
-
-#### `map` - Project Overview
 ```bash
-# Level 1: High-level overview
-cm map /path/to/project --level 1
+# 1. Get the lay of the land
+cm stats .                           # Project overview
 
-# Level 2: File summaries
-cm map /path/to/project --level 2
+# 2. See file structure
+cm map . --level 2 --format ai       # File listing with symbol counts
 
-# Level 3: Detailed signatures
-cm map /path/to/project --level 3
+# 3. Find and explore
+cm query authenticate                # Fuzzy search (default)
+cm query Parser --show-body          # See implementation
+cm inspect ./src/auth.py             # All symbols in a file
+
+# 4. Understand code flow
+cm callers process_payment           # Who calls this?
+cm callees process_payment           # What does it call?
+cm trace main process_payment        # Call path from A to B
+
+# 5. Git analysis
+cm diff main                         # Changes vs main branch
+cm since v1.0 --breaking             # Breaking changes since release
+cm blame authenticate ./auth.py      # Who last touched it?
 ```
 
-#### `query` - Search Symbols
+## 📋 Commands
+
+### Discovery (Start Here)
+
+| Command | Description |
+|---------|-------------|
+| `stats` | Project size and composition |
+| `map` | File listing with symbol counts (3 detail levels) |
+| `query` | Find symbols by name (main search tool) |
+| `inspect` | List all symbols in one file |
+| `deps` | Track imports and usage |
+
+### Call Graph
+
+| Command | Description |
+|---------|-------------|
+| `callers` | WHO calls this function? (reverse dependencies) |
+| `callees` | What DOES this function call? (forward dependencies) |
+| `trace` | CALL PATH from A → B (shortest route) |
+| `entrypoints` | Public APIs with no internal callers |
+| `tests` | Which tests call this symbol? |
+| `untested` | Find symbols not called by any test |
+| `test-deps` | What production code does a test touch? |
+| `impact` | Quick breakage report (definition + callers + tests) |
+
+### Git History
+
+| Command | Description |
+|---------|-------------|
+| `diff` | Symbol-level changes vs a commit |
+| `since` | Breaking changes since commit |
+| `blame` | Who last touched this symbol? |
+| `history` | Full evolution of a symbol |
+
+### Type Analysis
+
+| Command | Description |
+|---------|-------------|
+| `types` | Parameter types and return type |
+| `implements` | Find all implementations of an interface |
+| `schema` | Field structure (structs, classes, dataclasses) |
+
+### Snapshots
+
+| Command | Description |
+|---------|-------------|
+| `snapshot` | Save current state (named checkpoint) |
+| `compare` | Diff current vs saved snapshot |
+
+## 🔍 Search Modes
+
+Fuzzy matching is **enabled by default** for more forgiving searches:
+
 ```bash
-# Exact match
-cm query process_payment /path/to/project
+# Default: fuzzy/case-insensitive
+cm query auth                    # Matches authenticate, Authorization, etc.
 
-# Fuzzy search
-cm query procpayment /path/to/project --fuzzy
-
-# With full context (docstrings)
-cm query MyClass /path/to/project --context full
-
-# Fast mode (explicit or auto-enabled for 1000+ files)
-cm query authenticate /large/monorepo --fast
-cm query parse . --fuzzy --fast --format ai
+# Exact matching when needed
+cm query MyClass --exact         # Case-sensitive, precise match
 ```
 
-#### `stats` - Codebase Statistics
+## 📊 Output Formats
+
 ```bash
-cm stats /path/to/project
+cm query Parser --format default   # Markdown (documentation, readable)
+cm query Parser --format human     # Tables (terminal viewing, pretty)
+cm query Parser --format ai        # Compact (LLM context, token-efficient) ← RECOMMENDED
 ```
 
-#### `deps` - Dependency Analysis
-```bash
-# Show imports for a file
-cm deps /path/to/file.py /path/to/project
+## 💾 Caching
 
-# Show what imports this file
-cm deps /path/to/file.py /path/to/project --direction used-by
-```
-
-#### `index` - Index & Validate
-```bash
-# Index all supported files
-cm index /path/to/project
-
-# Index specific extensions
-cm index /path/to/project --extensions py,js,ts
-```
-
-### Output Formats
-
-#### Default (Markdown)
-```bash
-cm query MyClass /path/to/project --format default
-```
-
-#### Human (Pretty Tables)
-```bash
-cm map /path/to/project --format human
-```
-
-#### AI (Token-Efficient)
-```bash
-cm stats /path/to/project --format ai
-```
+Smart caching behavior:
+- **Small repos (< 300ms to parse)**: No cache created—always fast, no `.codemapper/` clutter
+- **Large repos (≥ 300ms)**: Cache created on first run, loads instantly after
+- **File changes**: Auto-detected, only modified files re-parsed
 
 ### Cache Location
 
-By default, CodeMapper stores cache in `.codemapper/` in the project root. You can override this:
+By default, cache is stored in `.codemapper/` in the project root. Override with:
 
 ```bash
 # Using --cache-dir flag
-cm stats /path/to/project --cache-dir /custom/cache/path
+cm stats . --cache-dir /custom/cache/path
 
 # Using environment variable
 export CODEMAPPER_CACHE_DIR=/custom/cache/path
-cm stats /path/to/project
+cm stats .
 ```
 
-**Priority**: `--cache-dir` flag > `CODEMAPPER_CACHE_DIR` env var > default (`./.codemapper`)
+**Priority**: `--cache-dir` flag > `CODEMAPPER_CACHE_DIR` env var > default
 
-**Use case**: Git worktrees, multi-repo projects, or keeping cache in a central location.
+**Use cases**: Git worktrees, multi-repo projects, keeping cache in a central location.
 
-## 📊 Examples
+### Cache Flags
 
-### Query a Function
 ```bash
-$ cm query process_payment example_project
-Found 1 symbols
-
-## process_payment
-- Type: method
-- File: example_project/payment.py
-- Lines: 22-61
-- Signature: (self, amount: float, currency: str = "USD")
+--no-cache           # Skip cache, always reindex
+--rebuild-cache      # Force cache rebuild
 ```
 
-### Project Overview
+## 🎯 Typical Workflows
+
+### Exploring Unknown Code
 ```bash
-$ cm map example_project --level 1
-# Project Overview
-
-## Languages
-- python: 3 files
-
-## Statistics
-- Total files: 3
-- Total symbols: 16
-  - Functions: 4
-  - Classes: 3
-  - Methods: 9
+cm stats .                           # Size and composition
+cm map . --level 2 --format ai       # File structure
+cm query <symbol>                    # Find code
+cm inspect ./path/to/file            # Deep dive
 ```
 
-### Statistics
+### Finding a Bug
 ```bash
-$ cm stats example_project
-# Codebase Statistics
-
-## Files by Language
-- python: 3
-
-## Symbols by Type
-- Functions: 4
-- Classes: 3
-- Methods: 9
-
-## Totals
-- Total Files: 3
-- Total Symbols: 16
-- Total Bytes: 5346
-
-→ Parse time: 1ms
+cm query <suspected_function> --show-body   # See implementation
+cm callers <function>                       # Who calls this?
+cm trace <entry_point> <suspected_function> # How does bug get triggered?
+cm tests <function>                         # Are there tests?
 ```
+
+### Before Refactoring
+```bash
+cm callers <function>              # Impact radius
+cm callees <function>              # What does it depend on?
+cm tests <function>                # Verify coverage exists
+cm since main --breaking           # (After refactor) Did we break anything?
+```
+
+### Understanding an API
+```bash
+cm entrypoints .                   # What's exported?
+cm implements <interface>          # Find implementations
+cm schema <DataClass>              # Field structure
+```
+
+### Validating Code Health
+```bash
+cm untested .                      # What's not tested?
+cm since <last_release> --breaking # Breaking changes?
+```
+
+## 🎯 Supported Languages
+
+| Language | Extensions | Extracts |
+|----------|------------|----------|
+| Python | .py | Functions, classes, methods, imports |
+| JavaScript | .js, .jsx | Functions, classes, methods, imports |
+| TypeScript | .ts, .tsx | Functions, classes, methods, interfaces, types, enums |
+| Rust | .rs | Functions, structs, impl blocks, traits, enums |
+| Java | .java | Classes, interfaces, methods, enums, javadoc |
+| Go | .go | Functions, structs, methods, interfaces |
+| C | .c, .h | Functions, structs, includes |
+| Markdown | .md | Headings, code blocks |
 
 ## 🏗️ Architecture
 
@@ -205,19 +235,14 @@ $ cm stats example_project
 - **models.rs**: Data structures (Symbol, FileInfo, Language, etc.)
 - **index.rs**: In-memory CodeIndex with HashMap-based lookups
 - **parser/**: Language-specific parsers using tree-sitter
-  - `python.rs`: Python AST parsing
-  - `javascript.rs`: JS/TS parsing
 - **indexer.rs**: File walking, hashing, parallel processing
+- **callgraph.rs**: Call graph analysis (callers, callees, trace)
+- **fast_search.rs**: Ripgrep-powered fast mode
+- **cache.rs**: Smart caching with incremental updates
 - **output.rs**: Three output formatters
 - **main.rs**: CLI interface using clap
 
 ### Design Principles
-
-- **MISRA/Power of 10 Compliance**:
-  - No unwrap() - proper error handling with anyhow
-  - No recursion - iterative tree-sitter queries
-  - Bounds checking on all array access
-  - Static analysis with clippy
 
 - **Functional Style**:
   - Immutable by default
@@ -227,54 +252,12 @@ $ cm stats example_project
 
 ## 🔧 Development
 
-### Run Tests
 ```bash
-cargo test
+cargo test                                  # Run tests
+cargo check                                 # Check code
+cargo clippy --all-targets --all-features  # Lint
+cargo build --release                       # Build release
 ```
-
-### Check Code
-```bash
-cargo check
-cargo clippy --all-targets --all-features
-```
-
-### Build Release
-```bash
-cargo build --release
-```
-
-## 🎯 Supported Languages
-
-- ✅ Python (.py)
-- ✅ JavaScript (.js, .jsx)
-- ✅ TypeScript (.ts, .tsx)
-- ✅ Rust (.rs)
-- ✅ Java (.java)
-- ✅ Go (.go)
-- ✅ C (.c, .h)
-- ✅ Markdown (.md)
-
-## 📈 Performance Comparison
-
-| Metric | Rust | Python | Speedup |
-|--------|------|--------|---------|
-| 3 files | 1ms | ~50ms | 50x |
-| Parse time | O(n) | O(n) | - |
-| Memory | In-memory | SQLite | Lower |
-| Binary size | 1.5MB | N/A | - |
-
-## 🛠️ Technical Details
-
-### Dependencies
-
-- **clap**: CLI framework with derive macros
-- **tree-sitter**: Parser generator tool
-- **rayon**: Data parallelism library
-- **walkdir**: Directory traversal
-- **comfy-table**: Pretty table formatting
-- **colored**: Terminal colors
-- **md5**: File hashing
-- **anyhow**: Error handling
 
 ### Ignored Directories
 
@@ -283,14 +266,29 @@ The indexer automatically skips:
 - `node_modules`, `__pycache__`, `venv`, `.venv`
 - `target`, `dist`, `build`, `.cache`
 
+## 🛠️ Common Flags
+
+```
+--exact              Strict matching (default is fuzzy)
+--format <format>    Output: default (markdown), human (tables), ai (compact)
+--show-body          Include actual code (not just signatures)
+--exports-only       Public symbols only (pub, export, etc.)
+--full               Include anonymous/lambda functions
+--context minimal    Signatures only (default)
+--context full       Include docstrings and metadata
+--no-cache           Skip cache, always reindex
+--rebuild-cache      Force cache rebuild
+--extensions py,rs   Comma-separated file types
+--cache-dir <path>   Override cache location
+```
+
 ## 📝 License
 
 Part of the CodeMapper project.
 
 ## 🚀 Future Enhancements
 
-- Optional disk cache for instant startup on large projects
-- More languages (Go, C/C++, Java)
-- Call graph analysis
 - LSP protocol support
 - Daemon mode with file watching
+- More advanced call graph visualizations
+- Cross-language call tracking
