@@ -23,7 +23,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use models::Symbol;
 use output::{OutputFormat, OutputFormatter};
 use rayon::prelude::*;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 #[derive(clap::Parser)]
@@ -152,6 +152,8 @@ CACHING:
   Small projects never create cache (no .codemapper/ clutter)
   Subsequent runs load from cache (~0.5s)
   File changes auto-detected (you don't manage cache)
+  Location: .codemapper/ in project root (default)
+  Custom location: --cache-dir <path> or CODEMAPPER_CACHE_DIR env var
   Flags: --no-cache (skip), --rebuild-cache (force rebuild)
 
 SEARCH MODES:
@@ -262,6 +264,11 @@ struct Cli {
     #[arg(short, long, global = true, default_value = "default")]
     format: String,
 
+    /// Override cache directory location (default: .codemapper in project root)
+    /// Can also be set via CODEMAPPER_CACHE_DIR environment variable
+    #[arg(long, global = true, env = "CODEMAPPER_CACHE_DIR")]
+    cache_dir: Option<PathBuf>,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -282,7 +289,7 @@ SMART CACHE BEHAVIOR:
   • Large repos (≥ 300ms): Cache created on first run, then loads instantly
   • Subsequent runs: Validates cache in ~1s, loads instantly if no changes
   • File changes: Auto-detects and re-parses only modified files (~2s)
-  • Cache location: .codemapper/cache/ in project root (only created when needed)
+  • Cache location: .codemapper/cache/ in project root (override with --cache-dir or CODEMAPPER_CACHE_DIR)
 
 TIP: Fastest way to understand codebase size and composition"
     )]
@@ -1423,7 +1430,7 @@ WHEN TO USE:
   • Save current symbol state as a named reference
   • Includes all symbols with signatures and locations
   • Records git commit hash if in a git repository
-  • Stored in .codemapper/snapshots/<name>.json
+  • Stored in .codemapper/snapshots/<name>.json (override with --cache-dir or CODEMAPPER_CACHE_DIR)
 
 COMMON USES:
   • Save baseline before major refactoring
@@ -1531,6 +1538,8 @@ fn main() -> Result<()> {
         std::process::exit(1);
     });
 
+    let cache_dir = cli.cache_dir.as_deref();
+
     match cli.command {
         Commands::Stats {
             path,
@@ -1538,7 +1547,7 @@ fn main() -> Result<()> {
             no_cache,
             rebuild_cache,
         } => {
-            cmd_stats(path, extensions, no_cache, rebuild_cache, format)?;
+            cmd_stats(path, extensions, no_cache, rebuild_cache, format, cache_dir)?;
         }
         Commands::Map {
             path,
@@ -1547,7 +1556,7 @@ fn main() -> Result<()> {
             no_cache,
             rebuild_cache,
         } => {
-            cmd_map(path, level, extensions, no_cache, rebuild_cache, format)?;
+            cmd_map(path, level, extensions, no_cache, rebuild_cache, format, cache_dir)?;
         }
         Commands::Query {
             symbol,
@@ -1579,6 +1588,7 @@ fn main() -> Result<()> {
                 exports_only,
                 format,
                 limit,
+                cache_dir,
             )?;
         }
         Commands::Inspect {
@@ -1605,6 +1615,7 @@ fn main() -> Result<()> {
                 no_cache,
                 rebuild_cache,
                 format,
+                cache_dir,
             )?;
         }
         Commands::Index { path, extensions } => {
@@ -1636,6 +1647,7 @@ fn main() -> Result<()> {
                 rebuild_cache,
                 limit,
                 format,
+                cache_dir,
             )?;
         }
         Commands::Callees {
@@ -1656,6 +1668,7 @@ fn main() -> Result<()> {
                 rebuild_cache,
                 limit,
                 format,
+                cache_dir,
             )?;
         }
         Commands::Tests {
@@ -1674,6 +1687,7 @@ fn main() -> Result<()> {
                 no_cache,
                 rebuild_cache,
                 format,
+                cache_dir,
             )?;
         }
         Commands::Untested {
@@ -1682,7 +1696,7 @@ fn main() -> Result<()> {
             no_cache,
             rebuild_cache,
         } => {
-            cmd_untested(path, extensions, no_cache, rebuild_cache, format)?;
+            cmd_untested(path, extensions, no_cache, rebuild_cache, format, cache_dir)?;
         }
         Commands::Since {
             commit,
@@ -1698,7 +1712,7 @@ fn main() -> Result<()> {
             no_cache,
             rebuild_cache,
         } => {
-            cmd_entrypoints(path, extensions, no_cache, rebuild_cache, format)?;
+            cmd_entrypoints(path, extensions, no_cache, rebuild_cache, format, cache_dir)?;
         }
         Commands::Trace {
             from,
@@ -1718,6 +1732,7 @@ fn main() -> Result<()> {
                 no_cache,
                 rebuild_cache,
                 format,
+                cache_dir,
             )?;
         }
         Commands::Impact {
@@ -1742,6 +1757,7 @@ fn main() -> Result<()> {
                 no_cache,
                 rebuild_cache,
                 format,
+                cache_dir,
             )?;
         }
         Commands::TestDeps {
@@ -1751,7 +1767,7 @@ fn main() -> Result<()> {
             no_cache,
             rebuild_cache,
         } => {
-            cmd_test_deps(test_file, path, extensions, no_cache, rebuild_cache, format)?;
+            cmd_test_deps(test_file, path, extensions, no_cache, rebuild_cache, format, cache_dir)?;
         }
         Commands::Blame { symbol, file } => {
             cmd_blame(symbol, file, format)?;
@@ -1777,6 +1793,7 @@ fn main() -> Result<()> {
                 rebuild_cache,
                 trait_only,
                 format,
+                cache_dir,
             )?;
         }
         Commands::Types {
@@ -1795,6 +1812,7 @@ fn main() -> Result<()> {
                 no_cache,
                 rebuild_cache,
                 format,
+                cache_dir,
             )?;
         }
         Commands::Schema {
@@ -1813,6 +1831,7 @@ fn main() -> Result<()> {
                 no_cache,
                 rebuild_cache,
                 format,
+                cache_dir,
             )?;
         }
         Commands::Snapshot {
@@ -1833,6 +1852,7 @@ fn main() -> Result<()> {
                 no_cache,
                 rebuild_cache,
                 format,
+                cache_dir,
             )?;
         }
         Commands::Compare {
@@ -1842,7 +1862,7 @@ fn main() -> Result<()> {
             no_cache,
             rebuild_cache,
         } => {
-            cmd_compare(snapshot, path, extensions, no_cache, rebuild_cache, format)?;
+            cmd_compare(snapshot, path, extensions, no_cache, rebuild_cache, format, cache_dir)?;
         }
     }
 
@@ -1855,6 +1875,7 @@ fn try_load_or_rebuild(
     extensions: &[&str],
     no_cache: bool,
     rebuild_cache: bool,
+    cache_dir: Option<&Path>,
 ) -> Result<index::CodeIndex> {
     use cache::CacheManager;
 
@@ -1862,7 +1883,7 @@ fn try_load_or_rebuild(
     if no_cache || rebuild_cache {
         if rebuild_cache {
             eprintln!("{} Rebuilding cache (--rebuild-cache)", "→".cyan());
-            CacheManager::invalidate(path, extensions).ok(); // Ignore errors
+            CacheManager::invalidate(path, extensions, cache_dir).ok(); // Ignore errors
         }
         let start = Instant::now();
         let index = indexer::index_directory(path, extensions)?;
@@ -1870,7 +1891,7 @@ fn try_load_or_rebuild(
 
         // Save to cache only if indexing took >= 300ms (unless --no-cache)
         if !no_cache && elapsed_ms >= 300 {
-            match CacheManager::save(&index, path, extensions) {
+            match CacheManager::save(&index, path, extensions, cache_dir) {
                 Ok(_) => eprintln!(
                     "{} Cached index for future use ({}ms)",
                     "✓".green(),
@@ -1890,7 +1911,7 @@ fn try_load_or_rebuild(
     }
 
     // Try to load from cache
-    match CacheManager::load(path, extensions) {
+    match CacheManager::load(path, extensions, cache_dir) {
         Ok(Some((index, metadata, changed_files))) if changed_files.is_empty() => {
             // Cache hit - no changes
             eprintln!(
@@ -1993,6 +2014,7 @@ fn try_load_or_rebuild(
                 extensions,
                 &metadata,
                 &changed_files,
+                cache_dir,
             ) {
                 Ok(_) => eprintln!("{} Cache updated ({}ms)", "✓".green(), elapsed_ms),
                 Err(e) => eprintln!("{} Warning: Failed to save cache: {}", "⚠".yellow(), e),
@@ -2019,9 +2041,9 @@ fn try_load_or_rebuild(
 
             // Save to cache only if indexing took >= 300ms
             if elapsed_ms >= 300 {
-                match CacheManager::save(&index, path, extensions) {
+                match CacheManager::save(&index, path, extensions, cache_dir) {
                     Ok(_) => eprintln!(
-                        "{} Cache not found (.codemapper), created new cache ({} files, {}ms)",
+                        "{} Cache not found, created new cache ({} files, {}ms)",
                         "✓".green(),
                         index.total_files().to_string().bold(),
                         elapsed_ms
@@ -2090,6 +2112,7 @@ fn cmd_map(
     no_cache: bool,
     rebuild_cache: bool,
     format: OutputFormat,
+    cache_dir: Option<&Path>,
 ) -> Result<()> {
     if level < 1 || level > 3 {
         eprintln!("{} Level must be between 1 and 3", "Error:".red());
@@ -2098,7 +2121,7 @@ fn cmd_map(
 
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
 
-    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
+    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
 
     let formatter = OutputFormatter::new(format);
     let output = formatter.format_map(&index, level);
@@ -2123,6 +2146,7 @@ fn cmd_query(
     exports_only: bool,
     format: OutputFormat,
     limit: Option<usize>,
+    cache_dir: Option<&Path>,
 ) -> Result<()> {
     use fast_search::GrepFilter;
     use models::SymbolType;
@@ -2200,7 +2224,7 @@ fn cmd_query(
                 "→".yellow()
             );
             // Fallback: Use normal mode with cache
-            let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
+            let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
             let mut symbols = if search_all {
                 index.all_symbols()
             } else if fuzzy {
@@ -2290,7 +2314,7 @@ fn cmd_query(
         }
     } else {
         // Normal mode for small codebases with cache
-        let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
+        let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
         let mut symbols = if search_all {
             // Get all symbols when searching for all of a specific type
             index.all_symbols()
@@ -2379,11 +2403,10 @@ fn cmd_deps(
     no_cache: bool,
     rebuild_cache: bool,
     format: OutputFormat,
+    cache_dir: Option<&Path>,
 ) -> Result<()> {
-    use std::path::Path;
-
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
-    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
+    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
 
     // Detect if target is a file path or symbol name
     let target_path = Path::new(&target);
@@ -2539,10 +2562,11 @@ fn cmd_stats(
     no_cache: bool,
     rebuild_cache: bool,
     format: OutputFormat,
+    cache_dir: Option<&Path>,
 ) -> Result<()> {
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
 
-    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
+    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
 
     let formatter = OutputFormatter::new(format);
     let output = formatter.format_stats(&index);
@@ -2797,9 +2821,10 @@ fn cmd_callers(
     rebuild_cache: bool,
     limit: Option<usize>,
     format: OutputFormat,
+    cache_dir: Option<&Path>,
 ) -> Result<()> {
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
-    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
+    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
 
     let original_symbol = symbol;
     let symbol = normalize_qualified_name(&original_symbol);
@@ -2885,9 +2910,10 @@ fn cmd_callees(
     rebuild_cache: bool,
     limit: Option<usize>,
     format: OutputFormat,
+    cache_dir: Option<&Path>,
 ) -> Result<()> {
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
-    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
+    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
 
     let original_symbol = symbol;
     let symbol = normalize_qualified_name(&original_symbol);
@@ -2971,9 +2997,10 @@ fn cmd_tests(
     no_cache: bool,
     rebuild_cache: bool,
     format: OutputFormat,
+    cache_dir: Option<&Path>,
 ) -> Result<()> {
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
-    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
+    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
 
     let original_symbol = symbol;
     let symbol = normalize_qualified_name(&original_symbol);
@@ -3013,9 +3040,10 @@ fn cmd_untested(
     no_cache: bool,
     rebuild_cache: bool,
     format: OutputFormat,
+    cache_dir: Option<&Path>,
 ) -> Result<()> {
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
-    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
+    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
 
     eprintln!("{} Finding untested symbols...", "→".cyan());
 
@@ -3052,9 +3080,10 @@ fn cmd_entrypoints(
     no_cache: bool,
     rebuild_cache: bool,
     format: OutputFormat,
+    cache_dir: Option<&Path>,
 ) -> Result<()> {
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
-    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
+    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
 
     eprintln!(
         "{} Finding entrypoints (uncalled exported symbols)...",
@@ -3112,9 +3141,10 @@ fn cmd_trace(
     no_cache: bool,
     rebuild_cache: bool,
     format: OutputFormat,
+    cache_dir: Option<&Path>,
 ) -> Result<()> {
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
-    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
+    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
 
     let match_type = if fuzzy { " (fuzzy)" } else { "" };
     eprintln!(
@@ -3160,6 +3190,7 @@ fn cmd_test_deps(
     no_cache: bool,
     rebuild_cache: bool,
     format: OutputFormat,
+    cache_dir: Option<&Path>,
 ) -> Result<()> {
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
 
@@ -3173,7 +3204,7 @@ fn cmd_test_deps(
         anyhow::bail!("Test file not found: {}", test_file.display());
     }
 
-    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
+    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
 
     eprintln!(
         "{} Analyzing test file '{}'...",
@@ -3269,9 +3300,10 @@ fn cmd_implements(
     rebuild_cache: bool,
     trait_only: bool,
     format: OutputFormat,
+    cache_dir: Option<&Path>,
 ) -> Result<()> {
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
-    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
+    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
 
     let match_type = if fuzzy { " (fuzzy)" } else { "" };
     eprintln!(
@@ -3316,9 +3348,10 @@ fn cmd_types(
     no_cache: bool,
     rebuild_cache: bool,
     format: OutputFormat,
+    cache_dir: Option<&Path>,
 ) -> Result<()> {
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
-    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
+    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
 
     let match_type = if fuzzy { " (fuzzy)" } else { "" };
     eprintln!(
@@ -3359,9 +3392,10 @@ fn cmd_schema(
     no_cache: bool,
     rebuild_cache: bool,
     format: OutputFormat,
+    cache_dir: Option<&Path>,
 ) -> Result<()> {
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
-    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
+    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
 
     let match_type = if fuzzy { " (fuzzy)" } else { "" };
     eprintln!(
@@ -3409,6 +3443,7 @@ fn cmd_snapshot(
     no_cache: bool,
     rebuild_cache: bool,
     format: OutputFormat,
+    cache_dir: Option<&Path>,
 ) -> Result<()> {
     let abs_path = if path.is_absolute() {
         path.clone()
@@ -3417,7 +3452,7 @@ fn cmd_snapshot(
     };
 
     if list {
-        let snapshots = snapshot::list_snapshots(&abs_path)?;
+        let snapshots = snapshot::list_snapshots(&abs_path, cache_dir)?;
         let formatter = OutputFormatter::new(format);
         let output = formatter.format_snapshot_list(&snapshots);
         println!("{}", output);
@@ -3425,7 +3460,7 @@ fn cmd_snapshot(
     }
 
     if let Some(ref snap_name) = delete {
-        snapshot::delete_snapshot(snap_name, &abs_path)?;
+        snapshot::delete_snapshot(snap_name, &abs_path, cache_dir)?;
         eprintln!("{} Deleted snapshot '{}'", "✓".green(), snap_name.bold());
         return Ok(());
     }
@@ -3436,8 +3471,8 @@ fn cmd_snapshot(
     eprintln!("{} Creating snapshot '{}'...", "→".cyan(), snap_name.bold());
 
     let start = Instant::now();
-    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
-    let saved = snapshot::save_snapshot(&index, &snap_name, &abs_path)?;
+    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
+    let saved = snapshot::save_snapshot(&index, &snap_name, &abs_path, cache_dir)?;
     let elapsed_ms = start.elapsed().as_millis();
 
     eprintln!(
@@ -3462,6 +3497,7 @@ fn cmd_compare(
     no_cache: bool,
     rebuild_cache: bool,
     format: OutputFormat,
+    cache_dir: Option<&Path>,
 ) -> Result<()> {
     let abs_path = if path.is_absolute() {
         path.clone()
@@ -3479,8 +3515,8 @@ fn cmd_compare(
 
     let start = Instant::now();
 
-    let saved_snapshot = snapshot::load_snapshot(&snapshot_name, &abs_path)?;
-    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
+    let saved_snapshot = snapshot::load_snapshot(&snapshot_name, &abs_path, cache_dir)?;
+    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
     let result = snapshot::compare_to_snapshot(&index, &saved_snapshot);
 
     let elapsed_ms = start.elapsed().as_millis();

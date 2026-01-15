@@ -27,3 +27,6 @@ ANNALS/
 
 # Cache directory (created by project)
 .codemapper/
+
+# tests
+tlaplus/

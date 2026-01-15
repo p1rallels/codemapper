@@ -130,6 +130,23 @@ cm map /path/to/project --format human
 cm stats /path/to/project --format ai
 ```
 
+### Cache Location
+
+By default, CodeMapper stores cache in `.codemapper/` in the project root. You can override this:
+
+```bash
+# Using --cache-dir flag
+cm stats /path/to/project --cache-dir /custom/cache/path
+
+# Using environment variable
+export CODEMAPPER_CACHE_DIR=/custom/cache/path
+cm stats /path/to/project
+```
+
+**Priority**: `--cache-dir` flag > `CODEMAPPER_CACHE_DIR` env var > default (`./.codemapper`)
+
+**Use case**: Git worktrees, multi-repo projects, or keeping cache in a central location.
+
 ## 📊 Examples
 
 ### Query a Function
