@@ -95,11 +95,18 @@ impl CacheManager {
     }
 
     /// Get cache file paths (binary and metadata)
-    fn get_cache_paths(root: &Path, extensions: &[&str]) -> Result<(PathBuf, PathBuf)> {
+    fn get_cache_paths(
+        root: &Path,
+        extensions: &[&str],
+        cache_dir: Option<&Path>,
+    ) -> Result<(PathBuf, PathBuf)> {
         let cache_key = Self::compute_cache_key(root, extensions)?;
-        let cache_dir = root.join(CACHE_DIR_NAME).join(CACHE_SUBDIR);
-        let cache_file = cache_dir.join(format!("project-{}.bin", &cache_key[..16]));
-        let meta_file = cache_dir.join(format!("project-{}.meta.json", &cache_key[..16]));
+        let base_dir = cache_dir
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| root.join(CACHE_DIR_NAME));
+        let cache_dir_path = base_dir.join(CACHE_SUBDIR);
+        let cache_file = cache_dir_path.join(format!("project-{}.bin", &cache_key[..16]));
+        let meta_file = cache_dir_path.join(format!("project-{}.meta.json", &cache_key[..16]));
         Ok((cache_file, meta_file))
     }
 
@@ -285,8 +292,13 @@ impl CacheManager {
     }
 
     /// Save CodeIndex to cache with metadata
-    pub fn save(index: &CodeIndex, root: &Path, extensions: &[&str]) -> Result<CacheMetadata> {
-        Self::save_internal(index, root, extensions, None, None)
+    pub fn save(
+        index: &CodeIndex,
+        root: &Path,
+        extensions: &[&str],
+        cache_dir: Option<&Path>,
+    ) -> Result<CacheMetadata> {
+        Self::save_internal(index, root, extensions, None, None, cache_dir)
     }
 
     pub fn save_with_changes(
@@ -295,8 +307,9 @@ impl CacheManager {
         extensions: &[&str],
         previous: &CacheMetadata,
         changes: &[FileChange],
+        cache_dir: Option<&Path>,
     ) -> Result<CacheMetadata> {
-        Self::save_internal(index, root, extensions, Some(previous), Some(changes))
+        Self::save_internal(index, root, extensions, Some(previous), Some(changes), cache_dir)
     }
 
     fn save_internal(
@@ -305,8 +318,9 @@ impl CacheManager {
         extensions: &[&str],
         previous: Option<&CacheMetadata>,
         changes: Option<&[FileChange]>,
+        cache_dir: Option<&Path>,
     ) -> Result<CacheMetadata> {
-        let (cache_file, meta_file) = Self::get_cache_paths(root, extensions)?;
+        let (cache_file, meta_file) = Self::get_cache_paths(root, extensions, cache_dir)?;
 
         if let Some(parent) = cache_file.parent() {
             fs::create_dir_all(parent).context("Failed to create cache directory")?;
@@ -358,7 +372,7 @@ impl CacheManager {
             serde_json::to_string_pretty(&metadata).context("Failed to serialize metadata")?;
         fs::write(&meta_file, meta_data).context("Failed to write metadata file")?;
 
-        Self::ensure_gitignore(root)?;
+        Self::ensure_gitignore(root, cache_dir)?;
 
         Ok(metadata)
     }
@@ -397,8 +411,9 @@ impl CacheManager {
     pub fn load(
         root: &Path,
         extensions: &[&str],
+        cache_dir: Option<&Path>,
     ) -> Result<Option<(CodeIndex, CacheMetadata, Vec<FileChange>)>> {
-        let (cache_file, meta_file) = Self::get_cache_paths(root, extensions)?;
+        let (cache_file, meta_file) = Self::get_cache_paths(root, extensions, cache_dir)?;
 
         // Check if cache files exist
         if !cache_file.exists() || !meta_file.exists() {
@@ -502,8 +517,8 @@ impl CacheManager {
     }
 
     /// Invalidate (delete) cache for a project
-    pub fn invalidate(root: &Path, extensions: &[&str]) -> Result<()> {
-        let (cache_file, meta_file) = Self::get_cache_paths(root, extensions)?;
+    pub fn invalidate(root: &Path, extensions: &[&str], cache_dir: Option<&Path>) -> Result<()> {
+        let (cache_file, meta_file) = Self::get_cache_paths(root, extensions, cache_dir)?;
 
         if cache_file.exists() {
             fs::remove_file(&cache_file).context("Failed to remove cache file")?;
@@ -516,9 +531,15 @@ impl CacheManager {
     }
 
     /// Ensure .gitignore exists in .codemapper directory
-    fn ensure_gitignore(root: &Path) -> Result<()> {
-        let gitignore_path = root.join(CACHE_DIR_NAME).join(".gitignore");
+    fn ensure_gitignore(root: &Path, cache_dir: Option<&Path>) -> Result<()> {
+        let base_dir = cache_dir
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| root.join(CACHE_DIR_NAME));
+        let gitignore_path = base_dir.join(".gitignore");
         if !gitignore_path.exists() {
+            if let Some(parent) = gitignore_path.parent() {
+                fs::create_dir_all(parent).ok();
+            }
             fs::write(&gitignore_path, "*\n").context("Failed to create .gitignore")?;
         }
         Ok(())

@@ -9,7 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-const SNAPSHOTS_DIR: &str = ".codemapper/snapshots";
+const DEFAULT_CACHE_DIR: &str = ".codemapper";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SnapshotSymbol {
@@ -50,8 +50,20 @@ impl Snapshot {
     }
 }
 
-pub fn save_snapshot(index: &CodeIndex, name: &str, root_path: &Path) -> Result<Snapshot> {
-    let snapshots_dir = root_path.join(SNAPSHOTS_DIR);
+fn get_snapshots_dir(root_path: &Path, cache_dir: Option<&Path>) -> PathBuf {
+    cache_dir
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| root_path.join(DEFAULT_CACHE_DIR))
+        .join("snapshots")
+}
+
+pub fn save_snapshot(
+    index: &CodeIndex,
+    name: &str,
+    root_path: &Path,
+    cache_dir: Option<&Path>,
+) -> Result<Snapshot> {
+    let snapshots_dir = get_snapshots_dir(root_path, cache_dir);
     fs::create_dir_all(&snapshots_dir).context("Failed to create snapshots directory")?;
 
     let commit = get_current_commit(root_path);
@@ -76,13 +88,14 @@ pub fn save_snapshot(index: &CodeIndex, name: &str, root_path: &Path) -> Result<
     let json = serde_json::to_string_pretty(&snapshot).context("Failed to serialize snapshot")?;
     fs::write(&snapshot_path, json).context("Failed to write snapshot file")?;
 
-    ensure_gitignore(root_path)?;
+    ensure_gitignore(root_path, cache_dir)?;
 
     Ok(snapshot)
 }
 
-pub fn load_snapshot(name: &str, root_path: &Path) -> Result<Snapshot> {
-    let snapshot_path = root_path.join(SNAPSHOTS_DIR).join(format!("{}.json", name));
+pub fn load_snapshot(name: &str, root_path: &Path, cache_dir: Option<&Path>) -> Result<Snapshot> {
+    let snapshots_dir = get_snapshots_dir(root_path, cache_dir);
+    let snapshot_path = snapshots_dir.join(format!("{}.json", name));
 
     if !snapshot_path.exists() {
         anyhow::bail!(
@@ -99,8 +112,8 @@ pub fn load_snapshot(name: &str, root_path: &Path) -> Result<Snapshot> {
     Ok(snapshot)
 }
 
-pub fn list_snapshots(root_path: &Path) -> Result<Vec<String>> {
-    let snapshots_dir = root_path.join(SNAPSHOTS_DIR);
+pub fn list_snapshots(root_path: &Path, cache_dir: Option<&Path>) -> Result<Vec<String>> {
+    let snapshots_dir = get_snapshots_dir(root_path, cache_dir);
 
     if !snapshots_dir.exists() {
         return Ok(Vec::new());
@@ -123,8 +136,9 @@ pub fn list_snapshots(root_path: &Path) -> Result<Vec<String>> {
     Ok(snapshots)
 }
 
-pub fn delete_snapshot(name: &str, root_path: &Path) -> Result<()> {
-    let snapshot_path = root_path.join(SNAPSHOTS_DIR).join(format!("{}.json", name));
+pub fn delete_snapshot(name: &str, root_path: &Path, cache_dir: Option<&Path>) -> Result<()> {
+    let snapshots_dir = get_snapshots_dir(root_path, cache_dir);
+    let snapshot_path = snapshots_dir.join(format!("{}.json", name));
 
     if !snapshot_path.exists() {
         anyhow::bail!("Snapshot '{}' not found", name);
@@ -254,11 +268,16 @@ fn get_current_commit(path: &Path) -> Option<String> {
         .ok()
 }
 
-fn ensure_gitignore(root_path: &Path) -> Result<()> {
-    let codemapper_dir = root_path.join(".codemapper");
-    let gitignore_path = codemapper_dir.join(".gitignore");
+fn ensure_gitignore(root_path: &Path, cache_dir: Option<&Path>) -> Result<()> {
+    let base_dir = cache_dir
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| root_path.join(DEFAULT_CACHE_DIR));
+    let gitignore_path = base_dir.join(".gitignore");
 
     if !gitignore_path.exists() {
+        if let Some(parent) = gitignore_path.parent() {
+            fs::create_dir_all(parent).ok();
+        }
         fs::write(&gitignore_path, "*\n").context("Failed to create .gitignore")?;
     }
 
@@ -273,14 +292,14 @@ mod tests {
     #[test]
     fn test_list_snapshots_empty() {
         let temp = TempDir::new().expect("Failed to create temp dir");
-        let result = list_snapshots(temp.path()).expect("Failed to list snapshots");
+        let result = list_snapshots(temp.path(), None).expect("Failed to list snapshots");
         assert!(result.is_empty());
     }
 
     #[test]
     fn test_snapshot_not_found() {
         let temp = TempDir::new().expect("Failed to create temp dir");
-        let result = load_snapshot("nonexistent", temp.path());
+        let result = load_snapshot("nonexistent", temp.path(), None);
         assert!(result.is_err());
     }
 }

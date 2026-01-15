@@ -2,7 +2,7 @@ use crate::callgraph;
 use crate::models::SymbolType;
 use crate::output::{OutputFormat, OutputFormatter};
 use anyhow::Result;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub fn cmd_impact(
     symbol: String,
@@ -15,9 +15,10 @@ pub fn cmd_impact(
     no_cache: bool,
     rebuild_cache: bool,
     format: OutputFormat,
+    cache_dir: Option<&Path>,
 ) -> Result<()> {
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
-    let index = crate::try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache)?;
+    let index = crate::try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
 
     let original_symbol = symbol;
     let symbol = normalize_qualified_name(&original_symbol);
