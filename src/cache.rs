@@ -1,3 +1,4 @@
+use crate::ignore;
 use crate::index::CodeIndex;
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -135,16 +136,6 @@ impl CacheManager {
     ) -> Result<HashMap<PathBuf, FileMetadata>> {
         use walkdir::WalkDir;
 
-        const IGNORED_DIRS: &[&str] = &[
-            ".codemapper",
-            ".git",
-            "node_modules",
-            "__pycache__",
-            "target",
-            "dist",
-            "build",
-        ];
-
         let mut metadata_map = HashMap::new();
 
         for entry in WalkDir::new(root)
@@ -153,7 +144,7 @@ impl CacheManager {
             .filter_entry(|e| {
                 if e.file_type().is_dir() {
                     let dir_name = e.file_name().to_string_lossy();
-                    !IGNORED_DIRS.contains(&dir_name.as_ref())
+                    !ignore::is_ignored_dir(&dir_name)
                 } else {
                     true
                 }
@@ -243,16 +234,6 @@ impl CacheManager {
     ) -> Result<HashMap<PathBuf, (u64, SystemTime)>> {
         use walkdir::WalkDir;
 
-        const IGNORED_DIRS: &[&str] = &[
-            ".codemapper",
-            ".git",
-            "node_modules",
-            "__pycache__",
-            "target",
-            "dist",
-            "build",
-        ];
-
         let mut stats = HashMap::new();
 
         for entry in WalkDir::new(root)
@@ -261,7 +242,7 @@ impl CacheManager {
             .filter_entry(|e| {
                 if e.file_type().is_dir() {
                     let dir_name = e.file_name().to_string_lossy();
-                    !IGNORED_DIRS.contains(&dir_name.as_ref())
+                    !ignore::is_ignored_dir(&dir_name)
                 } else {
                     true
                 }
@@ -309,7 +290,14 @@ impl CacheManager {
         changes: &[FileChange],
         cache_dir: Option<&Path>,
     ) -> Result<CacheMetadata> {
-        Self::save_internal(index, root, extensions, Some(previous), Some(changes), cache_dir)
+        Self::save_internal(
+            index,
+            root,
+            extensions,
+            Some(previous),
+            Some(changes),
+            cache_dir,
+        )
     }
 
     fn save_internal(

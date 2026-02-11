@@ -10,6 +10,7 @@ pub enum Language {
     Java,
     Go,
     C,
+    Swift,
     Markdown,
     Unknown,
 }
@@ -24,6 +25,7 @@ impl Language {
             "java" => Language::Java,
             "go" => Language::Go,
             "c" | "h" => Language::C,
+            "swift" => Language::Swift,
             "md" => Language::Markdown,
             _ => Language::Unknown,
         }
@@ -38,6 +40,7 @@ impl Language {
             Language::Java => "java",
             Language::Go => "go",
             Language::C => "c",
+            Language::Swift => "swift",
             Language::Markdown => "markdown",
             Language::Unknown => "unknown",
         }

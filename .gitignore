@@ -2,7 +2,7 @@
 /target/
 **/*.rs.bk
 *.pdb
-
+vendor/
 # Cargo
 .cargo/
 

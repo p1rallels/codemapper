@@ -117,8 +117,108 @@ fn parse_signature(signature: &str, language: Language) -> (Vec<TypeInfo>, Optio
         Language::Go => parse_go_signature(signature),
         Language::Java => parse_java_signature(signature),
         Language::C => parse_c_signature(signature),
+        Language::Swift => parse_swift_signature(signature),
         _ => (Vec::new(), None),
     }
+}
+
+fn parse_swift_signature(signature: &str) -> (Vec<TypeInfo>, Option<TypeInfo>) {
+    let mut params = Vec::new();
+    let mut return_type = None;
+
+    let sig = signature.trim();
+    let open = match sig.find('(') {
+        Some(i) => i,
+        None => return (params, return_type),
+    };
+
+    let mut depth: i32 = 0;
+    let mut close: Option<usize> = None;
+
+    for (i, ch) in sig.char_indices().skip(open) {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    close = Some(i);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let close = match close {
+        Some(i) => i,
+        None => return (params, return_type),
+    };
+
+    let param_str = sig.get(open + 1..close).unwrap_or("");
+    params = parse_swift_params(param_str);
+
+    let after = sig.get(close + 1..).unwrap_or("").trim_start();
+    if let Some(arrow) = after.find("->") {
+        let ret_part = after.get(arrow + 2..).unwrap_or("");
+        let ret = ret_part.trim().trim_end_matches('{').trim().to_string();
+
+        if !ret.is_empty() {
+            return_type = Some(TypeInfo {
+                name: String::new(),
+                kind: TypeKind::Return,
+                type_name: clean_type_name(&ret),
+                defined_in: None,
+            });
+        }
+    }
+
+    (params, return_type)
+}
+
+fn parse_swift_params(param_str: &str) -> Vec<TypeInfo> {
+    let mut params = Vec::new();
+
+    // split by commas, respecting nested parens/brackets/angles
+    let parts = split_by_comma_respecting_brackets(param_str);
+
+    for part in parts {
+        let p = part.trim();
+        if p.is_empty() {
+            continue;
+        }
+
+        // examples:
+        //   _ value: String
+        //   runID: String?
+        //   token: String? = nil
+        //   apiClient: TakopiAPIClient
+        let p_no_default = p.split('=').next().unwrap_or(p).trim();
+
+        if let Some(colon) = p_no_default.rfind(':') {
+            let name_part = &p_no_default[..colon];
+            let type_part = p_no_default[colon + 1..].trim();
+
+            let name = name_part
+                .split_whitespace()
+                .last()
+                .unwrap_or("")
+                .trim()
+                .to_string();
+
+            if name.is_empty() || type_part.is_empty() {
+                continue;
+            }
+
+            params.push(TypeInfo {
+                name,
+                kind: TypeKind::Parameter,
+                type_name: clean_type_name(type_part),
+                defined_in: None,
+            });
+        }
+    }
+
+    params
 }
 
 /// Parse Rust signature: `fn name(x: Type, y: Type) -> RetType`
@@ -811,6 +911,21 @@ mod tests {
             ret.as_ref().map(|r| r.type_name.as_str()),
             Some("Promise<string>")
         );
+    }
+
+    #[test]
+    fn test_parse_swift_signature() {
+        let sig = "(token: String? = nil, runID: String?) -> Bool";
+        let (params, ret) = parse_swift_signature(sig);
+
+        assert_eq!(params.len(), 2);
+        assert_eq!(params[0].name, "token");
+        assert_eq!(params[0].type_name, "String?");
+        assert_eq!(params[1].name, "runID");
+        assert_eq!(params[1].type_name, "String?");
+
+        assert!(ret.is_some());
+        assert_eq!(ret.as_ref().map(|r| r.type_name.as_str()), Some("Bool"));
     }
 
     #[test]

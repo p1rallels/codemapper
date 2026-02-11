@@ -2,8 +2,8 @@ use crate::index::CodeIndex;
 use crate::models::{FileInfo, Language};
 use crate::parser::{
     c::CParser, go::GoParser, java::JavaParser, javascript::JavaScriptParser,
-    markdown::MarkdownParser, python::PythonParser, rust::RustParser, typescript::TypeScriptParser,
-    Parser,
+    markdown::MarkdownParser, python::PythonParser, rust::RustParser, swift::SwiftParser,
+    typescript::TypeScriptParser, Parser,
 };
 use anyhow::{Context, Result};
 use indicatif::ProgressBar;
@@ -11,17 +11,10 @@ use rayon::prelude::*;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use walkdir::WalkDir;
 
-const IGNORED_DIRS: &[&str] = &[
-    ".codemapper",
-    ".git",
-    "node_modules",
-    "__pycache__",
-    "target",
-    "dist",
-    "build",
-];
+use ::ignore::WalkBuilder;
+
+use crate::ignore;
 
 pub fn detect_language(path: &Path) -> Language {
     path.extension()
@@ -109,6 +102,14 @@ pub fn index_file(
                 }
             }
         }
+        Language::Swift => {
+            if let Ok(parser) = SwiftParser::new() {
+                if let Ok(parsed) = parser.parse(content, path) {
+                    file_info.symbols = parsed.symbols;
+                    file_info.dependencies = parsed.dependencies;
+                }
+            }
+        }
         Language::Markdown => {
             if let Ok(parser) = MarkdownParser::new() {
                 if let Ok(parsed) = parser.parse(content, path) {
@@ -140,18 +141,24 @@ pub fn index_directory_with_progress(
         anyhow::bail!("Path is not a directory: {}", path.display());
     }
 
-    let entries: Vec<PathBuf> = WalkDir::new(path)
-        .into_iter()
+    let walker = WalkBuilder::new(path)
+        .hidden(false)
+        .git_ignore(true)
+        .git_global(false)
+        .git_exclude(false)
         .filter_entry(|e| {
-            if e.file_type().is_dir() {
-                let dir_name = e.file_name().to_string_lossy();
-                !IGNORED_DIRS.contains(&dir_name.as_ref())
+            if e.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
+                let name = e.file_name().to_string_lossy();
+                !ignore::is_ignored_dir(&name)
             } else {
                 true
             }
         })
+        .build();
+
+    let entries: Vec<PathBuf> = walker
         .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file())
+        .filter(|e| e.file_type().map(|ft| ft.is_file()).unwrap_or(false))
         .filter(|e| {
             if extensions.is_empty() {
                 true
@@ -238,13 +245,16 @@ mod tests {
         assert_eq!(detect_language(Path::new("test.js")), Language::JavaScript);
         assert_eq!(detect_language(Path::new("test.ts")), Language::TypeScript);
         assert_eq!(detect_language(Path::new("test.rs")), Language::Rust);
+        assert_eq!(detect_language(Path::new("test.swift")), Language::Swift);
         assert_eq!(detect_language(Path::new("test.txt")), Language::Unknown);
     }
 
     #[test]
     fn test_ignored_dirs() {
-        assert!(IGNORED_DIRS.contains(&".git"));
-        assert!(IGNORED_DIRS.contains(&"node_modules"));
-        assert!(IGNORED_DIRS.contains(&"__pycache__"));
+        assert!(ignore::IGNORED_DIRS.contains(&".git"));
+        assert!(ignore::IGNORED_DIRS.contains(&"node_modules"));
+        assert!(ignore::IGNORED_DIRS.contains(&"__pycache__"));
+        assert!(ignore::IGNORED_DIRS.contains(&".venv"));
+        assert!(ignore::IGNORED_DIRS.contains(&".build"));
     }
 }
