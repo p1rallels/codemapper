@@ -4,6 +4,7 @@ mod callgraph;
 mod diff;
 mod fast_search;
 mod git;
+mod ignore;
 mod impact;
 mod implements;
 mod index;
@@ -169,6 +170,7 @@ LANGUAGES SUPPORTED:
   ✓ Java         → Classes, interfaces, methods, enums, javadoc
   ✓ Go           → Functions, structs, methods, interfaces
   ✓ C            → Functions, structs, includes
+  ✓ Swift        → Functions, types (struct/class/enum/extension), methods, imports
   ✓ Markdown     → Headings, code blocks
 
 GIT REQUIREMENTS:
@@ -191,7 +193,7 @@ COMMON FLAGS
 --context full       → Include docstrings and metadata
 --no-cache           → Skip cache, always reindex (troubleshooting)
 --rebuild-cache      → Force cache rebuild
---extensions py,rs   → Comma-separated file types to include
+--extensions py,rs   → Comma-separated file types to include (swift is included by default)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -199,7 +201,7 @@ TROUBLESHOOTING
 
 NO SYMBOLS FOUND?
   ✓ Fuzzy matching by default (matches more)
-  ✓ Check --extensions py,js,ts (default: py,js,ts,jsx,tsx,rs,java,go,c,h,md)
+  ✓ Check --extensions py,js,ts (default: py,js,ts,jsx,tsx,rs,java,go,c,h,swift,md) — swift is INCLUDED by default
   ✓ Verify file encoding is UTF-8
   ✓ Run: cm stats . (to see what's indexed)
 
@@ -313,7 +315,7 @@ TYPICAL WORKFLOW:
         path: PathBuf,
 
         /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,md')
-        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,md")]
+        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,md")]
         extensions: String,
 
         /// Disable cache (always reindex)
@@ -362,7 +364,7 @@ TYPICAL WORKFLOW:
         level: u8,
 
         /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,md')
-        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,md")]
+        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,md")]
         extensions: String,
 
         /// Disable cache (always reindex)
@@ -458,7 +460,7 @@ WHEN TO USE:
         fast: bool,
 
         /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,md')
-        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,md")]
+        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,md")]
         extensions: String,
 
         /// Disable cache (always reindex)
@@ -594,7 +596,7 @@ WHEN TO USE:
         direction: String,
 
         /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,md')
-        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,md")]
+        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,md")]
         extensions: String,
 
         /// Disable cache (always reindex)
@@ -637,7 +639,7 @@ NOTE: For normal usage, use 'cm stats' or 'cm map' instead")]
         path: PathBuf,
 
         /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,md')
-        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,md")]
+        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,md")]
         extensions: String,
     },
 
@@ -686,7 +688,7 @@ WHEN TO USE:
         path: PathBuf,
 
         /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,md')
-        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,md")]
+        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,md")]
         extensions: String,
 
         /// Show anonymous/lambda functions (default: filtered out)
@@ -733,7 +735,7 @@ TYPICAL WORKFLOW:
         fuzzy: bool,
 
         /// Comma-separated file extensions to include
-        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,md")]
+        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,md")]
         extensions: String,
 
         /// Disable cache (always reindex)
@@ -786,7 +788,7 @@ TYPICAL WORKFLOW:
         fuzzy: bool,
 
         /// Comma-separated file extensions to include
-        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,md")]
+        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,md")]
         extensions: String,
 
         /// Disable cache (always reindex)
@@ -842,7 +844,7 @@ TYPICAL WORKFLOW:
         fuzzy: bool,
 
         /// Comma-separated file extensions to include
-        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,md")]
+        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,md")]
         extensions: String,
 
         /// Disable cache (always reindex)
@@ -888,7 +890,7 @@ TYPICAL WORKFLOW:
         path: PathBuf,
 
         /// Comma-separated file extensions to include
-        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,md")]
+        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,md")]
         extensions: String,
 
         /// Disable cache (always reindex)
@@ -947,7 +949,7 @@ WHEN TO USE:
         path: PathBuf,
 
         /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,md')
-        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,md")]
+        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,md")]
         extensions: String,
 
         /// Show only breaking changes (deleted symbols, signature changes)
@@ -1000,7 +1002,7 @@ WHEN TO USE:
         path: PathBuf,
 
         /// Comma-separated file extensions to include
-        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,md")]
+        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,md")]
         extensions: String,
 
         /// Disable cache (always reindex)
@@ -1063,7 +1065,7 @@ WHEN TO USE:
         fuzzy: bool,
 
         /// Comma-separated file extensions to include
-        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,md")]
+        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,md")]
         extensions: String,
 
         /// Disable cache (always reindex)
@@ -1116,7 +1118,7 @@ TIP: Run this after changing a function signature"
         all: bool,
 
         /// Comma-separated file extensions to include
-        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,md")]
+        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,md")]
         extensions: String,
 
         /// Disable cache (always reindex)
@@ -1161,7 +1163,7 @@ TYPICAL WORKFLOW:
         path: PathBuf,
 
         /// Comma-separated file extensions to include
-        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,md")]
+        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,md")]
         extensions: String,
 
         /// Disable cache (always reindex)
@@ -1287,7 +1289,7 @@ WHEN TO USE:
         fuzzy: bool,
 
         /// Comma-separated file extensions to include
-        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,md")]
+        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,md")]
         extensions: String,
 
         /// Disable cache (always reindex)
@@ -1354,7 +1356,7 @@ WHEN TO USE:
         fuzzy: bool,
 
         /// Comma-separated file extensions to include
-        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,md")]
+        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,md")]
         extensions: String,
 
         /// Disable cache (always reindex)
@@ -1411,7 +1413,7 @@ WHEN TO USE:
         fuzzy: bool,
 
         /// Comma-separated file extensions to include
-        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,md")]
+        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,md")]
         extensions: String,
 
         /// Disable cache (always reindex)
@@ -1469,7 +1471,7 @@ TYPICAL WORKFLOW:
         delete: Option<String>,
 
         /// Comma-separated file extensions to include
-        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,md")]
+        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,md")]
         extensions: String,
 
         /// Disable cache (always reindex)
@@ -1517,7 +1519,7 @@ TYPICAL WORKFLOW:
         path: PathBuf,
 
         /// Comma-separated file extensions to include
-        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,md")]
+        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,md")]
         extensions: String,
 
         /// Disable cache (always reindex)
@@ -1556,7 +1558,15 @@ fn main() -> Result<()> {
             no_cache,
             rebuild_cache,
         } => {
-            cmd_map(path, level, extensions, no_cache, rebuild_cache, format, cache_dir)?;
+            cmd_map(
+                path,
+                level,
+                extensions,
+                no_cache,
+                rebuild_cache,
+                format,
+                cache_dir,
+            )?;
         }
         Commands::Query {
             symbol,
@@ -1767,7 +1777,15 @@ fn main() -> Result<()> {
             no_cache,
             rebuild_cache,
         } => {
-            cmd_test_deps(test_file, path, extensions, no_cache, rebuild_cache, format, cache_dir)?;
+            cmd_test_deps(
+                test_file,
+                path,
+                extensions,
+                no_cache,
+                rebuild_cache,
+                format,
+                cache_dir,
+            )?;
         }
         Commands::Blame { symbol, file } => {
             cmd_blame(symbol, file, format)?;
@@ -1862,7 +1880,15 @@ fn main() -> Result<()> {
             no_cache,
             rebuild_cache,
         } => {
-            cmd_compare(snapshot, path, extensions, no_cache, rebuild_cache, format, cache_dir)?;
+            cmd_compare(
+                snapshot,
+                path,
+                extensions,
+                no_cache,
+                rebuild_cache,
+                format,
+                cache_dir,
+            )?;
         }
     }
 
@@ -2364,12 +2390,24 @@ fn cmd_query(
 
 /// Count indexable files in directory for auto-detection logic
 fn count_indexable_files(path: &PathBuf, extensions: &[&str]) -> Result<usize> {
-    use ignore::WalkBuilder;
+    use ::ignore::WalkBuilder;
+
+    use crate::ignore;
 
     let mut count = 0;
     let walker = WalkBuilder::new(path)
         .hidden(false)
         .git_ignore(true)
+        .git_global(false)
+        .git_exclude(false)
+        .filter_entry(|e| {
+            if e.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
+                let name = e.file_name().to_string_lossy();
+                !ignore::is_ignored_dir(&name)
+            } else {
+                true
+            }
+        })
         .build();
 
     for entry in walker.filter_map(|e| e.ok()) {

@@ -296,6 +296,7 @@ fn extract_calls_from_source(
         Language::Go => extract_go_calls(content),
         Language::Java => extract_java_calls(content),
         Language::C => extract_c_calls(content),
+        Language::Swift => extract_swift_calls(content),
         _ => Ok(Vec::new()),
     }
 }
@@ -753,6 +754,70 @@ fn extract_c_calls(content: &str) -> Result<Vec<(String, usize, String)>> {
     Ok(calls)
 }
 
+fn extract_swift_calls(content: &str) -> Result<Vec<(String, usize, String)>> {
+    let mut parser = Parser::new();
+    let language = tree_sitter_swift::LANGUAGE.into();
+    parser
+        .set_language(&language)
+        .context("Failed to set Swift language")?;
+
+    let tree = match parser.parse(content, None) {
+        Some(t) => t,
+        None => return Ok(Vec::new()),
+    };
+
+    let query = Query::new(
+        &language,
+        r#"
+        (call_expression
+          (simple_identifier) @call.name)
+
+        (call_expression
+          (navigation_expression
+            suffix: (navigation_suffix suffix: (simple_identifier) @call.method)))
+        "#,
+    )
+    .context("Failed to create Swift call query")?;
+
+    let mut cursor = QueryCursor::new();
+    let mut matches = cursor.matches(&query, tree.root_node(), content.as_bytes());
+    let mut calls = Vec::new();
+    let mut seen = HashSet::new();
+
+    while let Some(match_) = matches.next() {
+        for capture in match_.captures {
+            let capture_name = query
+                .capture_names()
+                .get(capture.index as usize)
+                .map(|s| s.as_ref());
+
+            if !matches!(capture_name, Some("call.name") | Some("call.method")) {
+                continue;
+            }
+
+            let name = capture
+                .node
+                .utf8_text(content.as_bytes())
+                .unwrap_or_default()
+                .to_string();
+            if name.is_empty() {
+                continue;
+            }
+
+            let line = capture.node.start_position().row + 1;
+            let key = (name.clone(), line);
+            if !seen.insert(key) {
+                continue;
+            }
+
+            let context = content.lines().nth(line - 1).unwrap_or("").to_string();
+            calls.push((name, line, context));
+        }
+    }
+
+    Ok(calls)
+}
+
 pub fn is_test_file(path: &Path, language: Language) -> bool {
     let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     let path_str = path.to_string_lossy();
@@ -789,6 +854,12 @@ pub fn is_test_file(path: &Path, language: Language) -> bool {
                 || file_name.starts_with("Test")
                 || path_str.contains("/test/")
                 || path_str.contains("\\test\\")
+        }
+        Language::Swift => {
+            file_name.ends_with("Tests.swift")
+                || file_name.ends_with("Test.swift")
+                || path_str.contains("/Tests/")
+                || path_str.contains("\\Tests\\")
         }
         _ => false,
     }
@@ -909,6 +980,10 @@ pub fn is_test_symbol(symbol: &Symbol, content: &str, language: Language) -> boo
                 }
             }
             name.starts_with("test")
+        }
+        Language::Swift => {
+            // swift/xctest usually uses funcs starting with test* inside *Tests classes
+            name.starts_with("test") || name.starts_with("Test")
         }
         _ => false,
     }
@@ -1455,6 +1530,25 @@ def main():
         assert!(names.contains(&"foo"));
         assert!(names.contains(&"bar"));
         assert!(names.contains(&"method"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_extract_swift_calls() -> Result<()> {
+        let source = r#"
+final class Foo {
+    func bar() {
+        connect()
+        self.connect()
+        client.connect(runID: nil)
+    }
+}
+"#;
+
+        let calls = extract_swift_calls(source)?;
+        let names: Vec<&str> = calls.iter().map(|(n, _, _)| n.as_str()).collect();
+        assert_eq!(names.len(), 3);
+        assert!(names.iter().all(|n| *n == "connect"));
         Ok(())
     }
 }

@@ -78,8 +78,142 @@ fn extract_fields(content: &str, symbol: &Symbol, language: Language) -> Result<
         Language::TypeScript | Language::JavaScript => extract_typescript_fields(content, symbol),
         Language::Java => extract_java_fields(content, symbol),
         Language::Go => extract_go_fields(content, symbol),
+        Language::Swift => extract_swift_fields(content, symbol),
         _ => Ok(Vec::new()),
     }
+}
+
+fn extract_swift_fields(content: &str, symbol: &Symbol) -> Result<Vec<FieldInfo>> {
+    let mut parser = Parser::new();
+    let language = tree_sitter_swift::LANGUAGE.into();
+    parser
+        .set_language(&language)
+        .context("Failed to set Swift language")?;
+
+    let tree = parser
+        .parse(content, None)
+        .context("Failed to parse Swift file")?;
+
+    let root = tree.root_node();
+    let mut fields = Vec::new();
+
+    // struct/class fields: stored properties in body.
+    let query = Query::new(
+        &language,
+        r#"
+        (class_declaration
+          name: (type_identifier) @type.name
+          body: (_
+            (property_declaration
+              name: (pattern bound_identifier: (simple_identifier) @field.name)
+              (type_annotation (user_type (type_identifier) @field.type))
+              ) @field.def))
+
+        (class_declaration
+          name: (type_identifier) @type.name
+          body: (_
+            (property_declaration
+              name: (pattern bound_identifier: (simple_identifier) @field.name)
+              (type_annotation (optional_type wrapped: (user_type (type_identifier) @field.type)))
+              ) @field.def))
+
+        (class_declaration
+          name: (type_identifier) @type.name
+          body: (_
+            (property_declaration
+              name: (pattern bound_identifier: (simple_identifier) @field.name)
+              (type_annotation (user_type (type_identifier) @field.type))
+              value: (_) @field.value
+              ) @field.def))
+
+        (protocol_declaration
+          name: (type_identifier) @proto.name
+          body: (_
+            (protocol_property_declaration
+              name: (pattern bound_identifier: (simple_identifier) @field.name)
+              (type_annotation (user_type (type_identifier) @field.type))
+              ) @field.def))
+
+        (protocol_declaration
+          name: (type_identifier) @proto.name
+          body: (_
+            (protocol_property_declaration
+              name: (pattern bound_identifier: (simple_identifier) @field.name)
+              (type_annotation (optional_type wrapped: (user_type (type_identifier) @field.type)))
+              ) @field.def))
+        "#,
+    )
+    .context("Failed to create Swift field query")?;
+
+    let mut cursor = QueryCursor::new();
+    let mut matches = cursor.matches(&query, root, content.as_bytes());
+
+    while let Some(match_) = matches.next() {
+        let mut type_name: Option<String> = None;
+        let mut field_name: Option<String> = None;
+        let mut field_type: Option<String> = None;
+        let mut field_value: Option<String> = None;
+
+        for cap in match_.captures {
+            let cap_name = query
+                .capture_names()
+                .get(cap.index as usize)
+                .map(|s| s.as_ref());
+
+            match cap_name {
+                Some("type.name") | Some("proto.name") => {
+                    type_name = cap
+                        .node
+                        .utf8_text(content.as_bytes())
+                        .ok()
+                        .map(|s| s.to_string());
+                }
+                Some("field.name") => {
+                    field_name = cap
+                        .node
+                        .utf8_text(content.as_bytes())
+                        .ok()
+                        .map(|s| s.to_string());
+                }
+                Some("field.type") => {
+                    field_type = cap
+                        .node
+                        .utf8_text(content.as_bytes())
+                        .ok()
+                        .map(|s| s.to_string());
+                }
+                Some("field.value") => {
+                    field_value = cap
+                        .node
+                        .utf8_text(content.as_bytes())
+                        .ok()
+                        .map(|s| s.to_string());
+                }
+                _ => {}
+            }
+        }
+
+        let Some(container) = type_name else { continue };
+        if container != symbol.name {
+            continue;
+        }
+
+        let Some(name) = field_name else { continue };
+        let type_name = field_type.unwrap_or_else(|| "Any".to_string());
+        let default_value = field_value;
+
+        let is_optional = type_name.trim().ends_with('?');
+
+        fields.push(FieldInfo {
+            name,
+            type_name,
+            default_value,
+            is_optional,
+            docstring: None,
+        });
+    }
+
+    Ok(fields)
 }
 
 fn extract_rust_fields(content: &str, symbol: &Symbol) -> Result<Vec<FieldInfo>> {

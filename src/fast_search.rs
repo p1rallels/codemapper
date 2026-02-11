@@ -1,10 +1,11 @@
+use ::ignore::WalkBuilder;
 use anyhow::{Context, Result};
 use grep::regex::RegexMatcher;
 use grep::searcher::{BinaryDetection, Searcher, SearcherBuilder, Sink, SinkMatch};
-use ignore::WalkBuilder;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::ignore;
 use crate::indexer::{detect_language, index_file};
 use crate::models::Symbol;
 
@@ -81,6 +82,14 @@ impl GrepFilter {
             .git_ignore(true)
             .git_global(false)
             .git_exclude(false)
+            .filter_entry(|e| {
+                if e.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
+                    let name = e.file_name().to_string_lossy();
+                    !ignore::is_ignored_dir(&name)
+                } else {
+                    true
+                }
+            })
             .build();
 
         for entry in walker {
