@@ -161,6 +161,7 @@ SEARCH MODES:
   Exact   → cm query MyClass           (case-sensitive, precise)
   Fuzzy   → cm query myclass          (DEFAULT: case-insensitive, flexible)
   Exact   → cm query myclass --exact  (strict matching)
+  Multi   → cm query 'foo|bar|baz'   (OR search, matches any term)
 
 LANGUAGES SUPPORTED:
   ✓ Python       → Functions, classes, methods, imports
@@ -388,7 +389,8 @@ TYPICAL WORKFLOW:
 SEARCH MODES:
   Exact   → cm query MyClass              (case-sensitive, precise)
   Fuzzy   → cm query myclass              (DEFAULT: case-insensitive, flexible)
-Exact   → cm query myclass --exact      (strict matching)
+  Exact   → cm query myclass --exact      (strict matching)
+  Multi   → cm query 'foo|bar|baz'        (OR search, matches any term)
 
 CONTEXT OPTIONS:
   --context minimal → Signatures only (default, fast)
@@ -416,6 +418,10 @@ TIP: Start with fuzzy search, it's more forgiving"
   cm query MyClass /large/repo --fast        # Explicit fast mode
   cm query auth /monorepo                    # Auto-enabled fast mode for 1000+ files
 
+  # OR search (pipe-separated)
+  cm query 'parse|index|cache'               # Match any of the terms
+  cm query 'Foo|Bar' --exact                 # Exact match on multiple names
+
   # Output formats
   cm query Parser --format human             # Pretty tables
   cm query CodeIndex --format ai             # Token-efficient for LLMs
@@ -432,7 +438,7 @@ WHEN TO USE:
   ✓ \"What methods does the User class have?\"
   ✓ \"Show me the validate_input implementation\"")]
     Query {
-        /// Symbol name to search for (function, class, or method name)
+        /// Symbol name to search for (supports 'foo|bar|baz' OR syntax)
         symbol: String,
 
         /// Directory path to search in
@@ -2179,16 +2185,31 @@ fn cmd_query(
 
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
 
-    // Check if symbol is a plural form of a symbol type (e.g., "functions", "classes")
-    let (symbol, symbol_type_filter) = if symbol_type_filter.is_none() {
-        if let Some(plural_type) = SymbolType::from_plural(&symbol) {
-            // Convert plural form to empty symbol + type filter
-            (String::new(), Some(plural_type.as_str().to_string()))
+    // Check if symbol terms are plural forms of symbol types (e.g., "functions", "classes")
+    // Pipe-aware: split on |, check each term independently, partition into type filters vs search terms
+    let (symbol, symbol_type_filter, extra_type_filters) = if symbol_type_filter.is_none() {
+        let terms: Vec<&str> = symbol.split('|').map(|t| t.trim()).filter(|t| !t.is_empty()).collect();
+        let mut plural_types: Vec<SymbolType> = Vec::new();
+        let mut search_terms: Vec<&str> = Vec::new();
+        for term in &terms {
+            if let Some(plural_type) = SymbolType::from_plural(term) {
+                plural_types.push(plural_type);
+            } else {
+                search_terms.push(term);
+            }
+        }
+        if plural_types.is_empty() {
+            (symbol, symbol_type_filter, Vec::new())
+        } else if search_terms.is_empty() {
+            // All terms are plurals — use first as primary type filter, rest as extras
+            let primary = plural_types.remove(0);
+            (String::new(), Some(primary.as_str().to_string()), plural_types)
         } else {
-            (symbol, symbol_type_filter)
+            // Mix of plurals and search terms
+            (search_terms.join("|"), symbol_type_filter, plural_types)
         }
     } else {
-        (symbol, symbol_type_filter)
+        (symbol, symbol_type_filter, Vec::new())
     };
 
     // Parse symbol type filter if provided
@@ -2215,7 +2236,7 @@ fn cmd_query(
     }
 
     // Check if user wants all symbols of a specific type (empty symbol name with type filter)
-    let search_all = symbol.trim().is_empty() && type_filter.is_some();
+    let search_all = symbol.trim().is_empty() && (type_filter.is_some() || !extra_type_filters.is_empty());
 
     // Count files for auto-detection
     let file_count = count_indexable_files(&path, &ext_list)?;
@@ -2260,8 +2281,17 @@ fn cmd_query(
             };
 
             // Apply type filter if specified
-            if let Some(filter_type) = type_filter {
-                symbols.retain(|s| s.symbol_type == filter_type);
+            if let Some(ref filter_type) = type_filter {
+                symbols.retain(|s| s.symbol_type == *filter_type);
+            }
+
+            // Merge in symbols matching extra type filters (from pipe plural syntax)
+            if !extra_type_filters.is_empty() {
+                let extra: Vec<&Symbol> = index.all_symbols().into_iter()
+                    .filter(|s| extra_type_filters.contains(&s.symbol_type))
+                    .collect();
+                symbols.extend(extra);
+                dedup_symbols_by_ref(&mut symbols);
             }
 
             // Filter anonymous if requested
@@ -2303,8 +2333,20 @@ fn cmd_query(
             let mut owned_symbols = filter.validate(candidates, &symbol, fuzzy)?;
 
             // Apply type filter if specified
-            if let Some(filter_type) = type_filter {
-                owned_symbols.retain(|s| s.symbol_type == filter_type);
+            if let Some(ref filter_type) = type_filter {
+                owned_symbols.retain(|s| s.symbol_type == *filter_type);
+            }
+
+            // Merge in symbols matching extra type filters (from pipe plural syntax)
+            // Fast mode can't do this without a full index, so fall back to index for extras
+            if !extra_type_filters.is_empty() {
+                let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
+                let extra: Vec<Symbol> = index.all_symbols().into_iter()
+                    .filter(|s| extra_type_filters.contains(&s.symbol_type))
+                    .cloned()
+                    .collect();
+                owned_symbols.extend(extra);
+                dedup_symbols_owned(&mut owned_symbols);
             }
 
             // Filter anonymous if requested
@@ -2351,8 +2393,17 @@ fn cmd_query(
         };
 
         // Apply type filter if specified
-        if let Some(filter_type) = type_filter {
-            symbols.retain(|s| s.symbol_type == filter_type);
+        if let Some(ref filter_type) = type_filter {
+            symbols.retain(|s| s.symbol_type == *filter_type);
+        }
+
+        // Merge in symbols matching extra type filters (from pipe plural syntax)
+        if !extra_type_filters.is_empty() {
+            let extra: Vec<&Symbol> = index.all_symbols().into_iter()
+                .filter(|s| extra_type_filters.contains(&s.symbol_type))
+                .collect();
+            symbols.extend(extra);
+            dedup_symbols_by_ref(&mut symbols);
         }
 
         // Filter anonymous if requested
@@ -2386,6 +2437,22 @@ fn cmd_query(
     }
 
     Ok(())
+}
+
+fn dedup_symbols_by_ref<'a>(symbols: &mut Vec<&'a Symbol>) {
+    let mut seen = std::collections::HashSet::new();
+    symbols.retain(|s| {
+        let key = (&s.name, s.line_start, &s.file_path);
+        seen.insert((key.0.clone(), key.1, key.2.clone()))
+    });
+}
+
+fn dedup_symbols_owned(symbols: &mut Vec<Symbol>) {
+    let mut seen = std::collections::HashSet::new();
+    symbols.retain(|s| {
+        let key = (s.name.clone(), s.line_start, s.file_path.clone());
+        seen.insert(key)
+    });
 }
 
 /// Count indexable files in directory for auto-detection logic

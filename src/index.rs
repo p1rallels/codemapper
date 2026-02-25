@@ -138,31 +138,49 @@ impl CodeIndex {
     }
 
     pub fn query_symbol(&self, name: &str) -> Vec<&Symbol> {
-        self.symbol_index
-            .get(name)
-            .map(|indices| indices.iter().map(|&idx| &self.symbols[idx]).collect())
-            .unwrap_or_default()
+        let terms: Vec<&str> = name.split('|').map(|t| t.trim()).filter(|t| !t.is_empty()).collect();
+        if terms.len() > 1 {
+            let mut seen = std::collections::HashSet::new();
+            terms.iter().flat_map(|term| {
+                self.symbol_index
+                    .get(*term)
+                    .map(|indices| indices.iter().map(|&idx| &self.symbols[idx]).collect::<Vec<_>>())
+                    .unwrap_or_default()
+            }).filter(|s| seen.insert((s.name.clone(), s.line_start, s.file_path.clone()))).collect()
+        } else {
+            self.symbol_index
+                .get(name)
+                .map(|indices| indices.iter().map(|&idx| &self.symbols[idx]).collect())
+                .unwrap_or_default()
+        }
     }
 
     pub fn fuzzy_search(&self, pattern: &str) -> Vec<&Symbol> {
-        let pattern_lower = pattern.to_lowercase();
+        let terms: Vec<&str> = pattern.split('|').map(|t| t.trim()).filter(|t| !t.is_empty()).collect();
+        let terms: Vec<String> = if terms.is_empty() {
+            vec![pattern.to_lowercase()]
+        } else {
+            terms.iter().map(|t| t.to_lowercase()).collect()
+        };
         let mut results: Vec<(&Symbol, i32)> = self
             .symbols
             .iter()
             .filter_map(|symbol| {
                 let name_lower = symbol.name.to_lowercase();
-                if name_lower.contains(&pattern_lower) {
-                    let score = if name_lower == pattern_lower {
-                        100
-                    } else if name_lower.starts_with(&pattern_lower) {
-                        50
+                terms.iter().filter_map(|pattern_lower| {
+                    if name_lower.contains(pattern_lower.as_str()) {
+                        let score = if name_lower == *pattern_lower {
+                            100
+                        } else if name_lower.starts_with(pattern_lower.as_str()) {
+                            50
+                        } else {
+                            levenshtein_distance(&name_lower, pattern_lower)
+                        };
+                        Some(score)
                     } else {
-                        levenshtein_distance(&name_lower, &pattern_lower)
-                    };
-                    Some((symbol, score))
-                } else {
-                    None
-                }
+                        None
+                    }
+                }).max().map(|score| (symbol, score))
             })
             .collect();
 

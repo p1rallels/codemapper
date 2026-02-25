@@ -59,10 +59,14 @@ impl GrepFilter {
     }
 
     /// Stage 1: Fast text search to find candidate files
-    /// Returns list of files that contain the pattern
+    /// Returns list of files that contain the pattern (supports | OR syntax)
     pub fn prefilter(&self, root: &Path) -> Result<Vec<PathBuf>> {
-        // Build regex pattern with case sensitivity
-        let pattern = if self.case_sensitive {
+        let terms: Vec<&str> = self.pattern.split('|').map(|t| t.trim()).filter(|t| !t.is_empty()).collect();
+        let pattern = if terms.len() > 1 {
+            let escaped: Vec<String> = terms.iter().map(|t| regex::escape(t)).collect();
+            let alternation = escaped.join("|");
+            if self.case_sensitive { alternation } else { format!("(?i){}", alternation) }
+        } else if self.case_sensitive {
             self.pattern.clone()
         } else {
             format!("(?i){}", regex::escape(&self.pattern))
@@ -161,15 +165,17 @@ impl GrepFilter {
         Ok(all_symbols)
     }
 
-    /// Check if a symbol name matches the query
+    /// Check if a symbol name matches the query (supports | OR syntax)
     fn symbol_matches(&self, name: &str, query: &str, fuzzy: bool) -> bool {
-        if fuzzy {
-            // Case-insensitive substring match for fuzzy search
-            name.to_lowercase().contains(&query.to_lowercase())
-        } else {
-            // Exact match for non-fuzzy search
-            name == query
-        }
+        let terms: Vec<&str> = query.split('|').map(|t| t.trim()).filter(|t| !t.is_empty()).collect();
+        let terms = if terms.is_empty() { vec![query] } else { terms };
+        terms.iter().any(|term| {
+            if fuzzy {
+                name.to_lowercase().contains(&term.to_lowercase())
+            } else {
+                name == *term
+            }
+        })
     }
 }
 
