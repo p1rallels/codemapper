@@ -925,3 +925,7 @@ m-e05d,update help text with pipe examples,,closed,1,pi,pi,pi,2026-02-25T18:25:4
 m-92a8,build and dogfood test,,closed,1,pi,pi,pi,2026-02-25T18:25:46.784Z,2026-02-25T18:27:07.903Z,,
 m-bf3f,fix dedup in query_symbol flat_map,deduplicate results when multiple pipe terms match same symbol,closed,1,pi,pi,pi,2026-02-25T18:44:30.178Z,2026-02-25T18:46:09.197Z,,
 m-2985,fix plural detection with pipe syntax,"split on pipe first, then check each term for plural form",closed,1,pi,pi,pi,2026-02-25T18:44:30.191Z,2026-02-25T18:46:09.197Z,,
+m-1853,improve markdown indexing: hierarchical heading paths,disambiguate repeated headings by encoding full heading ancestry into symbol display/name; keep query usable on large docs,closed,0,pi,pi,pi,2026-03-05T17:31:05.804Z,2026-03-05T17:45:51.384Z,,
+m-3bb5,improve markdown indexing: extract endpoint-like symbols,detect REST-ish patterns (METHOD /path) in headings/code blocks and index as symbols so query/inspect surfaces endpoints,closed,0,pi,pi,pi,2026-03-05T17:31:08.171Z,2026-03-05T17:48:14.218Z,,
+m-7742,add markdown fixture tests for large-doc usability,add small synthetic markdown fixtures + tests to validate heading hierarchy + endpoint extraction; avoid using real external docs,closed,1,pi,pi,pi,2026-03-05T17:31:10.809Z,2026-03-05T17:48:16.725Z,,
+m-e081,dogfood on real large markdown file and iterate,run cm inspect/query on the large doc file to verify output is more useful; iterate as needed,closed,1,pi,pi,pi,2026-03-05T17:31:13.662Z,2026-03-05T17:50:19.192Z,,

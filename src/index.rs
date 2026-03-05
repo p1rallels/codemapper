@@ -25,12 +25,17 @@ impl CodeIndex {
 
     pub fn add_file(&mut self, mut file_info: FileInfo) {
         let file_path = file_info.path.clone();
-        let _symbol_start_idx = self.symbols.len();
+        let symbol_start_idx = self.symbols.len();
 
         let mut symbol_indices = Vec::new();
         for symbol in file_info.symbols.drain(..) {
             let idx = self.symbols.len();
             symbol_indices.push(idx);
+
+            let mut symbol = symbol;
+            if let Some(parent_id) = symbol.parent_id {
+                symbol.parent_id = Some(symbol_start_idx + parent_id);
+            }
 
             self.symbol_index
                 .entry(symbol.name.clone())
@@ -138,15 +143,28 @@ impl CodeIndex {
     }
 
     pub fn query_symbol(&self, name: &str) -> Vec<&Symbol> {
-        let terms: Vec<&str> = name.split('|').map(|t| t.trim()).filter(|t| !t.is_empty()).collect();
+        let terms: Vec<&str> = name
+            .split('|')
+            .map(|t| t.trim())
+            .filter(|t| !t.is_empty())
+            .collect();
         if terms.len() > 1 {
             let mut seen = std::collections::HashSet::new();
-            terms.iter().flat_map(|term| {
-                self.symbol_index
-                    .get(*term)
-                    .map(|indices| indices.iter().map(|&idx| &self.symbols[idx]).collect::<Vec<_>>())
-                    .unwrap_or_default()
-            }).filter(|s| seen.insert((s.name.clone(), s.line_start, s.file_path.clone()))).collect()
+            terms
+                .iter()
+                .flat_map(|term| {
+                    self.symbol_index
+                        .get(*term)
+                        .map(|indices| {
+                            indices
+                                .iter()
+                                .map(|&idx| &self.symbols[idx])
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default()
+                })
+                .filter(|s| seen.insert((s.name.clone(), s.line_start, s.file_path.clone())))
+                .collect()
         } else {
             self.symbol_index
                 .get(name)
@@ -156,7 +174,11 @@ impl CodeIndex {
     }
 
     pub fn fuzzy_search(&self, pattern: &str) -> Vec<&Symbol> {
-        let terms: Vec<&str> = pattern.split('|').map(|t| t.trim()).filter(|t| !t.is_empty()).collect();
+        let terms: Vec<&str> = pattern
+            .split('|')
+            .map(|t| t.trim())
+            .filter(|t| !t.is_empty())
+            .collect();
         let terms: Vec<String> = if terms.is_empty() {
             vec![pattern.to_lowercase()]
         } else {
@@ -167,20 +189,24 @@ impl CodeIndex {
             .iter()
             .filter_map(|symbol| {
                 let name_lower = symbol.name.to_lowercase();
-                terms.iter().filter_map(|pattern_lower| {
-                    if name_lower.contains(pattern_lower.as_str()) {
-                        let score = if name_lower == *pattern_lower {
-                            100
-                        } else if name_lower.starts_with(pattern_lower.as_str()) {
-                            50
+                terms
+                    .iter()
+                    .filter_map(|pattern_lower| {
+                        if name_lower.contains(pattern_lower.as_str()) {
+                            let score = if name_lower == *pattern_lower {
+                                100
+                            } else if name_lower.starts_with(pattern_lower.as_str()) {
+                                50
+                            } else {
+                                levenshtein_distance(&name_lower, pattern_lower)
+                            };
+                            Some(score)
                         } else {
-                            levenshtein_distance(&name_lower, pattern_lower)
-                        };
-                        Some(score)
-                    } else {
-                        None
-                    }
-                }).max().map(|score| (symbol, score))
+                            None
+                        }
+                    })
+                    .max()
+                    .map(|score| (symbol, score))
             })
             .collect();
 
