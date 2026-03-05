@@ -74,7 +74,7 @@ pub fn analyze_types(
         // Skip non-callable symbols
         if matches!(
             symbol.symbol_type,
-            SymbolType::Heading | SymbolType::CodeBlock
+            SymbolType::Heading | SymbolType::CodeBlock | SymbolType::Endpoint
         ) {
             continue;
         }

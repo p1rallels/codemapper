@@ -61,11 +61,20 @@ impl GrepFilter {
     /// Stage 1: Fast text search to find candidate files
     /// Returns list of files that contain the pattern (supports | OR syntax)
     pub fn prefilter(&self, root: &Path) -> Result<Vec<PathBuf>> {
-        let terms: Vec<&str> = self.pattern.split('|').map(|t| t.trim()).filter(|t| !t.is_empty()).collect();
+        let terms: Vec<&str> = self
+            .pattern
+            .split('|')
+            .map(|t| t.trim())
+            .filter(|t| !t.is_empty())
+            .collect();
         let pattern = if terms.len() > 1 {
             let escaped: Vec<String> = terms.iter().map(|t| regex::escape(t)).collect();
             let alternation = escaped.join("|");
-            if self.case_sensitive { alternation } else { format!("(?i){}", alternation) }
+            if self.case_sensitive {
+                alternation
+            } else {
+                format!("(?i){}", alternation)
+            }
         } else if self.case_sensitive {
             self.pattern.clone()
         } else {
@@ -167,7 +176,11 @@ impl GrepFilter {
 
     /// Check if a symbol name matches the query (supports | OR syntax)
     fn symbol_matches(&self, name: &str, query: &str, fuzzy: bool) -> bool {
-        let terms: Vec<&str> = query.split('|').map(|t| t.trim()).filter(|t| !t.is_empty()).collect();
+        let terms: Vec<&str> = query
+            .split('|')
+            .map(|t| t.trim())
+            .filter(|t| !t.is_empty())
+            .collect();
         let terms = if terms.is_empty() { vec![query] } else { terms };
         terms.iter().any(|term| {
             if fuzzy {

@@ -1120,7 +1120,7 @@ pub fn find_untested(index: &CodeIndex) -> Result<Vec<UntestedInfo>> {
 
             if matches!(
                 symbol.symbol_type,
-                SymbolType::Heading | SymbolType::CodeBlock
+                SymbolType::Heading | SymbolType::CodeBlock | SymbolType::Endpoint
             ) {
                 continue;
             }
@@ -1182,7 +1182,7 @@ pub fn find_entrypoints(index: &CodeIndex) -> Result<Vec<EntrypointInfo>> {
 
             if matches!(
                 symbol.symbol_type,
-                SymbolType::Heading | SymbolType::CodeBlock
+                SymbolType::Heading | SymbolType::CodeBlock | SymbolType::Endpoint
             ) {
                 continue;
             }

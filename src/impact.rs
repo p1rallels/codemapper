@@ -35,7 +35,10 @@ pub fn cmd_impact(
             if include_docs {
                 true
             } else {
-                !matches!(s.symbol_type, SymbolType::Heading | SymbolType::CodeBlock)
+                !matches!(
+                    s.symbol_type,
+                    SymbolType::Heading | SymbolType::CodeBlock | SymbolType::Endpoint
+                )
             }
         })
         .collect();

@@ -56,6 +56,7 @@ pub enum SymbolType {
     StaticField,
     Heading,
     CodeBlock,
+    Endpoint,
     Interface,
     TypeAlias,
 }
@@ -70,6 +71,7 @@ impl SymbolType {
             SymbolType::StaticField => "static",
             SymbolType::Heading => "heading",
             SymbolType::CodeBlock => "code_block",
+            SymbolType::Endpoint => "endpoint",
             SymbolType::Interface => "interface",
             SymbolType::TypeAlias => "type",
         }
@@ -84,6 +86,7 @@ impl SymbolType {
             "static" | "staticfield" => Some(SymbolType::StaticField),
             "heading" | "header" => Some(SymbolType::Heading),
             "code_block" | "codeblock" => Some(SymbolType::CodeBlock),
+            "endpoint" | "endpoints" => Some(SymbolType::Endpoint),
             "interface" => Some(SymbolType::Interface),
             "type" | "typealias" | "type_alias" => Some(SymbolType::TypeAlias),
             _ => None,
@@ -99,6 +102,7 @@ impl SymbolType {
             "statics" | "staticfields" => Some(SymbolType::StaticField),
             "headings" | "headers" => Some(SymbolType::Heading),
             "code_blocks" | "codeblocks" => Some(SymbolType::CodeBlock),
+            "endpoints" => Some(SymbolType::Endpoint),
             "interfaces" => Some(SymbolType::Interface),
             "types" | "typealiases" | "type_aliases" => Some(SymbolType::TypeAlias),
             _ => None,

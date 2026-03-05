@@ -1,6 +1,8 @@
 use super::{ParseResult, Parser as ParserTrait};
 use crate::models::{Symbol, SymbolType};
 use anyhow::{Context, Result};
+use regex::Regex;
+use std::collections::HashSet;
 use std::path::Path;
 use tree_sitter::{Node, Parser};
 
@@ -72,17 +74,123 @@ impl MarkdownParser {
                 continue;
             }
 
-            let symbol_level = if let Some(sig) = &symbol.signature {
-                sig.parse::<usize>().unwrap_or(1)
-            } else {
-                1
-            };
+            let symbol_level = symbol
+                .signature
+                .as_deref()
+                .and_then(|sig| sig.strip_prefix('h'))
+                .and_then(|rest| rest.split_whitespace().next())
+                .and_then(|n| n.parse::<usize>().ok())
+                .unwrap_or(1);
 
             if symbol_level < current_level {
                 return Some(idx);
             }
         }
         None
+    }
+
+    fn build_line_start_bytes(&self, source: &str) -> Vec<usize> {
+        let mut starts = vec![0usize];
+        for (i, b) in source.as_bytes().iter().enumerate() {
+            if *b == b'\n' {
+                starts.push(i + 1);
+            }
+        }
+        starts
+    }
+
+    fn line_for_byte(&self, line_starts: &[usize], byte_offset: usize) -> usize {
+        match line_starts.binary_search(&byte_offset) {
+            Ok(i) => i + 1,
+            Err(i) => i,
+        }
+    }
+
+    fn nearest_heading_before_line(
+        &self,
+        headings: &[(usize, usize)],
+        line: usize,
+    ) -> Option<usize> {
+        headings
+            .iter()
+            .take_while(|(l, _)| *l <= line)
+            .map(|(_, idx)| *idx)
+            .last()
+    }
+
+    fn extract_endpoints(
+        &self,
+        source: &str,
+        file_path: &Path,
+        headings: &[(usize, usize)],
+        heading_symbols: &[Symbol],
+    ) -> Result<Vec<Symbol>> {
+        let line_starts = self.build_line_start_bytes(source);
+
+        let mut endpoints = Vec::new();
+        let mut seen = HashSet::<(usize, String)>::new();
+
+        let patterns = [
+            Regex::new(r"(?m)^[>\s]*?(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+(/[^\s`]+)")?,
+            Regex::new(r"(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+(/[^`\s]+)")?,
+            Regex::new(
+                r"(?s)`(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\n[^`\n]*\n[^`\n]*\n(/[^`\n]+)`",
+            )?,
+        ];
+
+        for re in patterns {
+            for caps in re.captures_iter(source) {
+                let method = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+                let mut path = caps.get(2).map(|m| m.as_str()).unwrap_or("").trim();
+                if method.is_empty() || path.is_empty() {
+                    continue;
+                }
+
+                while path.ends_with('*')
+                    || path.ends_with(')')
+                    || path.ends_with(',')
+                    || path.ends_with('.')
+                    || path.ends_with(';')
+                {
+                    path = &path[..path.len().saturating_sub(1)];
+                    path = path.trim_end();
+                }
+
+                let full = format!("{} {}", method, path);
+                let byte_offset = caps.get(0).map(|m| m.start()).unwrap_or(0);
+                let line = self.line_for_byte(&line_starts, byte_offset);
+
+                if !seen.insert((line, full.clone())) {
+                    continue;
+                }
+
+                let parent_id = self.nearest_heading_before_line(headings, line);
+                let name = match parent_id {
+                    Some(pid) => {
+                        let parent_name = heading_symbols
+                            .get(pid)
+                            .map(|s| s.name.as_str())
+                            .unwrap_or("?");
+                        format!("{} > {}", parent_name, full)
+                    }
+                    None => full,
+                };
+
+                endpoints.push(Symbol {
+                    name,
+                    symbol_type: SymbolType::Endpoint,
+                    signature: Some(method.to_string()),
+                    docstring: None,
+                    line_start: line,
+                    line_end: line,
+                    parent_id,
+                    file_path: file_path.to_path_buf(),
+                    is_exported: false,
+                });
+            }
+        }
+
+        Ok(endpoints)
     }
 
     fn process_headers(
@@ -109,10 +217,15 @@ impl MarkdownParser {
                         let line_end = node.end_position().row + 1;
                         let parent_id = self.find_parent_header(level, &symbols);
 
+                        let name = match parent_id {
+                            Some(pid) => format!("{} > {}", symbols[pid].name, text),
+                            None => text,
+                        };
+
                         let level_prefix = "#".repeat(level);
 
                         symbols.push(Symbol {
-                            name: text,
+                            name,
                             symbol_type: SymbolType::Heading,
                             signature: Some(format!("h{} ({})", level, level_prefix)),
                             docstring: None,
@@ -151,6 +264,8 @@ impl MarkdownParser {
         tree_root: Node,
         source: &str,
         file_path: &Path,
+        headings: &[(usize, usize)],
+        heading_symbols: &[Symbol],
     ) -> Result<Vec<Symbol>> {
         let mut code_blocks = Vec::new();
         let mut stack = vec![tree_root];
@@ -191,8 +306,20 @@ impl MarkdownParser {
                         }
                     }
 
+                    let parent_id = self.nearest_heading_before_line(headings, line_start);
+                    let name = match parent_id {
+                        Some(pid) => {
+                            let parent_name = heading_symbols
+                                .get(pid)
+                                .map(|s| s.name.as_str())
+                                .unwrap_or("?");
+                            format!("{} > [code: {}]", parent_name, language)
+                        }
+                        None => format!("[code: {}]", language),
+                    };
+
                     code_blocks.push(Symbol {
-                        name: format!("[code: {}]", language),
+                        name,
                         symbol_type: SymbolType::CodeBlock,
                         signature: Some(language.clone()),
                         docstring: if code_content.is_empty() {
@@ -202,7 +329,7 @@ impl MarkdownParser {
                         },
                         line_start,
                         line_end,
-                        parent_id: None,
+                        parent_id,
                         file_path: file_path.to_path_buf(),
                         is_exported: false,
                     });
@@ -245,11 +372,23 @@ impl ParserTrait for MarkdownParser {
         let root = tree.root_node();
         let mut result = ParseResult::new();
 
-        let mut headers = self.process_headers(root, content, file_path)?;
-        let code_blocks = self.process_code_blocks(root, content, file_path)?;
+        let mut symbols = self.process_headers(root, content, file_path)?;
 
-        headers.extend(code_blocks);
-        result.symbols = headers;
+        let mut heading_positions: Vec<(usize, usize)> = symbols
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.symbol_type == SymbolType::Heading)
+            .map(|(idx, s)| (s.line_start, idx))
+            .collect();
+        heading_positions.sort_by_key(|(line, _)| *line);
+
+        let code_blocks =
+            self.process_code_blocks(root, content, file_path, &heading_positions, &symbols)?;
+        let endpoints = self.extract_endpoints(content, file_path, &heading_positions, &symbols)?;
+
+        symbols.extend(code_blocks);
+        symbols.extend(endpoints);
+        result.symbols = symbols;
 
         Ok(result)
     }
@@ -281,6 +420,11 @@ Even more content.
             .collect();
         assert_eq!(heading_symbols.len(), 3);
         assert_eq!(heading_symbols[0].name, "Main Header");
+        assert_eq!(heading_symbols[1].name, "Main Header > Subsection");
+        assert_eq!(
+            heading_symbols[2].name,
+            "Main Header > Subsection > Smaller section"
+        );
 
         Ok(())
     }
@@ -309,23 +453,61 @@ def hello():
             .filter(|s| s.symbol_type == SymbolType::CodeBlock)
             .collect();
 
-        assert!(code_blocks.len() >= 2);
+        assert_eq!(code_blocks.len(), 2);
 
-        let has_json = code_blocks.iter().any(|s| {
-            s.signature
-                .as_ref()
-                .map(|sig| sig.contains("json"))
-                .unwrap_or(false)
-        });
-        let has_python = code_blocks.iter().any(|s| {
-            s.signature
-                .as_ref()
-                .map(|sig| sig.contains("python"))
-                .unwrap_or(false)
-        });
+        assert!(code_blocks
+            .iter()
+            .any(|s| s.name == "Example > [code: json]"));
+        assert!(code_blocks
+            .iter()
+            .any(|s| s.name == "Example > [code: python]"));
 
-        assert!(has_json);
-        assert!(has_python);
+        Ok(())
+    }
+
+    #[test]
+    fn test_extract_endpoints() -> Result<()> {
+        let parser = MarkdownParser::new()?;
+        let source = r#"# Rest
+
+## Orders
+
+> GET /v1/orders?limit=1
+
+`POST /v1/orders`
+
+**GET /v1/orders**
+
+`GET
+2020-01-01T00:00:00Z
+example.com
+/v1/orders`
+"#;
+
+        let result = parser.parse(source, Path::new("test.md"))?;
+
+        let endpoints: Vec<_> = result
+            .symbols
+            .iter()
+            .filter(|s| s.symbol_type == SymbolType::Endpoint)
+            .collect();
+
+        assert!(endpoints
+            .iter()
+            .any(|s| s.name == "Rest > Orders > GET /v1/orders?limit=1"));
+        assert!(endpoints
+            .iter()
+            .any(|s| s.name == "Rest > Orders > POST /v1/orders"));
+        assert!(endpoints
+            .iter()
+            .any(|s| s.name == "Rest > Orders > GET /v1/orders"));
+        assert_eq!(
+            endpoints
+                .iter()
+                .filter(|s| s.name == "Rest > Orders > GET /v1/orders")
+                .count(),
+            2
+        );
 
         Ok(())
     }

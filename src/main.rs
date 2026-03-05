@@ -2188,7 +2188,11 @@ fn cmd_query(
     // Check if symbol terms are plural forms of symbol types (e.g., "functions", "classes")
     // Pipe-aware: split on |, check each term independently, partition into type filters vs search terms
     let (symbol, symbol_type_filter, extra_type_filters) = if symbol_type_filter.is_none() {
-        let terms: Vec<&str> = symbol.split('|').map(|t| t.trim()).filter(|t| !t.is_empty()).collect();
+        let terms: Vec<&str> = symbol
+            .split('|')
+            .map(|t| t.trim())
+            .filter(|t| !t.is_empty())
+            .collect();
         let mut plural_types: Vec<SymbolType> = Vec::new();
         let mut search_terms: Vec<&str> = Vec::new();
         for term in &terms {
@@ -2203,7 +2207,11 @@ fn cmd_query(
         } else if search_terms.is_empty() {
             // All terms are plurals — use first as primary type filter, rest as extras
             let primary = plural_types.remove(0);
-            (String::new(), Some(primary.as_str().to_string()), plural_types)
+            (
+                String::new(),
+                Some(primary.as_str().to_string()),
+                plural_types,
+            )
         } else {
             // Mix of plurals and search terms
             (search_terms.join("|"), symbol_type_filter, plural_types)
@@ -2236,7 +2244,8 @@ fn cmd_query(
     }
 
     // Check if user wants all symbols of a specific type (empty symbol name with type filter)
-    let search_all = symbol.trim().is_empty() && (type_filter.is_some() || !extra_type_filters.is_empty());
+    let search_all =
+        symbol.trim().is_empty() && (type_filter.is_some() || !extra_type_filters.is_empty());
 
     // Count files for auto-detection
     let file_count = count_indexable_files(&path, &ext_list)?;
@@ -2287,7 +2296,9 @@ fn cmd_query(
 
             // Merge in symbols matching extra type filters (from pipe plural syntax)
             if !extra_type_filters.is_empty() {
-                let extra: Vec<&Symbol> = index.all_symbols().into_iter()
+                let extra: Vec<&Symbol> = index
+                    .all_symbols()
+                    .into_iter()
                     .filter(|s| extra_type_filters.contains(&s.symbol_type))
                     .collect();
                 symbols.extend(extra);
@@ -2340,8 +2351,11 @@ fn cmd_query(
             // Merge in symbols matching extra type filters (from pipe plural syntax)
             // Fast mode can't do this without a full index, so fall back to index for extras
             if !extra_type_filters.is_empty() {
-                let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
-                let extra: Vec<Symbol> = index.all_symbols().into_iter()
+                let index =
+                    try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
+                let extra: Vec<Symbol> = index
+                    .all_symbols()
+                    .into_iter()
                     .filter(|s| extra_type_filters.contains(&s.symbol_type))
                     .cloned()
                     .collect();
@@ -2399,7 +2413,9 @@ fn cmd_query(
 
         // Merge in symbols matching extra type filters (from pipe plural syntax)
         if !extra_type_filters.is_empty() {
-            let extra: Vec<&Symbol> = index.all_symbols().into_iter()
+            let extra: Vec<&Symbol> = index
+                .all_symbols()
+                .into_iter()
                 .filter(|s| extra_type_filters.contains(&s.symbol_type))
                 .collect();
             symbols.extend(extra);
@@ -2742,7 +2758,18 @@ fn cmd_inspect(
                 print!(
                     "{}|{}|{}-{}",
                     symbol.name,
-                    symbol.symbol_type.as_str().chars().next().unwrap(),
+                    match symbol.symbol_type {
+                        models::SymbolType::Function => "f",
+                        models::SymbolType::Class => "c",
+                        models::SymbolType::Method => "m",
+                        models::SymbolType::Enum => "e",
+                        models::SymbolType::StaticField => "s",
+                        models::SymbolType::Heading => "h",
+                        models::SymbolType::CodeBlock => "cb",
+                        models::SymbolType::Endpoint => "ep",
+                        models::SymbolType::Interface => "if",
+                        models::SymbolType::TypeAlias => "ty",
+                    },
                     symbol.line_start,
                     symbol.line_end
                 );
