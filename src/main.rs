@@ -100,6 +100,19 @@ TYPICAL WORKFLOWS
    Step 3: cm since <last_release>
    → Full changelog (what changed?)
 
+6. NAVIGATING LARGE MARKDOWN API DOCS
+   Step 1: cm inspect ./docs/api.md --tree --sizes --level 2
+   → Triage sections by size (what's worth reading?)
+
+   Step 2: cm inspect ./docs/api.md --section 'Orders'
+   → Scope symbols to a section (reduce noise)
+
+   Step 3: cm query '/v1/orders' ./docs --type endpoint
+   → Find endpoints fast (queryable route symbols)
+
+   Step 4: cm query TWAP ./docs --show-body
+   → Jump to the relevant section content
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 COMMANDS (organized by task)
@@ -108,7 +121,7 @@ COMMANDS (organized by task)
   stats        → Project size and composition (functions, classes, imports)
   map          → File listing with symbol counts (3 detail levels)
   query        → Find symbols by name (main search tool)
-  inspect      → List all symbols in one file
+  inspect      → List all symbols in one file (markdown: tree navigation)
   deps         → Track imports and usage
 
 [CALL GRAPH - Understand code flow]
@@ -414,6 +427,7 @@ TIP: Start with fuzzy search, it's more forgiving"
   # With context
   cm query process_payment --context full    # Include docstrings
   cm query validate --show-body              # Show implementation
+  cm query REST ./docs --section 'Orders'    # Scope to a markdown section
 
   # Fast mode (for large codebases)
   cm query MyClass /large/repo --fast        # Explicit fast mode
@@ -485,6 +499,10 @@ WHEN TO USE:
         /// Show only exported/public symbols (functions/classes with export keyword, pub visibility, etc.)
         #[arg(long, default_value_t = false)]
         exports_only: bool,
+
+        /// Markdown only: scope results to a heading path (e.g. "Orders" or "Orders > Order Strategy")
+        #[arg(long)]
+        section: Option<String>,
 
         /// Maximum number of results to return (prevents overwhelming output)
         #[arg(long)]
@@ -1613,6 +1631,7 @@ fn main() -> Result<()> {
             rebuild_cache,
             full,
             exports_only,
+            section,
             limit,
         } => {
             cmd_query(
@@ -1623,6 +1642,7 @@ fn main() -> Result<()> {
                 fast,
                 show_body,
                 r#type,
+                section,
                 extensions,
                 no_cache,
                 rebuild_cache,
@@ -2213,6 +2233,7 @@ fn cmd_query(
     fast: bool,
     show_body: bool,
     symbol_type_filter: Option<String>,
+    section: Option<String>,
     extensions: String,
     no_cache: bool,
     rebuild_cache: bool,
@@ -2267,7 +2288,7 @@ fn cmd_query(
         match SymbolType::from_str(type_str) {
             Some(t) => Some(t),
             None => {
-                eprintln!("{} Invalid symbol type '{}', valid types: function, class, method, enum, static, heading, code_block", "Error:".red(), type_str);
+                eprintln!("{} Invalid symbol type '{}', valid types: function, class, method, enum, static, heading, code_block, endpoint", "Error:".red(), type_str);
                 return Ok(());
             }
         }
@@ -2357,6 +2378,22 @@ fn cmd_query(
                 symbols.retain(|s| s.is_exported);
             }
 
+            // Markdown section scoping (qualified name prefix)
+            if let Some(ref sec) = section {
+                let sec = sec.trim();
+                if !sec.is_empty() {
+                    let sec_prefix = format!("{} > ", sec);
+                    symbols.retain(|s| {
+                        s.file_path
+                            .extension()
+                            .and_then(|e| e.to_str())
+                            .map(|e| e.eq_ignore_ascii_case("md"))
+                            .unwrap_or(false)
+                            && (s.name == sec || s.name.starts_with(&sec_prefix))
+                    });
+                }
+            }
+
             // Apply limit if specified
             if let Some(n) = limit {
                 symbols.truncate(n);
@@ -2413,6 +2450,22 @@ fn cmd_query(
             // Filter to exports only if requested
             if exports_only {
                 owned_symbols.retain(|s| s.is_exported);
+            }
+
+            // Markdown section scoping (qualified name prefix)
+            if let Some(ref sec) = section {
+                let sec = sec.trim();
+                if !sec.is_empty() {
+                    let sec_prefix = format!("{} > ", sec);
+                    owned_symbols.retain(|s| {
+                        s.file_path
+                            .extension()
+                            .and_then(|e| e.to_str())
+                            .map(|e| e.eq_ignore_ascii_case("md"))
+                            .unwrap_or(false)
+                            && (s.name == sec || s.name.starts_with(&sec_prefix))
+                    });
+                }
             }
 
             // Apply limit if specified
@@ -2472,6 +2525,22 @@ fn cmd_query(
         // Filter to exports only if requested
         if exports_only {
             symbols.retain(|s| s.is_exported);
+        }
+
+        // Markdown section scoping (qualified name prefix)
+        if let Some(ref sec) = section {
+            let sec = sec.trim();
+            if !sec.is_empty() {
+                let sec_prefix = format!("{} > ", sec);
+                symbols.retain(|s| {
+                    s.file_path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .map(|e| e.eq_ignore_ascii_case("md"))
+                        .unwrap_or(false)
+                        && (s.name == sec || s.name.starts_with(&sec_prefix))
+                });
+            }
         }
 
         // Apply limit if specified
