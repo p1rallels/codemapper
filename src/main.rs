@@ -172,7 +172,7 @@ LANGUAGES SUPPORTED:
   ✓ Go           → Functions, structs, methods, interfaces
   ✓ C            → Functions, structs, includes
   ✓ Swift        → Functions, types (struct/class/enum/extension), methods, imports
-  ✓ Markdown     → Headings, code blocks
+  ✓ Markdown     → Hierarchical headings, code blocks, endpoint-like routes (e.g. GET /v1/orders)
 
 GIT REQUIREMENTS:
   diff      → Must be in a git repo
