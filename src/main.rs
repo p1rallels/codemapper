@@ -9,6 +9,7 @@ mod impact;
 mod implements;
 mod index;
 mod indexer;
+mod inspect_md;
 mod models;
 mod output;
 mod parser;
@@ -513,6 +514,11 @@ TIP: Combine with --show-body to see implementations"
   cm inspect ./parser.rs --format human    # Pretty table format
   cm inspect ./utils.js --format ai        # Token-efficient output
 
+  # markdown docs
+  cm inspect ./docs/api.md --level 1       # just h1 headings
+  cm inspect ./docs/api.md --tree --sizes  # heading tree + section sizes
+  cm inspect ./docs/api.md --section 'Orders' --code-blocks
+
 TYPICAL WORKFLOW:
   1. Use 'cm map --level 2' to find interesting files
   2. Inspect specific files: cm inspect ./path/to/file.py
@@ -529,6 +535,26 @@ WHEN TO USE:
         /// Show the actual code implementation for each symbol
         #[arg(long, default_value = "false")]
         show_body: bool,
+
+        /// Markdown only: show headings as an indented tree
+        #[arg(long, default_value_t = false)]
+        tree: bool,
+
+        /// Markdown only: show headings up to level N (e.g. 1 = h1, 2 = h1+h2)
+        #[arg(long)]
+        level: Option<usize>,
+
+        /// Markdown only: scope output to a heading path (e.g. "Orders" or "Orders > Order Strategy")
+        #[arg(long)]
+        section: Option<String>,
+
+        /// Markdown only (with --tree): show section sizes in lines
+        #[arg(long, default_value_t = false)]
+        sizes: bool,
+
+        /// Markdown only: show fenced code blocks (optionally scoped by --section)
+        #[arg(long, default_value_t = false)]
+        code_blocks: bool,
 
         /// Show anonymous/lambda functions (default: filtered out)
         #[arg(long, default_value_t = false)]
@@ -1610,10 +1636,26 @@ fn main() -> Result<()> {
         Commands::Inspect {
             file_path,
             show_body,
+            tree,
+            level,
+            section,
+            sizes,
+            code_blocks,
             full,
             exports_only,
         } => {
-            cmd_inspect(file_path, show_body, !full, exports_only, format)?;
+            cmd_inspect(
+                file_path,
+                show_body,
+                tree,
+                level,
+                section,
+                sizes,
+                code_blocks,
+                !full,
+                exports_only,
+                format,
+            )?;
         }
         Commands::Deps {
             target,
@@ -2700,6 +2742,11 @@ fn cmd_stats(
 fn cmd_inspect(
     file_path: PathBuf,
     show_body: bool,
+    tree: bool,
+    level: Option<usize>,
+    section: Option<String>,
+    sizes: bool,
+    code_blocks: bool,
     skip_anonymous: bool,
     exports_only: bool,
     format: OutputFormat,
@@ -2743,55 +2790,379 @@ fn cmd_inspect(
         return Ok(());
     }
 
-    let formatter = OutputFormatter::new(format);
+    let is_markdown = language == models::Language::Markdown;
+    let wants_markdown_view =
+        is_markdown && (tree || level.is_some() || section.is_some() || sizes || code_blocks);
 
-    match format {
-        OutputFormat::AI => {
-            println!("[FILE:{}]", file_path.display());
-            println!(
-                "LANG:{} SIZE:{} SYMS:{}",
-                language.as_str(),
-                file_info.size,
-                file_info.symbols.len()
-            );
-            for symbol in &file_info.symbols {
-                print!(
-                    "{}|{}|{}-{}",
-                    symbol.name,
-                    match symbol.symbol_type {
-                        models::SymbolType::Function => "f",
-                        models::SymbolType::Class => "c",
-                        models::SymbolType::Method => "m",
-                        models::SymbolType::Enum => "e",
-                        models::SymbolType::StaticField => "s",
-                        models::SymbolType::Heading => "h",
-                        models::SymbolType::CodeBlock => "cb",
-                        models::SymbolType::Endpoint => "ep",
-                        models::SymbolType::Interface => "if",
-                        models::SymbolType::TypeAlias => "ty",
-                    },
-                    symbol.line_start,
-                    symbol.line_end
-                );
-                if let Some(ref sig) = symbol.signature {
-                    print!("|sig:{}", sig);
+    if wants_markdown_view {
+        use crate::inspect_md::{
+            compute_heading_end_lines, heading_leaf, heading_level, is_descendant,
+            nearest_printable_heading_ancestor, select_section_heading,
+        };
+        use std::collections::{HashMap, HashSet};
+
+        let total_lines = content.lines().count().max(1);
+
+        let headings: Vec<(usize, usize, usize)> = file_info
+            .symbols
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.symbol_type == models::SymbolType::Heading)
+            .filter_map(|(i, s)| heading_level(s).map(|lvl| (i, lvl, s.line_start)))
+            .collect();
+
+        let end_lines = compute_heading_end_lines(&headings, total_lines);
+
+        let section_root_idx = match section.as_deref() {
+            Some(s) => Some(select_section_heading(&file_info.symbols, s)?),
+            None => None,
+        };
+
+        let section_root_level =
+            section_root_idx.and_then(|idx| heading_level(&file_info.symbols[idx]));
+
+        let max_level_abs = level.map(|n| {
+            if let Some(root_level) = section_root_level {
+                root_level.saturating_add(n.saturating_sub(1))
+            } else {
+                n
+            }
+        });
+
+        let in_scope = |idx: usize| -> bool {
+            section_root_idx
+                .map(|root| is_descendant(&file_info.symbols, idx, root))
+                .unwrap_or(true)
+        };
+
+        let heading_allowed = |idx: usize, lvl: usize| -> bool {
+            if !in_scope(idx) {
+                return false;
+            }
+            max_level_abs.map(|max| lvl <= max).unwrap_or(true)
+        };
+
+        let base_level = section_root_level.unwrap_or(1);
+
+        if tree {
+            #[derive(Clone)]
+            enum EntryKind {
+                Heading {
+                    idx: usize,
+                    level: usize,
+                },
+                CodeBlock {
+                    idx: usize,
+                    parent: usize,
+                    parent_level: usize,
+                },
+            }
+
+            #[derive(Clone)]
+            struct Entry {
+                line: usize,
+                order: u8,
+                kind: EntryKind,
+            }
+
+            let mut printable_headings = HashSet::<usize>::new();
+            for (idx, lvl, _line) in &headings {
+                if heading_allowed(*idx, *lvl) {
+                    printable_headings.insert(*idx);
                 }
-                println!();
+            }
+
+            let mut entries = Vec::<Entry>::new();
+            for (idx, lvl, line) in &headings {
+                if !printable_headings.contains(idx) {
+                    continue;
+                }
+                entries.push(Entry {
+                    line: *line,
+                    order: 0,
+                    kind: EntryKind::Heading {
+                        idx: *idx,
+                        level: *lvl,
+                    },
+                });
+            }
+
+            if code_blocks {
+                for (idx, sym) in file_info.symbols.iter().enumerate() {
+                    if sym.symbol_type != models::SymbolType::CodeBlock {
+                        continue;
+                    }
+                    if !in_scope(idx) {
+                        continue;
+                    }
+
+                    let parent = sym
+                        .parent_id
+                        .filter(|pid| printable_headings.contains(pid))
+                        .or_else(|| {
+                            nearest_printable_heading_ancestor(
+                                &file_info.symbols,
+                                idx,
+                                &printable_headings,
+                            )
+                        });
+
+                    let Some(parent_idx) = parent else {
+                        continue;
+                    };
+
+                    let Some(parent_level_abs) = heading_level(&file_info.symbols[parent_idx])
+                    else {
+                        continue;
+                    };
+
+                    entries.push(Entry {
+                        line: sym.line_start,
+                        order: 1,
+                        kind: EntryKind::CodeBlock {
+                            idx,
+                            parent: parent_idx,
+                            parent_level: parent_level_abs,
+                        },
+                    });
+                }
+            }
+
+            entries.sort_by_key(|e| (e.line, e.order));
+
+            let mut parent_indent_cache = HashMap::<usize, usize>::new();
+            let indent_for_heading =
+                |level_abs: usize| -> usize { level_abs.saturating_sub(base_level) + 1 };
+
+            let mut out_lines = Vec::<String>::new();
+            for entry in entries {
+                match entry.kind {
+                    EntryKind::Heading { idx, level } => {
+                        let sym = &file_info.symbols[idx];
+                        let lvl = indent_for_heading(level);
+                        let indent = "  ".repeat(lvl.saturating_sub(1));
+                        let hashes = "#".repeat(lvl.min(6));
+                        let leaf = heading_leaf(&sym.name);
+                        let size = end_lines
+                            .get(&idx)
+                            .copied()
+                            .unwrap_or(total_lines)
+                            .saturating_sub(sym.line_start)
+                            + 1;
+
+                        parent_indent_cache.insert(idx, lvl);
+
+                        if sizes {
+                            out_lines.push(format!(
+                                "{}{} {} (L{}, {} lines)",
+                                indent, hashes, leaf, sym.line_start, size
+                            ));
+                        } else {
+                            out_lines.push(format!(
+                                "{}{} {} (L{})",
+                                indent, hashes, leaf, sym.line_start
+                            ));
+                        }
+                    }
+                    EntryKind::CodeBlock {
+                        idx,
+                        parent,
+                        parent_level,
+                    } => {
+                        let sym = &file_info.symbols[idx];
+                        let parent_lvl = *parent_indent_cache
+                            .entry(parent)
+                            .or_insert_with(|| indent_for_heading(parent_level));
+                        let indent = "  ".repeat(parent_lvl);
+                        let leaf = heading_leaf(&sym.name);
+                        out_lines.push(format!(
+                            "{}- {} (L{}-L{})",
+                            indent, leaf, sym.line_start, sym.line_end
+                        ));
+                    }
+                }
+            }
+
+            match format {
+                OutputFormat::AI => {
+                    println!("[FILE:{}]", file_path.display());
+                    println!(
+                        "LANG:{} SIZE:{} SYMS:{}",
+                        language.as_str(),
+                        file_info.size,
+                        out_lines.len()
+                    );
+                    println!("[TREE]");
+                    for l in out_lines {
+                        println!("{}", l);
+                    }
+                }
+                _ => {
+                    println!(
+                        "{} Inspecting: {}\n",
+                        "→".cyan(),
+                        file_path.display().to_string().bold()
+                    );
+                    println!("Language: {}", language.as_str());
+                    println!("Size: {} bytes\n", file_info.size);
+                    for l in out_lines {
+                        println!("{}", l);
+                    }
+                }
+            }
+        } else {
+            let mut filtered_idxs: Vec<usize> = (0..file_info.symbols.len()).collect();
+
+            if let Some(root) = section_root_idx {
+                filtered_idxs.retain(|idx| is_descendant(&file_info.symbols, *idx, root));
+            }
+
+            if code_blocks {
+                filtered_idxs.retain(|idx| {
+                    file_info.symbols[*idx].symbol_type == models::SymbolType::CodeBlock
+                });
+            } else if section_root_idx.is_none() {
+                if let Some(max) = max_level_abs {
+                    filtered_idxs.retain(|idx| {
+                        let s = &file_info.symbols[*idx];
+                        s.symbol_type == models::SymbolType::Heading
+                            && heading_level(s).map(|lvl| lvl <= max).unwrap_or(false)
+                    });
+                }
+            }
+
+            let sym_count = filtered_idxs.len();
+
+            match format {
+                OutputFormat::AI => {
+                    println!("[FILE:{}]", file_path.display());
+                    println!(
+                        "LANG:{} SIZE:{} SYMS:{}",
+                        language.as_str(),
+                        file_info.size,
+                        sym_count
+                    );
+
+                    for idx in &filtered_idxs {
+                        let symbol = &file_info.symbols[*idx];
+                        print!(
+                            "{}|{}|{}-{}",
+                            symbol.name,
+                            match symbol.symbol_type {
+                                models::SymbolType::Function => "f",
+                                models::SymbolType::Class => "c",
+                                models::SymbolType::Method => "m",
+                                models::SymbolType::Enum => "e",
+                                models::SymbolType::StaticField => "s",
+                                models::SymbolType::Heading => "h",
+                                models::SymbolType::CodeBlock => "cb",
+                                models::SymbolType::Endpoint => "ep",
+                                models::SymbolType::Interface => "if",
+                                models::SymbolType::TypeAlias => "ty",
+                            },
+                            symbol.line_start,
+                            symbol.line_end
+                        );
+                        if let Some(ref sig) = symbol.signature {
+                            print!("|sig:{}", sig);
+                        }
+                        println!();
+                    }
+                }
+                _ => {
+                    let formatter = OutputFormatter::new(format);
+                    println!(
+                        "{} Inspecting: {}\n",
+                        "→".cyan(),
+                        file_path.display().to_string().bold()
+                    );
+                    println!("Language: {}", language.as_str());
+                    println!("Size: {} bytes", file_info.size);
+                    println!("Symbols: {}\n", sym_count);
+                    let symbol_refs: Vec<&models::Symbol> = filtered_idxs
+                        .iter()
+                        .map(|i| &file_info.symbols[*i])
+                        .collect();
+                    let output = formatter.format_query(symbol_refs, false, show_body);
+                    println!("{}", output);
+                }
             }
         }
-        _ => {
-            println!(
-                "{} Inspecting: {}\n",
-                "→".cyan(),
-                file_path.display().to_string().bold()
-            );
-            println!("Language: {}", language.as_str());
-            println!("Size: {} bytes", file_info.size);
-            println!("Symbols: {}\n", file_info.symbols.len());
 
-            let symbol_refs: Vec<&models::Symbol> = file_info.symbols.iter().collect();
-            let output = formatter.format_query(symbol_refs, false, show_body);
-            println!("{}", output);
+        if let Some(root) = section_root_idx {
+            if show_body {
+                let start_line = file_info.symbols[root].line_start;
+                let end_line = end_lines.get(&root).copied().unwrap_or(total_lines);
+                let slice = content
+                    .lines()
+                    .skip(start_line.saturating_sub(1))
+                    .take(end_line.saturating_sub(start_line) + 1)
+                    .collect::<Vec<_>>()
+                    .join("\n");
+
+                match format {
+                    OutputFormat::AI => {
+                        println!("[SECTION_BODY:{}-{}]", start_line, end_line);
+                        println!("{}", slice);
+                    }
+                    _ => {
+                        println!("\nSection body (L{}-L{}):\n", start_line, end_line);
+                        println!("{}", slice);
+                    }
+                }
+            }
+        }
+    } else {
+        let formatter = OutputFormatter::new(format);
+
+        match format {
+            OutputFormat::AI => {
+                println!("[FILE:{}]", file_path.display());
+                println!(
+                    "LANG:{} SIZE:{} SYMS:{}",
+                    language.as_str(),
+                    file_info.size,
+                    file_info.symbols.len()
+                );
+                for symbol in &file_info.symbols {
+                    print!(
+                        "{}|{}|{}-{}",
+                        symbol.name,
+                        match symbol.symbol_type {
+                            models::SymbolType::Function => "f",
+                            models::SymbolType::Class => "c",
+                            models::SymbolType::Method => "m",
+                            models::SymbolType::Enum => "e",
+                            models::SymbolType::StaticField => "s",
+                            models::SymbolType::Heading => "h",
+                            models::SymbolType::CodeBlock => "cb",
+                            models::SymbolType::Endpoint => "ep",
+                            models::SymbolType::Interface => "if",
+                            models::SymbolType::TypeAlias => "ty",
+                        },
+                        symbol.line_start,
+                        symbol.line_end
+                    );
+                    if let Some(ref sig) = symbol.signature {
+                        print!("|sig:{}", sig);
+                    }
+                    println!();
+                }
+            }
+            _ => {
+                println!(
+                    "{} Inspecting: {}\n",
+                    "→".cyan(),
+                    file_path.display().to_string().bold()
+                );
+                println!("Language: {}", language.as_str());
+                println!("Size: {} bytes", file_info.size);
+                println!("Symbols: {}\n", file_info.symbols.len());
+
+                let symbol_refs: Vec<&models::Symbol> = file_info.symbols.iter().collect();
+                let output = formatter.format_query(symbol_refs, false, show_body);
+                println!("{}", output);
+            }
         }
     }
 
