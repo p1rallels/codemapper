@@ -449,7 +449,7 @@ WHEN TO USE:
         #[arg(long, default_value = "false")]
         exact: bool,
 
-        /// Filter by symbol type: 'function', 'class', 'method', 'enum', 'static', 'heading', 'code_block'
+        /// Filter by symbol type: 'function', 'class', 'method', 'enum', 'static', 'heading', 'code_block', 'endpoint'
         #[arg(long)]
         r#type: Option<String>,
 
