@@ -41,6 +41,87 @@ pub struct OutputFormatter {
 }
 
 /// Read specific lines from a file (1-indexed line numbers)
+const MARKDOWN_SECTION_SNIPPET_LINES: usize = 20;
+
+fn markdown_heading_level_from_signature(sig: &str) -> Option<usize> {
+    let sig = sig.trim();
+    if !sig.starts_with('h') {
+        return None;
+    }
+    let digits: String = sig
+        .chars()
+        .skip(1)
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    if digits.is_empty() {
+        return None;
+    }
+    digits.parse::<usize>().ok()
+}
+
+fn markdown_heading_level_from_line(line: &str) -> Option<usize> {
+    let line = line.trim_start();
+    if !line.starts_with('#') {
+        return None;
+    }
+    let n = line.chars().take_while(|c| *c == '#').count();
+    if n == 0 || n > 6 {
+        return None;
+    }
+    if !line.chars().nth(n).is_some_and(|c| c.is_whitespace()) {
+        return None;
+    }
+    Some(n)
+}
+
+fn find_markdown_section_end_line(lines: &[&str], start_line: usize, level: usize) -> usize {
+    if start_line == 0 || start_line > lines.len() {
+        return start_line;
+    }
+
+    let mut in_fence = false;
+
+    for (i, line) in lines.iter().enumerate().skip(start_line) {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
+
+        if let Some(lvl) = markdown_heading_level_from_line(line) {
+            if lvl <= level {
+                return i.max(1);
+            }
+        }
+    }
+
+    lines.len().max(1)
+}
+
+fn read_markdown_section_snippet(
+    path: &Path,
+    start_line: usize,
+    level: usize,
+) -> Option<(String, bool)> {
+    let content = fs::read_to_string(path).ok()?;
+    let lines: Vec<&str> = content.lines().collect();
+
+    if start_line == 0 || start_line > lines.len() {
+        return None;
+    }
+
+    let section_end = find_markdown_section_end_line(&lines, start_line, level);
+    let want_end = section_end.min(start_line.saturating_add(MARKDOWN_SECTION_SNIPPET_LINES - 1));
+    let truncated = want_end < section_end;
+
+    let body = read_file_lines(path, start_line, want_end)?;
+    Some((body, truncated))
+}
+
+/// Read specific lines from a file (1-indexed line numbers)
 fn read_file_lines(path: &Path, start_line: usize, end_line: usize) -> Option<String> {
     let content = fs::read_to_string(path).ok()?;
     let lines: Vec<&str> = content.lines().collect();
@@ -381,21 +462,43 @@ impl OutputFormatter {
                 }
             }
 
-            // Show code body if requested (limit to symbols with <= 50 lines)
             if show_body {
-                let line_count = symbol.line_end - symbol.line_start + 1;
-                if line_count <= 50 {
-                    if let Some(body) =
-                        read_file_lines(&symbol.file_path, symbol.line_start, symbol.line_end)
+                if symbol
+                    .file_path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| e.eq_ignore_ascii_case("md"))
+                    && symbol.symbol_type == SymbolType::Heading
+                {
+                    let level = symbol
+                        .signature
+                        .as_deref()
+                        .and_then(markdown_heading_level_from_signature)
+                        .unwrap_or(1);
+                    if let Some((body, truncated)) =
+                        read_markdown_section_snippet(&symbol.file_path, symbol.line_start, level)
                     {
-                        output.push_str("\nCode:\n");
+                        output.push_str("\nSection:\n");
                         output.push_str(&body);
+                        if truncated {
+                            output.push_str("(truncated)\n");
+                        }
                     }
                 } else {
-                    output.push_str(&format!(
-                        "\n(Code body omitted: {} lines, use --context full to see more details)\n",
-                        line_count
-                    ));
+                    let line_count = symbol.line_end - symbol.line_start + 1;
+                    if line_count <= 50 {
+                        if let Some(body) =
+                            read_file_lines(&symbol.file_path, symbol.line_start, symbol.line_end)
+                        {
+                            output.push_str("\nCode:\n");
+                            output.push_str(&body);
+                        }
+                    } else {
+                        output.push_str(&format!(
+                            "\n(Code body omitted: {} lines, use --context full to see more details)\n",
+                            line_count
+                        ));
+                    }
                 }
             }
 
@@ -451,18 +554,49 @@ impl OutputFormatter {
 
         output.push_str(&format!("{}\n", table));
 
-        // Show code bodies after the table if requested
         if show_body {
             output.push_str("\n");
             for symbol in &symbols {
-                let line_count = symbol.line_end - symbol.line_start + 1;
-                if line_count <= 50 {
-                    if let Some(body) =
-                        read_file_lines(&symbol.file_path, symbol.line_start, symbol.line_end)
+                if symbol
+                    .file_path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| e.eq_ignore_ascii_case("md"))
+                    && symbol.symbol_type == SymbolType::Heading
+                {
+                    let level = symbol
+                        .signature
+                        .as_deref()
+                        .and_then(markdown_heading_level_from_signature)
+                        .unwrap_or(1);
+                    if let Some((body, truncated)) =
+                        read_markdown_section_snippet(&symbol.file_path, symbol.line_start, level)
                     {
-                        output.push_str(&format!("{} {}\n", "Code for".cyan(), symbol.name.bold()));
+                        output.push_str(&format!(
+                            "{} {}\n",
+                            "Section for".cyan(),
+                            symbol.name.bold()
+                        ));
                         output.push_str(&body);
+                        if truncated {
+                            output.push_str("(truncated)\n");
+                        }
                         output.push_str("\n");
+                    }
+                } else {
+                    let line_count = symbol.line_end - symbol.line_start + 1;
+                    if line_count <= 50 {
+                        if let Some(body) =
+                            read_file_lines(&symbol.file_path, symbol.line_start, symbol.line_end)
+                        {
+                            output.push_str(&format!(
+                                "{} {}\n",
+                                "Code for".cyan(),
+                                symbol.name.bold()
+                            ));
+                            output.push_str(&body);
+                            output.push_str("\n");
+                        }
                     }
                 }
             }
@@ -508,15 +642,39 @@ impl OutputFormatter {
             }
 
             if show_body {
-                let line_count = symbol.line_end - symbol.line_start + 1;
-                if line_count <= 50 {
-                    if let Some(body) =
-                        read_file_lines(&symbol.file_path, symbol.line_start, symbol.line_end)
+                if symbol
+                    .file_path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| e.eq_ignore_ascii_case("md"))
+                    && symbol.symbol_type == SymbolType::Heading
+                {
+                    let level = symbol
+                        .signature
+                        .as_deref()
+                        .and_then(markdown_heading_level_from_signature)
+                        .unwrap_or(1);
+                    if let Some((body, truncated)) =
+                        read_markdown_section_snippet(&symbol.file_path, symbol.line_start, level)
                     {
-                        // Compact format: include body on separate lines with indentation
                         output.push_str("|body:");
                         for line in body.lines() {
                             output.push_str(&format!("\n  {}", line));
+                        }
+                        if truncated {
+                            output.push_str("\n  (truncated)");
+                        }
+                    }
+                } else {
+                    let line_count = symbol.line_end - symbol.line_start + 1;
+                    if line_count <= 50 {
+                        if let Some(body) =
+                            read_file_lines(&symbol.file_path, symbol.line_start, symbol.line_end)
+                        {
+                            output.push_str("|body:");
+                            for line in body.lines() {
+                                output.push_str(&format!("\n  {}", line));
+                            }
                         }
                     }
                 }
