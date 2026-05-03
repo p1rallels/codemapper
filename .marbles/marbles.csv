@@ -958,6 +958,7 @@ m-1f36,make ai output the default,default cm output should be ai everywhere unle
 m-022a,add grep-native query ux,support grep naming/semantics so exact/fast text-backed search feels natural,closed,0,pi,pi,pi,2026-05-03T06:24:47.772Z,2026-05-03T06:33:16.574Z,,
 m-7faf,improve chaining and piping ux,make cm consume stdin and compose like grep/rg for agent workflows,closed,0,pi,pi,pi,2026-05-03T06:24:47.781Z,2026-05-03T06:33:45.855Z,,
 m-12df,dogfood tests and commit,"run cargo checks/tests, dogfood cm on this repo, commit clean changes",closed,0,pi,pi,pi,2026-05-03T06:24:47.789Z,2026-05-03T06:35:30.909Z,,
+m-a78d,remove exact flag legacy,drop --exact aliases and help mentions now that grep is canonical,closed,0,pi,pi,pi,2026-05-03T06:40:17.332Z,2026-05-03T06:41:08.017Z,,
 m-fdb0,inspect github issue 14 cache bug,read issue details and reproduce the cache problem,closed,0,pi,pi,pi,2026-05-06T23:24:45.532Z,2026-05-06T23:28:11.763Z,,
 m-4387,verify cache issue 14 root cause,reproduce mismatch before fix and confirm fixed branch behavior,closed,0,pi,pi,pi,2026-05-06T23:30:04.838Z,2026-05-06T23:31:53.372Z,,
 m-a9cc,push cache fix pr for issue 14,push cache-fix and open github pr linked to issue 14,closed,0,pi,pi,pi,2026-05-06T23:34:30.747Z,2026-05-06T23:34:59.965Z,,
