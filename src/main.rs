@@ -473,8 +473,8 @@ WHEN TO USE:
         #[arg(default_value = ".")]
         path: PathBuf,
 
-        /// Use grep-style exact matching with text prefiltering (legacy alias: --exact)
-        #[arg(long = "grep", alias = "exact", default_value_t = false)]
+        /// Use grep-style exact matching with text prefiltering
+        #[arg(long = "grep", default_value_t = false)]
         grep: bool,
 
         /// Filter by symbol type: 'function', 'class', 'module', 'method', 'enum', 'static', 'heading', 'code_block', 'endpoint'
@@ -1269,8 +1269,8 @@ TIP: Run this after changing a function signature"
         #[arg(default_value = ".")]
         path: PathBuf,
 
-        /// Use grep/exact matching (default is fuzzy, legacy alias: --exact)
-        #[arg(long = "grep", alias = "exact", default_value_t = false)]
+        /// Use grep/exact matching (default is fuzzy)
+        #[arg(long = "grep", default_value_t = false)]
         grep: bool,
 
         /// Include markdown headings/code blocks as candidates (default: code symbols only)
