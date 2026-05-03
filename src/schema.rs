@@ -39,7 +39,12 @@ pub fn analyze_schema(
 
     let class_symbols: Vec<&Symbol> = symbols
         .into_iter()
-        .filter(|s| matches!(s.symbol_type, SymbolType::Class | SymbolType::Enum))
+        .filter(|s| {
+            matches!(
+                s.symbol_type,
+                SymbolType::Class | SymbolType::Enum | SymbolType::Module
+            )
+        })
         .collect();
 
     let mut schemas = Vec::new();
@@ -65,10 +70,7 @@ pub fn analyze_schema(
 }
 
 fn detect_language(path: &PathBuf) -> Language {
-    path.extension()
-        .and_then(|ext| ext.to_str())
-        .map(Language::from_extension)
-        .unwrap_or(Language::Unknown)
+    Language::from_path(path)
 }
 
 fn extract_fields(content: &str, symbol: &Symbol, language: Language) -> Result<Vec<FieldInfo>> {

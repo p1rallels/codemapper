@@ -1,5 +1,6 @@
 use crate::ignore;
 use crate::index::CodeIndex;
+use crate::indexer::matches_extension_filter;
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -11,7 +12,7 @@ use std::time::SystemTime;
 
 const CACHE_DIR_NAME: &str = ".codemapper";
 const CACHE_SUBDIR: &str = "cache";
-const CACHE_VERSION: &str = "1.3";
+const CACHE_VERSION: &str = "1.7";
 
 #[derive(Debug)]
 pub enum ValidationResult {
@@ -156,17 +157,14 @@ impl CacheManager {
                 continue;
             }
 
-            if let Some(ext) = path.extension() {
-                let ext_str = ext.to_string_lossy();
-                if extensions.iter().any(|&e| e == ext_str) {
-                    match Self::compute_file_metadata_single(path) {
-                        Ok(metadata) => {
-                            metadata_map.insert(path.to_path_buf(), metadata);
-                        }
-                        Err(_) => {
-                            // Skip files we can't read
-                            continue;
-                        }
+            if matches_extension_filter(path, extensions) {
+                match Self::compute_file_metadata_single(path) {
+                    Ok(metadata) => {
+                        metadata_map.insert(path.to_path_buf(), metadata);
+                    }
+                    Err(_) => {
+                        // Skip files we can't read
+                        continue;
                     }
                 }
             }
@@ -254,17 +252,14 @@ impl CacheManager {
                 continue;
             }
 
-            if let Some(ext) = path.extension() {
-                let ext_str = ext.to_string_lossy();
-                if extensions.iter().any(|e| e == &ext_str) {
-                    match fs::metadata(path) {
-                        Ok(metadata) => {
-                            let size = metadata.len();
-                            let mtime = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-                            stats.insert(path.to_path_buf(), (size, mtime));
-                        }
-                        Err(_) => continue,
+            if matches_extension_filter(path, extensions) {
+                match fs::metadata(path) {
+                    Ok(metadata) => {
+                        let size = metadata.len();
+                        let mtime = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+                        stats.insert(path.to_path_buf(), (size, mtime));
                     }
+                    Err(_) => continue,
                 }
             }
         }

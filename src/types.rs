@@ -3,6 +3,7 @@ use crate::models::{Language, Symbol, SymbolType};
 use anyhow::Result;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 /// What kind of type reference this is
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -104,8 +105,7 @@ pub fn analyze_types(
 
 /// Detect language from file path extension
 fn detect_language_from_path(path: &str) -> Language {
-    let ext = path.rsplit('.').next().unwrap_or_default().to_lowercase();
-    Language::from_extension(&ext)
+    Language::from_path(Path::new(path))
 }
 
 /// Parse signature to extract parameter types and return type
@@ -825,8 +825,11 @@ fn resolve_type(index: &CodeIndex, mut type_info: TypeInfo) -> TypeInfo {
         let symbols = index.query_symbol(&base_type);
 
         for symbol in symbols {
-            // Look for class, struct (Class type), or enum definitions
-            if matches!(symbol.symbol_type, SymbolType::Class | SymbolType::Enum) {
+            // Look for class, struct (Class type), module, or enum definitions
+            if matches!(
+                symbol.symbol_type,
+                SymbolType::Class | SymbolType::Enum | SymbolType::Module
+            ) {
                 type_info.defined_in = Some(format!(
                     "{}:{}",
                     symbol.file_path.display(),
@@ -839,15 +842,17 @@ fn resolve_type(index: &CodeIndex, mut type_info: TypeInfo) -> TypeInfo {
         // Try fuzzy search if exact match fails
         let fuzzy_symbols = index.fuzzy_search(&base_type);
         for symbol in fuzzy_symbols {
-            if matches!(symbol.symbol_type, SymbolType::Class | SymbolType::Enum) {
-                if symbol.name.to_lowercase() == base_type.to_lowercase() {
-                    type_info.defined_in = Some(format!(
-                        "{}:{}",
-                        symbol.file_path.display(),
-                        symbol.line_start
-                    ));
-                    return type_info;
-                }
+            if matches!(
+                symbol.symbol_type,
+                SymbolType::Class | SymbolType::Enum | SymbolType::Module
+            ) && symbol.name.to_lowercase() == base_type.to_lowercase()
+            {
+                type_info.defined_in = Some(format!(
+                    "{}:{}",
+                    symbol.file_path.display(),
+                    symbol.line_start
+                ));
+                return type_info;
             }
         }
     }

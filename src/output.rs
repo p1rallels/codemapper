@@ -188,6 +188,10 @@ impl OutputFormatter {
             index.symbols_by_type(SymbolType::Class)
         ));
         output.push_str(&format!(
+            "  - Modules: {}\n",
+            index.symbols_by_type(SymbolType::Module)
+        ));
+        output.push_str(&format!(
             "  - Methods: {}\n",
             index.symbols_by_type(SymbolType::Method)
         ));
@@ -284,6 +288,10 @@ impl OutputFormatter {
             &index.symbols_by_type(SymbolType::Class).to_string(),
         ]);
         stats_table.add_row(vec![
+            "Modules",
+            &index.symbols_by_type(SymbolType::Module).to_string(),
+        ]);
+        stats_table.add_row(vec![
             "Methods",
             &index.symbols_by_type(SymbolType::Method).to_string(),
         ]);
@@ -361,11 +369,12 @@ impl OutputFormatter {
         }
         output.push('\n');
 
-        output.push_str(&format!("FILES:{} SYMBOLS:{} FUNCTIONS:{} CLASSES:{} METHODS:{} ENUMS:{} STATICS:{} HEADINGS:{} CODE BLOCKS:{}\n",
+        output.push_str(&format!("FILES:{} SYMBOLS:{} FUNCTIONS:{} CLASSES:{} MODULES:{} METHODS:{} ENUMS:{} STATICS:{} HEADINGS:{} CODE BLOCKS:{}\n",
             index.total_files(),
             index.total_symbols(),
             index.symbols_by_type(SymbolType::Function),
             index.symbols_by_type(SymbolType::Class),
+            index.symbols_by_type(SymbolType::Module),
             index.symbols_by_type(SymbolType::Method),
             index.symbols_by_type(SymbolType::Enum),
             index.symbols_by_type(SymbolType::StaticField),
@@ -403,6 +412,7 @@ impl OutputFormatter {
                                 SymbolType::Endpoint => "ep",
                                 SymbolType::Interface => "if",
                                 SymbolType::TypeAlias => "ty",
+                                SymbolType::Module => "mod",
                             },
                             symbol.name,
                             symbol.line_start,
@@ -625,6 +635,7 @@ impl OutputFormatter {
                     SymbolType::Endpoint => "ep",
                     SymbolType::Interface => "if",
                     SymbolType::TypeAlias => "ty",
+                    SymbolType::Module => "mod",
                 },
                 symbol.file_path.display(),
                 symbol.line_start,
@@ -775,6 +786,10 @@ impl OutputFormatter {
             index.symbols_by_type(SymbolType::Class)
         ));
         output.push_str(&format!(
+            "- Modules: {}\n",
+            index.symbols_by_type(SymbolType::Module)
+        ));
+        output.push_str(&format!(
             "- Methods: {}\n",
             index.symbols_by_type(SymbolType::Method)
         ));
@@ -843,6 +858,10 @@ impl OutputFormatter {
             &index.symbols_by_type(SymbolType::Class).to_string(),
         ]);
         symbol_table.add_row(vec![
+            "Modules",
+            &index.symbols_by_type(SymbolType::Module).to_string(),
+        ]);
+        symbol_table.add_row(vec![
             "Methods",
             &index.symbols_by_type(SymbolType::Method).to_string(),
         ]);
@@ -901,9 +920,10 @@ impl OutputFormatter {
         output.push('\n');
 
         output.push_str(&format!(
-            "SYMS: f:{} c:{} m:{} e:{} s:{} h:{} cb:{} ep:{}\n",
+            "SYMS: f:{} c:{} mod:{} m:{} e:{} s:{} h:{} cb:{} ep:{}\n",
             index.symbols_by_type(SymbolType::Function),
             index.symbols_by_type(SymbolType::Class),
+            index.symbols_by_type(SymbolType::Module),
             index.symbols_by_type(SymbolType::Method),
             index.symbols_by_type(SymbolType::Enum),
             index.symbols_by_type(SymbolType::StaticField),
@@ -1114,6 +1134,7 @@ impl OutputFormatter {
                     SymbolType::Endpoint => "ep",
                     SymbolType::Interface => "if",
                     SymbolType::TypeAlias => "ty",
+                    SymbolType::Module => "mod",
                 },
                 sym.file_path.display()
             ));
@@ -1337,6 +1358,7 @@ impl OutputFormatter {
                     SymbolType::Endpoint => "ep",
                     SymbolType::Interface => "if",
                     SymbolType::TypeAlias => "ty",
+                    SymbolType::Module => "mod",
                 },
                 sym.file_path.display()
             ));
@@ -1439,6 +1461,7 @@ impl OutputFormatter {
                     SymbolType::Endpoint => "ep",
                     SymbolType::Interface => "if",
                     SymbolType::TypeAlias => "ty",
+                    SymbolType::Module => "mod",
                 },
                 caller.file_path,
                 caller.line
@@ -1541,6 +1564,7 @@ impl OutputFormatter {
                     SymbolType::Endpoint => "ep",
                     SymbolType::Interface => "if",
                     SymbolType::TypeAlias => "ty",
+                    SymbolType::Module => "mod",
                 },
                 callee.file_path,
                 callee.line
@@ -1638,6 +1662,7 @@ impl OutputFormatter {
                     SymbolType::Endpoint => "ep",
                     SymbolType::Interface => "if",
                     SymbolType::TypeAlias => "ty",
+                    SymbolType::Module => "mod",
                 },
                 test.file_path,
                 test.line,
@@ -1734,6 +1759,7 @@ impl OutputFormatter {
                     SymbolType::Endpoint => "ep",
                     SymbolType::Interface => "if",
                     SymbolType::TypeAlias => "ty",
+                    SymbolType::Module => "mod",
                 },
                 dep.file_path,
                 dep.line,
@@ -1879,6 +1905,7 @@ impl OutputFormatter {
                     SymbolType::Endpoint => "ep",
                     SymbolType::Interface => "if",
                     SymbolType::TypeAlias => "ty",
+                    SymbolType::Module => "mod",
                 },
                 info.file_path,
                 info.line
@@ -2080,6 +2107,7 @@ impl OutputFormatter {
                     SymbolType::Endpoint => "ep",
                     SymbolType::Interface => "if",
                     SymbolType::TypeAlias => "ty",
+                    SymbolType::Module => "mod",
                 },
                 entry.file_path,
                 entry.line
@@ -2434,6 +2462,7 @@ impl OutputFormatter {
                     SymbolType::Endpoint => "ep",
                     SymbolType::Interface => "if",
                     SymbolType::TypeAlias => "ty",
+                    SymbolType::Module => "mod",
                 },
                 step.file_path,
                 step.line
@@ -2677,6 +2706,7 @@ impl OutputFormatter {
                     SymbolType::Endpoint => "ep",
                     SymbolType::Interface => "if",
                     SymbolType::TypeAlias => "ty",
+                    SymbolType::Module => "mod",
                 },
                 symbol.file_path,
                 symbol.line
@@ -2926,6 +2956,7 @@ impl OutputFormatter {
                 match schema.symbol_type {
                     SymbolType::Class => "c",
                     SymbolType::Enum => "e",
+                    SymbolType::Module => "mod",
                     _ => "?",
                 },
                 schema.language.as_str(),

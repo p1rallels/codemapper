@@ -186,6 +186,7 @@ LANGUAGES SUPPORTED:
   ✓ Go           → Functions, structs, methods, interfaces
   ✓ C            → Functions, structs, includes
   ✓ Swift        → Functions, types (struct/class/enum/extension), methods, imports
+  ✓ Ruby         → Classes, modules, methods, generated attr/delegate/Rails DSL methods, mixins, callback refs, constants, requires
   ✓ Markdown     → Hierarchical headings, code blocks, endpoint-like routes (e.g. GET /v1/orders)
 
 GIT REQUIREMENTS:
@@ -208,7 +209,7 @@ COMMON FLAGS
 --context full       → Include docstrings and metadata
 --no-cache           → Skip cache, always reindex (troubleshooting)
 --rebuild-cache      → Force cache rebuild
---extensions py,rs   → Comma-separated file types to include (swift is included by default)
+--extensions py,rs   → Comma-separated file types to include (swift and ruby included by default)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -216,7 +217,7 @@ TROUBLESHOOTING
 
 NO SYMBOLS FOUND?
   ✓ Fuzzy matching by default (matches more)
-  ✓ Check --extensions py,js,ts (default: py,js,ts,jsx,tsx,rs,java,go,c,h,swift,md) — swift is INCLUDED by default
+  ✓ Check --extensions py,js,ts (default: py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md) — swift and ruby are INCLUDED by default
   ✓ Verify file encoding is UTF-8
   ✓ Run: cm stats . (to see what's indexed)
 
@@ -329,8 +330,11 @@ TYPICAL WORKFLOW:
         #[arg(default_value = ".")]
         path: PathBuf,
 
-        /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,md')
-        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,md")]
+        /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,rb,md')
+        #[arg(
+            long,
+            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md"
+        )]
         extensions: String,
 
         /// Disable cache (always reindex)
@@ -378,8 +382,11 @@ TYPICAL WORKFLOW:
         #[arg(long, default_value = "1", value_parser = clap::value_parser!(u8).range(1..=3))]
         level: u8,
 
-        /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,md')
-        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,md")]
+        /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,rb,md')
+        #[arg(
+            long,
+            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md"
+        )]
         extensions: String,
 
         /// Disable cache (always reindex)
@@ -464,7 +471,7 @@ WHEN TO USE:
         #[arg(long, default_value = "false")]
         exact: bool,
 
-        /// Filter by symbol type: 'function', 'class', 'method', 'enum', 'static', 'heading', 'code_block', 'endpoint'
+        /// Filter by symbol type: 'function', 'class', 'module', 'method', 'enum', 'static', 'heading', 'code_block', 'endpoint'
         #[arg(long)]
         r#type: Option<String>,
 
@@ -480,8 +487,11 @@ WHEN TO USE:
         #[arg(long, default_value = "false")]
         fast: bool,
 
-        /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,md')
-        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,md")]
+        /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,rb,md')
+        #[arg(
+            long,
+            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md"
+        )]
         extensions: String,
 
         /// Disable cache (always reindex)
@@ -645,8 +655,11 @@ WHEN TO USE:
         #[arg(long, default_value = "imports")]
         direction: String,
 
-        /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,md')
-        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,md")]
+        /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,rb,md')
+        #[arg(
+            long,
+            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md"
+        )]
         extensions: String,
 
         /// Disable cache (always reindex)
@@ -688,8 +701,11 @@ NOTE: For normal usage, use 'cm stats' or 'cm map' instead")]
         #[arg(default_value = ".")]
         path: PathBuf,
 
-        /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,md')
-        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,md")]
+        /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,rb,md')
+        #[arg(
+            long,
+            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md"
+        )]
         extensions: String,
     },
 
@@ -737,8 +753,11 @@ WHEN TO USE:
         #[arg(default_value = ".")]
         path: PathBuf,
 
-        /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,md')
-        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,md")]
+        /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,rb,md')
+        #[arg(
+            long,
+            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md"
+        )]
         extensions: String,
 
         /// Show anonymous/lambda functions (default: filtered out)
@@ -785,7 +804,10 @@ TYPICAL WORKFLOW:
         fuzzy: bool,
 
         /// Comma-separated file extensions to include
-        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,md")]
+        #[arg(
+            long,
+            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md"
+        )]
         extensions: String,
 
         /// Disable cache (always reindex)
@@ -838,7 +860,10 @@ TYPICAL WORKFLOW:
         fuzzy: bool,
 
         /// Comma-separated file extensions to include
-        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,md")]
+        #[arg(
+            long,
+            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md"
+        )]
         extensions: String,
 
         /// Disable cache (always reindex)
@@ -894,7 +919,10 @@ TYPICAL WORKFLOW:
         fuzzy: bool,
 
         /// Comma-separated file extensions to include
-        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,md")]
+        #[arg(
+            long,
+            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md"
+        )]
         extensions: String,
 
         /// Disable cache (always reindex)
@@ -940,7 +968,10 @@ TYPICAL WORKFLOW:
         path: PathBuf,
 
         /// Comma-separated file extensions to include
-        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,md")]
+        #[arg(
+            long,
+            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md"
+        )]
         extensions: String,
 
         /// Disable cache (always reindex)
@@ -998,8 +1029,11 @@ WHEN TO USE:
         #[arg(default_value = ".")]
         path: PathBuf,
 
-        /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,md')
-        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,md")]
+        /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,rb,md')
+        #[arg(
+            long,
+            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md"
+        )]
         extensions: String,
 
         /// Show only breaking changes (deleted symbols, signature changes)
@@ -1052,7 +1086,10 @@ WHEN TO USE:
         path: PathBuf,
 
         /// Comma-separated file extensions to include
-        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,md")]
+        #[arg(
+            long,
+            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md"
+        )]
         extensions: String,
 
         /// Disable cache (always reindex)
@@ -1115,7 +1152,10 @@ WHEN TO USE:
         fuzzy: bool,
 
         /// Comma-separated file extensions to include
-        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,md")]
+        #[arg(
+            long,
+            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md"
+        )]
         extensions: String,
 
         /// Disable cache (always reindex)
@@ -1168,7 +1208,10 @@ TIP: Run this after changing a function signature"
         all: bool,
 
         /// Comma-separated file extensions to include
-        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,md")]
+        #[arg(
+            long,
+            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md"
+        )]
         extensions: String,
 
         /// Disable cache (always reindex)
@@ -1213,7 +1256,10 @@ TYPICAL WORKFLOW:
         path: PathBuf,
 
         /// Comma-separated file extensions to include
-        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,md")]
+        #[arg(
+            long,
+            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md"
+        )]
         extensions: String,
 
         /// Disable cache (always reindex)
@@ -1339,7 +1385,10 @@ WHEN TO USE:
         fuzzy: bool,
 
         /// Comma-separated file extensions to include
-        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,md")]
+        #[arg(
+            long,
+            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md"
+        )]
         extensions: String,
 
         /// Disable cache (always reindex)
@@ -1406,7 +1455,10 @@ WHEN TO USE:
         fuzzy: bool,
 
         /// Comma-separated file extensions to include
-        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,md")]
+        #[arg(
+            long,
+            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md"
+        )]
         extensions: String,
 
         /// Disable cache (always reindex)
@@ -1463,7 +1515,10 @@ WHEN TO USE:
         fuzzy: bool,
 
         /// Comma-separated file extensions to include
-        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,md")]
+        #[arg(
+            long,
+            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md"
+        )]
         extensions: String,
 
         /// Disable cache (always reindex)
@@ -1521,7 +1576,10 @@ TYPICAL WORKFLOW:
         delete: Option<String>,
 
         /// Comma-separated file extensions to include
-        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,md")]
+        #[arg(
+            long,
+            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md"
+        )]
         extensions: String,
 
         /// Disable cache (always reindex)
@@ -1569,7 +1627,10 @@ TYPICAL WORKFLOW:
         path: PathBuf,
 
         /// Comma-separated file extensions to include
-        #[arg(long, default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,md")]
+        #[arg(
+            long,
+            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md"
+        )]
         extensions: String,
 
         /// Disable cache (always reindex)
@@ -2045,9 +2106,7 @@ fn try_load_or_rebuild(
                     let path = change.path.clone();
                     let result = match std::fs::read_to_string(&path) {
                         Ok(content) => {
-                            let language = models::Language::from_extension(
-                                path.extension().and_then(|e| e.to_str()).unwrap_or(""),
-                            );
+                            let language = models::Language::from_path(&path);
 
                             match indexer::index_file(
                                 &path,
@@ -2288,7 +2347,7 @@ fn cmd_query(
         match SymbolType::from_str(type_str) {
             Some(t) => Some(t),
             None => {
-                eprintln!("{} Invalid symbol type '{}', valid types: function, class, method, enum, static, heading, code_block, endpoint", "Error:".red(), type_str);
+                eprintln!("{} Invalid symbol type '{}', valid types: function, class, module, method, enum, static, heading, code_block, endpoint", "Error:".red(), type_str);
                 return Ok(());
             }
         }
@@ -2474,11 +2533,72 @@ fn cmd_query(
             }
 
             if owned_symbols.is_empty() {
-                println!(
-                    "{} No symbols found matching '{}'",
-                    "✗".red(),
-                    symbol.bold()
+                eprintln!(
+                    "{} No AST matches in text candidates, falling back to full AST scan",
+                    "→".yellow()
                 );
+                let index =
+                    try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
+                let mut symbols = if fuzzy {
+                    index.fuzzy_search(&symbol)
+                } else {
+                    index.query_symbol(&symbol)
+                };
+
+                if let Some(ref filter_type) = type_filter {
+                    symbols.retain(|s| s.symbol_type == *filter_type);
+                }
+
+                if !extra_type_filters.is_empty() {
+                    let extra: Vec<&Symbol> = index
+                        .all_symbols()
+                        .into_iter()
+                        .filter(|s| extra_type_filters.contains(&s.symbol_type))
+                        .collect();
+                    symbols.extend(extra);
+                    dedup_symbols_by_ref(&mut symbols);
+                }
+
+                if skip_anonymous {
+                    symbols.retain(|s| s.name != "anonymous");
+                }
+
+                if exports_only {
+                    symbols.retain(|s| s.is_exported);
+                }
+
+                if let Some(ref sec) = section {
+                    let sec = sec.trim();
+                    if !sec.is_empty() {
+                        let sec_prefix = format!("{} > ", sec);
+                        symbols.retain(|s| {
+                            s.file_path
+                                .extension()
+                                .and_then(|e| e.to_str())
+                                .map(|e| e.eq_ignore_ascii_case("md"))
+                                .unwrap_or(false)
+                                && (s.name == sec || s.name.starts_with(&sec_prefix))
+                        });
+                    }
+                }
+
+                if let Some(n) = limit {
+                    symbols.truncate(n);
+                }
+
+                if symbols.is_empty() {
+                    println!(
+                        "{} No symbols found matching '{}'",
+                        "✗".red(),
+                        symbol.bold()
+                    );
+                    return Ok(());
+                }
+
+                let show_context = context.to_lowercase() == "full";
+                let formatter = OutputFormatter::new(format);
+                let output = formatter.format_query(symbols, show_context, show_body);
+                println!("{}", output);
                 return Ok(());
             }
 
@@ -2609,18 +2729,8 @@ fn count_indexable_files(path: &PathBuf, extensions: &[&str]) -> Result<usize> {
             continue;
         }
 
-        if extensions.is_empty() {
+        if indexer::matches_extension_filter(entry.path(), extensions) {
             count += 1;
-        } else {
-            if entry
-                .path()
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .map(|ext| extensions.contains(&ext))
-                .unwrap_or(false)
-            {
-                count += 1;
-            }
         }
     }
 
@@ -3128,6 +3238,7 @@ fn cmd_inspect(
                                 models::SymbolType::Endpoint => "ep",
                                 models::SymbolType::Interface => "if",
                                 models::SymbolType::TypeAlias => "ty",
+                                models::SymbolType::Module => "mod",
                             },
                             symbol.line_start,
                             symbol.line_end
@@ -3208,6 +3319,7 @@ fn cmd_inspect(
                             models::SymbolType::Endpoint => "ep",
                             models::SymbolType::Interface => "if",
                             models::SymbolType::TypeAlias => "ty",
+                            models::SymbolType::Module => "mod",
                         },
                         symbol.line_start,
                         symbol.line_end

@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Language {
@@ -13,11 +13,12 @@ pub enum Language {
     Swift,
     Markdown,
     Unknown,
+    Ruby,
 }
 
 impl Language {
     pub fn from_extension(ext: &str) -> Self {
-        match ext {
+        match ext.to_ascii_lowercase().as_str() {
             "py" => Language::Python,
             "js" | "jsx" => Language::JavaScript,
             "ts" | "tsx" => Language::TypeScript,
@@ -26,7 +27,33 @@ impl Language {
             "go" => Language::Go,
             "c" | "h" => Language::C,
             "swift" => Language::Swift,
+            "rb" | "rbi" | "rake" | "gemspec" | "ru" => Language::Ruby,
             "md" => Language::Markdown,
+            _ => Language::Unknown,
+        }
+    }
+
+    pub fn from_path(path: &Path) -> Self {
+        let by_extension = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(Language::from_extension)
+            .unwrap_or(Language::Unknown);
+
+        if by_extension != Language::Unknown {
+            return by_extension;
+        }
+
+        let file_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(|name| name.to_ascii_lowercase());
+
+        match file_name.as_deref() {
+            Some("gemfile" | "rakefile" | "capfile" | "guardfile" | "thorfile") => Language::Ruby,
+            Some("podfile" | "fastfile" | "appraisals" | "dangerfile" | ".irbrc" | ".pryrc") => {
+                Language::Ruby
+            }
             _ => Language::Unknown,
         }
     }
@@ -41,6 +68,7 @@ impl Language {
             Language::Go => "go",
             Language::C => "c",
             Language::Swift => "swift",
+            Language::Ruby => "ruby",
             Language::Markdown => "markdown",
             Language::Unknown => "unknown",
         }
@@ -59,6 +87,7 @@ pub enum SymbolType {
     Endpoint,
     Interface,
     TypeAlias,
+    Module,
 }
 
 impl SymbolType {
@@ -74,6 +103,7 @@ impl SymbolType {
             SymbolType::Endpoint => "endpoint",
             SymbolType::Interface => "interface",
             SymbolType::TypeAlias => "type",
+            SymbolType::Module => "module",
         }
     }
 
@@ -89,6 +119,7 @@ impl SymbolType {
             "endpoint" | "endpoints" => Some(SymbolType::Endpoint),
             "interface" => Some(SymbolType::Interface),
             "type" | "typealias" | "type_alias" => Some(SymbolType::TypeAlias),
+            "module" => Some(SymbolType::Module),
             _ => None,
         }
     }
@@ -105,6 +136,7 @@ impl SymbolType {
             "endpoints" => Some(SymbolType::Endpoint),
             "interfaces" => Some(SymbolType::Interface),
             "types" | "typealiases" | "type_aliases" => Some(SymbolType::TypeAlias),
+            "modules" => Some(SymbolType::Module),
             _ => None,
         }
     }
