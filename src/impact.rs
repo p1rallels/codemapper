@@ -17,6 +17,7 @@ pub fn cmd_impact(
     format: OutputFormat,
     cache_dir: Option<&Path>,
 ) -> Result<()> {
+    let symbol = crate::pipe::read_symbol_arg(symbol)?;
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
     let index = crate::try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
 
