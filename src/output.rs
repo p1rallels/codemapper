@@ -25,11 +25,11 @@ pub enum OutputFormat {
 impl OutputFormat {
     pub fn from_str(s: &str) -> Result<Self, String> {
         match s.to_lowercase().as_str() {
-            "default" => Ok(Self::Default),
-            "human" => Ok(Self::Human),
             "ai" => Ok(Self::AI),
+            "human" | "table" | "tables" => Ok(Self::Human),
+            "default" | "markdown" | "md" => Ok(Self::Default),
             _ => Err(format!(
-                "Invalid format '{}'. Valid options: default, human, ai",
+                "Invalid format '{}'. Valid options: ai, human, default",
                 s
             )),
         }

@@ -13,6 +13,7 @@ mod inspect_md;
 mod models;
 mod output;
 mod parser;
+mod pipe;
 mod schema;
 mod snapshot;
 mod types;
@@ -152,9 +153,9 @@ COMMANDS (organized by task)
 KEY FACTS
 
 OUTPUT FORMATS:
-  --format default  → Markdown (documentation, readable)
+  --format ai       → Compact (LLM context, token-efficient) ← DEFAULT
   --format human    → Tables (terminal viewing, pretty)
-  --format ai       → Compact (LLM context, token-efficient) ← RECOMMENDED
+  --format default  → Markdown (documentation, readable)
 
 PERFORMANCE:
   Small repos (< 100 files)    → < 20ms instant
@@ -172,9 +173,9 @@ CACHING:
   Flags: --no-cache (skip), --rebuild-cache (force rebuild)
 
 SEARCH MODES:
-  Exact   → cm query MyClass           (case-sensitive, precise)
   Fuzzy   → cm query myclass          (DEFAULT: case-insensitive, flexible)
-  Exact   → cm query myclass --exact  (strict matching)
+  Grep    → cm query MyClass --grep   (case-sensitive + text prefilter)
+  Grep    → cm grep MyClass           (exact symbol search, rg-style muscle memory)
   Multi   → cm query 'foo|bar|baz'   (OR search, matches any term)
 
 LANGUAGES SUPPORTED:
@@ -200,8 +201,8 @@ GIT REQUIREMENTS:
 
 COMMON FLAGS
 
---exact              → Strict matching (default is fuzzy)
---format <format>    → Output style: default (markdown), human (tables), ai (compact)
+--grep               → Strict grep-backed matching (default query mode is fuzzy)
+--format <format>    → Output style: ai (default), human (tables), default (markdown)
 --show-body          → Include actual code (not just signatures)
 --exports-only       → Public symbols only (functions with export, pub, etc.)
 --full               → Include anonymous/lambda functions (normally hidden)
@@ -232,8 +233,8 @@ GIT COMMANDS FAIL?
   ✓ File must have git history (blame, history)
 
 OUTPUT TOO VERBOSE?
-  ✓ Use --format ai (most compact, LLM-optimized)
-  ✓ Use --format human (pretty tables for terminal)
+  ✓ AI format is the default for compact LLM-ready output
+  ✓ Use --format human for terminal tables
   ✓ Use --context minimal (signatures only)
 
 NO TEST COVERAGE?
@@ -244,7 +245,7 @@ NO TEST COVERAGE?
 EXAMPLES:
   # Get the lay of the land
   cm stats .                           # Project overview
-  cm map . --level 2 --format ai       # File structure
+  cm map . --level 2                   # File structure (AI format by default)
   
   # Find and explore
   cm query authenticate                # Search (fuzzy by default)
@@ -278,8 +279,8 @@ For detailed help on any command: cm <command> --help
 "
 )]
 struct Cli {
-    /// Output format: 'default' (markdown), 'human' (tables), 'ai' (token-efficient)
-    #[arg(short, long, global = true, default_value = "default")]
+    /// Output format: 'ai' (default), 'human' (tables), or 'default' (markdown)
+    #[arg(short, long, global = true, default_value = "ai")]
     format: String,
 
     /// Override cache directory location (default: .codemapper in project root)
@@ -402,15 +403,15 @@ TYPICAL WORKFLOW:
     #[command(
         about = "Search for functions, classes, and methods across your codebase",
         long_about = "USE CASE: The primary command for finding code
-  • Exact search: Find 'authenticate' (case-sensitive)
   • Fuzzy search: Find 'auth' matches 'authenticate', 'Authorization', etc.
+  • Grep search: Find exact symbols with text-prefilter speed
   • Fast mode: Auto-enables for 1000+ files (10-100x speedup)
   • Results are cached for instant loading (< 10ms for most projects)
 
 SEARCH MODES:
-  Exact   → cm query MyClass              (case-sensitive, precise)
   Fuzzy   → cm query myclass              (DEFAULT: case-insensitive, flexible)
-  Exact   → cm query myclass --exact      (strict matching)
+  Grep    → cm query MyClass --grep       (case-sensitive + text prefilter)
+  Grep    → cm grep MyClass               (exact symbol search, rg-style muscle memory)
   Multi   → cm query 'foo|bar|baz'        (OR search, matches any term)
 
 CONTEXT OPTIONS:
@@ -424,7 +425,12 @@ PERFORMANCE (Fast Mode):
   • Auto-enabled for 1000+ files
   • Two-stage: ripgrep text search → AST validation
 
-TIP: Start with fuzzy search, it's more forgiving"
+PIPELINES:
+  cm query Parser | cm inspect -          → inspect files from prior results
+  cm query 'parse|index' | cm callers -   → chase callers for prior symbols
+  cm map . --level 2 | cm inspect -       → inspect files emitted by cm
+
+TIP: Start with fuzzy search, use grep mode when you want strict symbols"
     )]
     #[command(after_help = "EXAMPLES:
   # Basic searches
@@ -442,14 +448,14 @@ TIP: Start with fuzzy search, it's more forgiving"
 
   # OR search (pipe-separated)
   cm query 'parse|index|cache'               # Match any of the terms
-  cm query 'Foo|Bar' --exact                 # Exact match on multiple names
+  cm query 'Foo|Bar' --grep                  # Grep/exact match on multiple names
 
   # Output formats
   cm query Parser --format human             # Pretty tables
-  cm query CodeIndex --format ai             # Token-efficient for LLMs
+  cm query CodeIndex                         # AI format is default
 
 TYPICAL WORKFLOW:
-  1. Quick fuzzy search: cm query auth --fuzzy
+  1. Quick fuzzy search: cm query auth
   2. Get more context: cm query authenticate --context full
   3. See implementation: cm query authenticate --show-body
   4. Find usage: cm deps authenticate --direction used-by
@@ -460,16 +466,16 @@ WHEN TO USE:
   ✓ \"What methods does the User class have?\"
   ✓ \"Show me the validate_input implementation\"")]
     Query {
-        /// Symbol name to search for (supports 'foo|bar|baz' OR syntax)
+        /// Symbol name to search for (supports 'foo|bar|baz' OR syntax, '-' reads stdin)
         symbol: String,
 
         /// Directory path to search in
         #[arg(default_value = ".")]
         path: PathBuf,
 
-        /// Use exact matching instead of fuzzy matching (default is fuzzy)
-        #[arg(long, default_value = "false")]
-        exact: bool,
+        /// Use grep-style exact matching with text prefiltering (legacy alias: --exact)
+        #[arg(long = "grep", alias = "exact", default_value_t = false)]
+        grep: bool,
 
         /// Filter by symbol type: 'function', 'class', 'module', 'method', 'enum', 'static', 'heading', 'code_block', 'endpoint'
         #[arg(long)]
@@ -486,6 +492,78 @@ WHEN TO USE:
         /// Enable fast mode explicitly (auto-enabled for 1000+ files)
         #[arg(long, default_value = "false")]
         fast: bool,
+
+        /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,rb,md')
+        #[arg(
+            long,
+            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md"
+        )]
+        extensions: String,
+
+        /// Disable cache (always reindex)
+        #[arg(long, default_value_t = false)]
+        no_cache: bool,
+
+        /// Force rebuild cache (invalidate and reindex)
+        #[arg(long, default_value_t = false)]
+        rebuild_cache: bool,
+
+        /// Show anonymous/lambda functions (default: filtered out)
+        #[arg(long, default_value_t = false)]
+        full: bool,
+
+        /// Show only exported/public symbols (functions/classes with export keyword, pub visibility, etc.)
+        #[arg(long, default_value_t = false)]
+        exports_only: bool,
+
+        /// Markdown only: scope results to a heading path (e.g. "Orders" or "Orders > Order Strategy")
+        #[arg(long)]
+        section: Option<String>,
+
+        /// Maximum number of results to return (prevents overwhelming output)
+        #[arg(long)]
+        limit: Option<usize>,
+    },
+
+    /// [SEARCH] Exact symbol search with grep-style text prefiltering
+    #[command(
+        alias = "g",
+        about = "Grep-style exact symbol search backed by AST validation",
+        long_about = "USE CASE: Replace rg/grep muscle memory with cm-native symbol search
+  • Uses text prefiltering first, then validates matches with the parser
+  • Case-sensitive exact symbol matching by default
+  • Outputs AI format by default, so results chain cleanly into other cm commands
+
+PIPELINES:
+  cm grep Parser | cm inspect -
+  cm grep 'parse|index' | cm callers -
+  cm grep CodeIndex --show-body"
+    )]
+    #[command(after_help = "EXAMPLES:
+  cm grep Parser                         # Exact symbol search
+  cm grep 'parse|index' ./src            # OR search in src
+  cm grep CodeIndex --show-body          # Show implementation when small enough
+  cm grep Parser | cm inspect -          # Inspect files from results
+  cm grep parse | cm callers -           # Find callers of matched symbols")]
+    Grep {
+        /// Symbol pattern to search for (supports 'foo|bar|baz' OR syntax, '-' reads stdin)
+        pattern: String,
+
+        /// Directory path to search in
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Filter by symbol type: 'function', 'class', 'module', 'method', 'enum', 'static', 'heading', 'code_block', 'endpoint'
+        #[arg(long)]
+        r#type: Option<String>,
+
+        /// Context level: 'minimal' (signatures only) or 'full' (includes docstrings)
+        #[arg(long, default_value = "minimal")]
+        context: String,
+
+        /// Show the actual code implementation in results
+        #[arg(long, default_value = "false")]
+        show_body: bool,
 
         /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,rb,md')
         #[arg(
@@ -1179,7 +1257,7 @@ TIP: Run this after changing a function signature"
     )]
     #[command(after_help = "EXAMPLES:
   cm impact symbols_by_type               # quick: counts + top callsites/tests
-  cm impact parse_file ./src --exact      # restrict scope + exact match
+  cm impact parse_file ./src --grep       # restrict scope + exact match
   cm impact auth . --format ai            # token-efficient output
   cm impact output --include-docs         # allow matching headings/code blocks
   cm impact big_function --all            # print full lists (no truncation)")]
@@ -1191,9 +1269,9 @@ TIP: Run this after changing a function signature"
         #[arg(default_value = ".")]
         path: PathBuf,
 
-        /// Use exact matching (default is fuzzy)
-        #[arg(long, default_value = "false")]
-        exact: bool,
+        /// Use grep/exact matching (default is fuzzy, legacy alias: --exact)
+        #[arg(long = "grep", alias = "exact", default_value_t = false)]
+        grep: bool,
 
         /// Include markdown headings/code blocks as candidates (default: code symbols only)
         #[arg(long, default_value_t = false)]
@@ -1682,7 +1760,7 @@ fn main() -> Result<()> {
         Commands::Query {
             symbol,
             path,
-            exact,
+            grep,
             r#type,
             context,
             show_body,
@@ -1699,8 +1777,43 @@ fn main() -> Result<()> {
                 symbol,
                 path,
                 context,
-                !exact, // Invert: default is fuzzy, --exact disables it
-                fast,
+                !grep,
+                fast || grep,
+                grep,
+                show_body,
+                r#type,
+                section,
+                extensions,
+                no_cache,
+                rebuild_cache,
+                !full,
+                exports_only,
+                format,
+                limit,
+                cache_dir,
+            )?;
+        }
+        Commands::Grep {
+            pattern,
+            path,
+            r#type,
+            context,
+            show_body,
+            extensions,
+            no_cache,
+            rebuild_cache,
+            full,
+            exports_only,
+            section,
+            limit,
+        } => {
+            cmd_query(
+                pattern,
+                path,
+                context,
+                false,
+                true,
+                true,
                 show_body,
                 r#type,
                 section,
@@ -1877,7 +1990,7 @@ fn main() -> Result<()> {
         Commands::Impact {
             symbol,
             path,
-            exact,
+            grep,
             include_docs,
             limit,
             all,
@@ -1888,7 +2001,7 @@ fn main() -> Result<()> {
             impact::cmd_impact(
                 symbol,
                 path,
-                exact,
+                grep,
                 include_docs,
                 limit,
                 all,
@@ -2290,6 +2403,7 @@ fn cmd_query(
     context: String,
     fuzzy: bool,
     fast: bool,
+    grep_mode: bool,
     show_body: bool,
     symbol_type_filter: Option<String>,
     section: Option<String>,
@@ -2305,6 +2419,7 @@ fn cmd_query(
     use fast_search::GrepFilter;
     use models::SymbolType;
 
+    let symbol = pipe::read_symbol_arg(symbol)?;
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
 
     // Check if symbol terms are plural forms of symbol types (e.g., "functions", "classes")
@@ -2376,7 +2491,9 @@ fn cmd_query(
     let use_fast_mode = !search_all && (fast || file_count >= 1000);
 
     if use_fast_mode {
-        if fast {
+        if grep_mode {
+            eprintln!("{} Grep mode enabled ({} files)", "→".cyan(), file_count);
+        } else if fast {
             eprintln!(
                 "{} Fast mode enabled by --fast flag ({} files)",
                 "→".cyan(),
@@ -2931,6 +3048,24 @@ fn cmd_inspect(
     format: OutputFormat,
 ) -> Result<()> {
     use std::fs;
+
+    if pipe::is_stdin_path(&file_path) {
+        for path in pipe::read_path_arg(file_path)? {
+            cmd_inspect(
+                path,
+                show_body,
+                tree,
+                level,
+                section.clone(),
+                sizes,
+                code_blocks,
+                skip_anonymous,
+                exports_only,
+                format,
+            )?;
+        }
+        return Ok(());
+    }
 
     if !file_path.exists() {
         anyhow::bail!("File does not exist: {}", file_path.display());
@@ -3507,6 +3642,7 @@ fn cmd_callers(
     format: OutputFormat,
     cache_dir: Option<&Path>,
 ) -> Result<()> {
+    let symbol = pipe::read_symbol_arg(symbol)?;
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
     let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
 
@@ -3596,6 +3732,7 @@ fn cmd_callees(
     format: OutputFormat,
     cache_dir: Option<&Path>,
 ) -> Result<()> {
+    let symbol = pipe::read_symbol_arg(symbol)?;
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
     let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
 
@@ -3683,6 +3820,7 @@ fn cmd_tests(
     format: OutputFormat,
     cache_dir: Option<&Path>,
 ) -> Result<()> {
+    let symbol = pipe::read_symbol_arg(symbol)?;
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
     let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
 
@@ -3827,6 +3965,8 @@ fn cmd_trace(
     format: OutputFormat,
     cache_dir: Option<&Path>,
 ) -> Result<()> {
+    let from = pipe::read_symbol_arg(from)?;
+    let to = pipe::read_symbol_arg(to)?;
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
     let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
 
@@ -3876,6 +4016,21 @@ fn cmd_test_deps(
     format: OutputFormat,
     cache_dir: Option<&Path>,
 ) -> Result<()> {
+    if pipe::is_stdin_path(&test_file) {
+        for file in pipe::read_path_arg(test_file)? {
+            cmd_test_deps(
+                file,
+                path.clone(),
+                extensions.clone(),
+                no_cache,
+                rebuild_cache,
+                format,
+                cache_dir,
+            )?;
+        }
+        return Ok(());
+    }
+
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
 
     let abs_test_file = if test_file.is_absolute() {
@@ -3924,6 +4079,7 @@ fn cmd_test_deps(
 }
 
 fn cmd_blame(symbol: String, file: PathBuf, format: OutputFormat) -> Result<()> {
+    let symbol = pipe::read_symbol_arg(symbol)?;
     eprintln!(
         "{} Finding last modification of '{}'...",
         "→".cyan(),
@@ -3949,6 +4105,7 @@ fn cmd_blame(symbol: String, file: PathBuf, format: OutputFormat) -> Result<()> 
 }
 
 fn cmd_history(symbol: String, file: PathBuf, format: OutputFormat) -> Result<()> {
+    let symbol = pipe::read_symbol_arg(symbol)?;
     eprintln!("{} Tracing history of '{}'...", "→".cyan(), symbol.bold());
 
     let start = Instant::now();
@@ -3986,6 +4143,7 @@ fn cmd_implements(
     format: OutputFormat,
     cache_dir: Option<&Path>,
 ) -> Result<()> {
+    let interface = pipe::read_symbol_arg(interface)?;
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
     let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
 
@@ -4034,6 +4192,7 @@ fn cmd_types(
     format: OutputFormat,
     cache_dir: Option<&Path>,
 ) -> Result<()> {
+    let symbol = pipe::read_symbol_arg(symbol)?;
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
     let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
 
@@ -4078,6 +4237,7 @@ fn cmd_schema(
     format: OutputFormat,
     cache_dir: Option<&Path>,
 ) -> Result<()> {
+    let symbol = pipe::read_symbol_arg(symbol)?;
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
     let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
 

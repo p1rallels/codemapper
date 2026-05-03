@@ -88,13 +88,7 @@ pub fn find_callers(index: &CodeIndex, symbol_name: &str, fuzzy: bool) -> Result
     let mut callers = Vec::new();
     let mut seen = HashSet::new();
 
-    // if user gave `Type::method`, match the call name as usual *and* filter by qualifier in the line context
     let raw = symbol_name.trim();
-    let needle = normalize_qualified_name(raw);
-    let qualified_needle = raw.to_string();
-
-    let qualified_context = qualifier_context_pattern(raw);
-    let qualified_context_lower = qualified_context.as_ref().map(|s| s.to_lowercase());
 
     for file_info in index.files() {
         let content = match fs::read_to_string(&file_info.path) {
@@ -105,33 +99,7 @@ pub fn find_callers(index: &CodeIndex, symbol_name: &str, fuzzy: bool) -> Result
         let calls = extract_calls_from_file(&content, &file_info.path, file_info.language)?;
 
         for (call_name, line, context) in calls {
-            let call_needle = normalize_qualified_name(&call_name);
-
-            let base_matches = if fuzzy {
-                call_needle.to_lowercase().contains(&needle.to_lowercase())
-                    || call_name
-                        .to_lowercase()
-                        .contains(&qualified_needle.to_lowercase())
-            } else {
-                call_needle == needle || call_name == qualified_needle
-            };
-
-            let matches = if let Some(ref qual) = qualified_context_lower {
-                if !base_matches {
-                    false
-                } else {
-                    let ctx_no_ws: String = context
-                        .chars()
-                        .filter(|c| !c.is_whitespace())
-                        .collect::<String>()
-                        .to_lowercase();
-                    ctx_no_ws.contains(qual)
-                }
-            } else {
-                base_matches
-            };
-
-            if matches {
+            if call_matches_symbol(raw, &call_name, &context, fuzzy) {
                 let key = format!("{}:{}", file_info.path.display(), line);
                 if seen.contains(&key) {
                     continue;
@@ -230,6 +198,49 @@ pub fn find_callees(index: &CodeIndex, symbol_name: &str, fuzzy: bool) -> Result
     }
 
     Ok(all_callees)
+}
+
+fn call_matches_symbol(symbol_query: &str, call_name: &str, context: &str, fuzzy: bool) -> bool {
+    symbol_terms(symbol_query).iter().any(|term| {
+        let needle = normalize_qualified_name(term);
+        let call_needle = normalize_qualified_name(call_name);
+        let base_matches = if fuzzy {
+            call_needle.to_lowercase().contains(&needle.to_lowercase())
+                || call_name.to_lowercase().contains(&term.to_lowercase())
+        } else {
+            call_needle == needle || call_name == *term
+        };
+
+        if !base_matches {
+            return false;
+        }
+
+        qualifier_context_pattern(term)
+            .map(|qual| {
+                context
+                    .chars()
+                    .filter(|c| !c.is_whitespace())
+                    .collect::<String>()
+                    .to_lowercase()
+                    .contains(&qual.to_lowercase())
+            })
+            .unwrap_or(true)
+    })
+}
+
+fn symbol_terms(symbol_query: &str) -> Vec<String> {
+    let terms: Vec<String> = symbol_query
+        .split('|')
+        .map(|term| term.trim())
+        .filter(|term| !term.is_empty())
+        .map(str::to_string)
+        .collect();
+
+    if terms.is_empty() {
+        vec![symbol_query.trim().to_string()]
+    } else {
+        terms
+    }
 }
 
 fn normalize_qualified_name(name: &str) -> String {
@@ -1247,15 +1258,7 @@ pub fn find_tests(index: &CodeIndex, symbol_name: &str, fuzzy: bool) -> Result<V
         let calls = extract_calls_from_file(&content, &file_info.path, file_info.language)?;
 
         for (call_name, line, context) in calls {
-            let matches = if fuzzy {
-                call_name
-                    .to_lowercase()
-                    .contains(&symbol_name.to_lowercase())
-            } else {
-                call_name == symbol_name
-            };
-
-            if !matches {
+            if !call_matches_symbol(symbol_name, &call_name, &context, fuzzy) {
                 continue;
             }
 

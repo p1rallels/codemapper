@@ -1,5 +1,6 @@
 use anyhow::Result;
 use regex::Regex;
+use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 use streaming_iterator::StreamingIterator;
@@ -43,6 +44,36 @@ pub fn find_implementations(
     fuzzy: bool,
     trait_only: bool,
 ) -> Result<Vec<Implementation>> {
+    let terms: Vec<&str> = interface
+        .split('|')
+        .map(str::trim)
+        .filter(|term| !term.is_empty())
+        .collect();
+
+    if terms.len() > 1 {
+        let mut seen = HashSet::new();
+        let mut all = Vec::new();
+        for term in terms {
+            for implementation in find_implementations(index, term, fuzzy, trait_only)? {
+                let key = (
+                    implementation.implementor_name.clone(),
+                    implementation.interface_name.clone(),
+                    implementation.file_path.clone(),
+                    implementation.line,
+                );
+                if seen.insert(key) {
+                    all.push(implementation);
+                }
+            }
+        }
+        all.sort_by(|a, b| {
+            a.file_path
+                .cmp(&b.file_path)
+                .then_with(|| a.line.cmp(&b.line))
+        });
+        return Ok(all);
+    }
+
     let mut results = Vec::new();
     let interface_lower = interface.to_lowercase();
 
