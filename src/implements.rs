@@ -2,6 +2,8 @@ use anyhow::Result;
 use regex::Regex;
 use std::fs;
 use std::path::PathBuf;
+use streaming_iterator::StreamingIterator;
+use tree_sitter::{Node, Parser, Query, QueryCursor};
 
 use crate::index::CodeIndex;
 use crate::models::Language;
@@ -64,6 +66,18 @@ pub fn find_implementations(
                 find_java_implementations(&content, interface, fuzzy, &interface_lower)
             }
             Language::Go => find_go_implementations(&content, interface, fuzzy, &interface_lower),
+            Language::Ruby => {
+                if ruby_content_may_reference_interface(
+                    &content,
+                    interface,
+                    fuzzy,
+                    &interface_lower,
+                ) {
+                    find_ruby_implementations(&content, interface, fuzzy, &interface_lower)
+                } else {
+                    Vec::new()
+                }
+            }
             _ => Vec::new(),
         };
 
@@ -412,6 +426,286 @@ fn find_go_implementations(
     results
 }
 
+fn ruby_language() -> tree_sitter::Language {
+    tree_sitter_ruby::LANGUAGE.into()
+}
+
+fn ruby_text(node: Node, source: &str) -> Option<String> {
+    node.utf8_text(source.as_bytes())
+        .ok()
+        .map(|text| text.trim().to_string())
+        .filter(|text| !text.is_empty())
+}
+
+fn ruby_name_tail(name: &str) -> &str {
+    name.rsplit("::").next().unwrap_or(name)
+}
+
+fn matches_ruby_name(name: &str, interface: &str, fuzzy: bool, interface_lower: &str) -> bool {
+    let interface_tail = ruby_name_tail(interface);
+    let interface_tail_lower = interface_tail.to_lowercase();
+
+    matches_interface(name, interface, fuzzy, interface_lower)
+        || matches_interface(ruby_name_tail(name), interface, fuzzy, interface_lower)
+        || matches_interface(name, interface_tail, fuzzy, &interface_tail_lower)
+        || matches_interface(
+            ruby_name_tail(name),
+            interface_tail,
+            fuzzy,
+            &interface_tail_lower,
+        )
+}
+
+fn ruby_content_may_reference_interface(
+    content: &str,
+    interface: &str,
+    fuzzy: bool,
+    interface_lower: &str,
+) -> bool {
+    let interface_tail = ruby_name_tail(interface);
+
+    if fuzzy {
+        let content_lower = content.to_lowercase();
+        let interface_tail_lower = interface_tail.to_lowercase();
+        content_lower.contains(interface_lower) || content_lower.contains(&interface_tail_lower)
+    } else {
+        content.contains(interface) || content.contains(interface_tail)
+    }
+}
+
+fn ruby_names_from_node(node: Node, source: &str) -> Vec<String> {
+    if node.kind() == "array" {
+        let mut cursor = node.walk();
+        return node
+            .children(&mut cursor)
+            .flat_map(|child| ruby_names_from_node(child, source))
+            .collect();
+    }
+
+    match node.kind() {
+        "constant" | "scope_resolution" | "identifier" => ruby_text(node, source)
+            .into_iter()
+            .map(|name| name.trim_start_matches('@').to_string())
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn ruby_scope_name(node: Node, source: &str) -> Option<String> {
+    node.child_by_field_name("name")
+        .and_then(|name| ruby_text(name, source))
+}
+
+fn ruby_qualified_scope_name(node: Node, source: &str) -> Option<String> {
+    let mut names = Vec::new();
+    let mut current = Some(node);
+
+    while let Some(scope) = current {
+        if matches!(scope.kind(), "class" | "module") {
+            if let Some(name) = ruby_scope_name(scope, source) {
+                names.push(name);
+            }
+        }
+        current = scope.parent();
+    }
+
+    if names.is_empty() {
+        None
+    } else {
+        names.reverse();
+        Some(names.join("::"))
+    }
+}
+
+fn ruby_parent_static_scope_name(node: Node, source: &str) -> Option<String> {
+    let mut current = node;
+    while let Some(parent) = current.parent() {
+        if matches!(parent.kind(), "method" | "singleton_method") {
+            return None;
+        }
+        if matches!(parent.kind(), "class" | "module") {
+            return ruby_qualified_scope_name(parent, source);
+        }
+        current = parent;
+    }
+    None
+}
+
+fn ruby_mixin_kind(method: &str) -> Option<ImplementsKind> {
+    match method {
+        "include" | "prepend" => Some(ImplementsKind::Implements),
+        "extend" => Some(ImplementsKind::Extends),
+        _ => None,
+    }
+}
+
+fn find_ruby_implementations(
+    content: &str,
+    interface: &str,
+    fuzzy: bool,
+    interface_lower: &str,
+) -> Vec<(String, String, usize, ImplementsKind)> {
+    let mut parser = Parser::new();
+    let language = ruby_language();
+    if parser.set_language(&language).is_err() {
+        return Vec::new();
+    }
+
+    let Some(tree) = parser.parse(content, None) else {
+        return Vec::new();
+    };
+
+    let mut results = Vec::new();
+    results.extend(find_ruby_superclasses(
+        tree.root_node(),
+        content,
+        &language,
+        interface,
+        fuzzy,
+        interface_lower,
+    ));
+    results.extend(find_ruby_mixins(
+        tree.root_node(),
+        content,
+        &language,
+        interface,
+        fuzzy,
+        interface_lower,
+    ));
+    results
+}
+
+fn find_ruby_superclasses(
+    root: Node,
+    source: &str,
+    language: &tree_sitter::Language,
+    interface: &str,
+    fuzzy: bool,
+    interface_lower: &str,
+) -> Vec<(String, String, usize, ImplementsKind)> {
+    let query = match Query::new(
+        language,
+        r#"
+        (class
+          name: (_) @class.name
+          superclass: (superclass (_) @class.super)) @class.def
+        "#,
+    ) {
+        Ok(query) => query,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut cursor = QueryCursor::new();
+    let mut matches = cursor.matches(&query, root, source.as_bytes());
+    let mut results = Vec::new();
+
+    while let Some(match_) = matches.next() {
+        let mut class_node = None;
+        let mut super_name = None;
+
+        for capture in match_.captures {
+            let capture_name = query
+                .capture_names()
+                .get(capture.index as usize)
+                .map(|s| s.as_ref());
+
+            match capture_name {
+                Some("class.def") => class_node = Some(capture.node),
+                Some("class.super") => super_name = ruby_text(capture.node, source),
+                _ => {}
+            }
+        }
+
+        let (Some(class_node), Some(super_name)) = (class_node, super_name) else {
+            continue;
+        };
+        if !matches_ruby_name(&super_name, interface, fuzzy, interface_lower) {
+            continue;
+        }
+
+        if let Some(class_name) = ruby_qualified_scope_name(class_node, source) {
+            results.push((
+                class_name,
+                super_name,
+                class_node.start_position().row + 1,
+                ImplementsKind::Inherits,
+            ));
+        }
+    }
+
+    results
+}
+
+fn find_ruby_mixins(
+    root: Node,
+    source: &str,
+    language: &tree_sitter::Language,
+    interface: &str,
+    fuzzy: bool,
+    interface_lower: &str,
+) -> Vec<(String, String, usize, ImplementsKind)> {
+    let query = match Query::new(
+        language,
+        r#"
+        (call
+          method: (identifier) @mixin.method
+          arguments: (argument_list (_) @mixin.arg)) @mixin.def
+        "#,
+    ) {
+        Ok(query) => query,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut cursor = QueryCursor::new();
+    let mut matches = cursor.matches(&query, root, source.as_bytes());
+    let mut results = Vec::new();
+
+    while let Some(match_) = matches.next() {
+        let mut method = None;
+        let mut call_node = None;
+        let mut modules = Vec::new();
+
+        for capture in match_.captures {
+            let capture_name = query
+                .capture_names()
+                .get(capture.index as usize)
+                .map(|s| s.as_ref());
+
+            match capture_name {
+                Some("mixin.method") => method = ruby_text(capture.node, source),
+                Some("mixin.arg") => modules.extend(ruby_names_from_node(capture.node, source)),
+                Some("mixin.def") => call_node = Some(capture.node),
+                _ => {}
+            }
+        }
+
+        let (Some(_), Some(call_node), Some(kind)) = (
+            method.as_deref(),
+            call_node,
+            method.as_deref().and_then(ruby_mixin_kind),
+        ) else {
+            continue;
+        };
+        let Some(scope_name) = ruby_parent_static_scope_name(call_node, source) else {
+            continue;
+        };
+
+        modules
+            .iter()
+            .filter(|module| matches_ruby_name(module, interface, fuzzy, interface_lower))
+            .for_each(|module| {
+                results.push((
+                    scope_name.clone(),
+                    module.clone(),
+                    call_node.start_position().row + 1,
+                    kind.clone(),
+                ));
+            });
+    }
+
+    results
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -492,5 +786,77 @@ impl Display for Parser {
         let inherent = all_results.iter().find(|r| r.0 == r.1).unwrap();
         assert_eq!(inherent.0, "Parser");
         assert_eq!(inherent.1, "Parser");
+    }
+
+    #[test]
+    fn test_ruby_mixins() {
+        let content = r#"
+module ActiveModel
+  module Attributes
+    include ActiveModel::AttributeRegistration
+    extend ActiveSupport::Concern
+  end
+end
+"#;
+
+        let includes = find_ruby_implementations(
+            content,
+            "AttributeRegistration",
+            false,
+            "attributeregistration",
+        );
+        assert_eq!(includes.len(), 1);
+        assert_eq!(includes[0].0, "ActiveModel::Attributes");
+        assert_eq!(includes[0].1, "ActiveModel::AttributeRegistration");
+        assert_eq!(includes[0].3, ImplementsKind::Implements);
+
+        let extends = find_ruby_implementations(
+            content,
+            "ActiveSupport::Concern",
+            false,
+            "activesupport::concern",
+        );
+        assert_eq!(extends.len(), 1);
+        assert_eq!(extends[0].0, "ActiveModel::Attributes");
+        assert_eq!(extends[0].3, ImplementsKind::Extends);
+    }
+
+    #[test]
+    fn test_ruby_inheritance() {
+        let content = r#"
+module ActiveModel
+  class EachValidator < Validator
+  end
+end
+"#;
+
+        let results = find_ruby_implementations(content, "Validator", false, "validator");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "ActiveModel::EachValidator");
+        assert_eq!(results[0].1, "Validator");
+        assert_eq!(results[0].3, ImplementsKind::Inherits);
+
+        let qualified_results = find_ruby_implementations(
+            content,
+            "ActiveModel::Validator",
+            false,
+            "activemodel::validator",
+        );
+        assert_eq!(qualified_results.len(), 1);
+        assert_eq!(qualified_results[0].0, "ActiveModel::EachValidator");
+    }
+
+    #[test]
+    fn test_ruby_include_inside_method_is_not_a_mixin() {
+        let content = r#"
+class Checker
+  def valid?(list)
+    list.include Thing
+  end
+end
+"#;
+
+        let results = find_ruby_implementations(content, "Thing", false, "thing");
+        assert!(results.is_empty());
     }
 }

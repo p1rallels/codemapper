@@ -77,16 +77,7 @@ pub fn compute_diff(
 
     let filtered_files: Vec<PathBuf> = all_changed
         .into_iter()
-        .filter(|f| {
-            if extensions.is_empty() {
-                true
-            } else {
-                f.extension()
-                    .and_then(|ext| ext.to_str())
-                    .map(|ext| extensions.contains(&ext))
-                    .unwrap_or(false)
-            }
-        })
+        .filter(|f| indexer::matches_extension_filter(f, extensions))
         .collect();
 
     let mut symbol_diffs = Vec::new();

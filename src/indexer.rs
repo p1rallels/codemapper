@@ -2,8 +2,8 @@ use crate::index::CodeIndex;
 use crate::models::{FileInfo, Language};
 use crate::parser::{
     c::CParser, go::GoParser, java::JavaParser, javascript::JavaScriptParser,
-    markdown::MarkdownParser, python::PythonParser, rust::RustParser, swift::SwiftParser,
-    typescript::TypeScriptParser, Parser,
+    markdown::MarkdownParser, python::PythonParser, ruby::RubyParser, rust::RustParser,
+    swift::SwiftParser, typescript::TypeScriptParser, Parser,
 };
 use anyhow::{Context, Result};
 use indicatif::ProgressBar;
@@ -17,10 +17,36 @@ use ::ignore::WalkBuilder;
 use crate::ignore;
 
 pub fn detect_language(path: &Path) -> Language {
-    path.extension()
+    Language::from_path(path)
+}
+
+pub fn matches_extension_filter<S: AsRef<str>>(path: &Path, extensions: &[S]) -> bool {
+    if extensions.is_empty() {
+        return true;
+    }
+
+    let extension_matches = path
+        .extension()
         .and_then(|ext| ext.to_str())
-        .map(Language::from_extension)
-        .unwrap_or(Language::Unknown)
+        .map(|ext| {
+            extensions
+                .iter()
+                .any(|allowed| allowed.as_ref().eq_ignore_ascii_case(ext))
+        })
+        .unwrap_or(false);
+
+    if extension_matches {
+        return true;
+    }
+
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| {
+            extensions
+                .iter()
+                .any(|allowed| allowed.as_ref().eq_ignore_ascii_case(name))
+        })
+        .unwrap_or(false)
 }
 
 fn read_file_content(path: &Path) -> Result<String> {
@@ -110,6 +136,14 @@ pub fn index_file(
                 }
             }
         }
+        Language::Ruby => {
+            if let Ok(parser) = RubyParser::new() {
+                if let Ok(parsed) = parser.parse(content, path) {
+                    file_info.symbols = parsed.symbols;
+                    file_info.dependencies = parsed.dependencies;
+                }
+            }
+        }
         Language::Markdown => {
             if let Ok(parser) = MarkdownParser::new() {
                 if let Ok(parsed) = parser.parse(content, path) {
@@ -159,17 +193,7 @@ pub fn index_directory_with_progress(
     let entries: Vec<PathBuf> = walker
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().map(|ft| ft.is_file()).unwrap_or(false))
-        .filter(|e| {
-            if extensions.is_empty() {
-                true
-            } else {
-                e.path()
-                    .extension()
-                    .and_then(|ext| ext.to_str())
-                    .map(|ext| extensions.contains(&ext))
-                    .unwrap_or(false)
-            }
-        })
+        .filter(|e| matches_extension_filter(e.path(), extensions))
         .map(|e| e.into_path())
         .collect();
 
@@ -246,7 +270,19 @@ mod tests {
         assert_eq!(detect_language(Path::new("test.ts")), Language::TypeScript);
         assert_eq!(detect_language(Path::new("test.rs")), Language::Rust);
         assert_eq!(detect_language(Path::new("test.swift")), Language::Swift);
+        assert_eq!(detect_language(Path::new("test.rb")), Language::Ruby);
+        assert_eq!(detect_language(Path::new("test.rbi")), Language::Ruby);
+        assert_eq!(detect_language(Path::new("Rakefile")), Language::Ruby);
         assert_eq!(detect_language(Path::new("test.txt")), Language::Unknown);
+    }
+
+    #[test]
+    fn test_matches_extension_filter() {
+        assert!(matches_extension_filter(Path::new("test.rb"), &["rb"]));
+        assert!(matches_extension_filter(Path::new("test.rbi"), &["rbi"]));
+        assert!(matches_extension_filter(Path::new("Gemfile"), &["Gemfile"]));
+        assert!(matches_extension_filter(Path::new("Gemfile"), &["gemfile"]));
+        assert!(!matches_extension_filter(Path::new("Gemfile"), &["rb"]));
     }
 
     #[test]

@@ -191,13 +191,7 @@ pub fn find_callees(index: &CodeIndex, symbol_name: &str, fuzzy: bool) -> Result
 
         let symbol_body: String = lines[start_idx..end_idx].join("\n");
 
-        let language = Language::from_extension(
-            symbol
-                .file_path
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or(""),
-        );
+        let language = Language::from_path(&symbol.file_path);
 
         let calls = extract_calls_from_source(&symbol_body, language)?;
 
@@ -275,8 +269,7 @@ fn extract_calls_from_file(
     path: &Path,
     language: Language,
 ) -> Result<Vec<(String, usize, String)>> {
-    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-    let lang = Language::from_extension(ext);
+    let lang = Language::from_path(path);
 
     if lang == Language::Unknown {
         return Ok(Vec::new());
@@ -297,6 +290,7 @@ fn extract_calls_from_source(
         Language::Java => extract_java_calls(content),
         Language::C => extract_c_calls(content),
         Language::Swift => extract_swift_calls(content),
+        Language::Ruby => extract_ruby_calls(content),
         _ => Ok(Vec::new()),
     }
 }
@@ -818,6 +812,253 @@ fn extract_swift_calls(content: &str) -> Result<Vec<(String, usize, String)>> {
     Ok(calls)
 }
 
+fn ruby_strip_literal(text: &str) -> String {
+    let trimmed = text.trim();
+    if trimmed.len() >= 3 && trimmed.starts_with(":\"") && trimmed.ends_with('"') {
+        return trimmed[2..trimmed.len() - 1].to_string();
+    }
+    if trimmed.len() >= 3 && trimmed.starts_with(":'") && trimmed.ends_with('\'') {
+        return trimmed[2..trimmed.len() - 1].to_string();
+    }
+    if trimmed.len() >= 2 {
+        let first = trimmed.as_bytes()[0] as char;
+        let last = trimmed.as_bytes()[trimmed.len() - 1] as char;
+        if matches!((first, last), ('\'', '\'') | ('"', '"')) {
+            return trimmed[1..trimmed.len() - 1].to_string();
+        }
+    }
+    trimmed.strip_prefix(':').unwrap_or(trimmed).to_string()
+}
+
+fn ruby_symbol_name_from_node(node: tree_sitter::Node, source: &str) -> Option<String> {
+    match node.kind() {
+        "simple_symbol" | "bare_symbol" | "delimited_symbol" | "hash_key_symbol" | "string"
+        | "bare_string" => node
+            .utf8_text(source.as_bytes())
+            .ok()
+            .map(ruby_strip_literal)
+            .map(|text| {
+                text.trim_end_matches(':')
+                    .trim_start_matches('@')
+                    .to_string()
+            })
+            .filter(|text| !text.is_empty()),
+        "constant" | "scope_resolution" => node
+            .utf8_text(source.as_bytes())
+            .ok()
+            .map(|text| text.trim().to_string())
+            .filter(|text| !text.is_empty()),
+        _ => None,
+    }
+}
+
+fn ruby_symbol_names_from_node(node: tree_sitter::Node, source: &str) -> Vec<String> {
+    if matches!(node.kind(), "array" | "symbol_array" | "string_array") {
+        let mut cursor = node.walk();
+        return node
+            .children(&mut cursor)
+            .flat_map(|child| ruby_symbol_names_from_node(child, source))
+            .collect();
+    }
+
+    ruby_symbol_name_from_node(node, source)
+        .into_iter()
+        .collect()
+}
+
+fn ruby_pair_parts<'a>(
+    node: tree_sitter::Node<'a>,
+    source: &str,
+) -> Option<(String, tree_sitter::Node<'a>)> {
+    if node.kind() != "pair" {
+        return None;
+    }
+
+    let key = node
+        .child_by_field_name("key")
+        .and_then(|key| ruby_symbol_name_from_node(key, source))?;
+    let value = node.child_by_field_name("value")?;
+    Some((key, value))
+}
+
+fn ruby_argument_list_node(node: tree_sitter::Node) -> Option<tree_sitter::Node> {
+    if let Some(arguments) = node.child_by_field_name("arguments") {
+        return Some(arguments);
+    }
+
+    let mut cursor = node.walk();
+    let arguments = node
+        .children(&mut cursor)
+        .find(|child| child.kind() == "argument_list");
+    arguments
+}
+
+fn ruby_callback_macro(method: &str) -> bool {
+    matches!(
+        method,
+        "validate"
+            | "before_validation"
+            | "after_validation"
+            | "before_save"
+            | "around_save"
+            | "after_save"
+            | "before_create"
+            | "around_create"
+            | "after_create"
+            | "before_update"
+            | "around_update"
+            | "after_update"
+            | "before_destroy"
+            | "around_destroy"
+            | "after_destroy"
+            | "after_commit"
+            | "after_rollback"
+            | "after_initialize"
+            | "after_find"
+            | "before_action"
+            | "prepend_before_action"
+            | "append_before_action"
+            | "around_action"
+            | "prepend_around_action"
+            | "append_around_action"
+            | "after_action"
+            | "prepend_after_action"
+            | "append_after_action"
+    )
+}
+
+fn ruby_validation_macro(method: &str) -> bool {
+    matches!(
+        method,
+        "validates" | "validates_each" | "validates_associated" | "validates_with"
+    )
+}
+
+fn ruby_condition_reference_key(key: &str) -> bool {
+    matches!(key, "if" | "unless")
+}
+
+fn ruby_dsl_reference_names(
+    method: &str,
+    call_node: tree_sitter::Node,
+    source: &str,
+) -> Vec<String> {
+    let Some(arguments) = ruby_argument_list_node(call_node) else {
+        return Vec::new();
+    };
+
+    let mut names = Vec::new();
+    let mut cursor = arguments.walk();
+
+    for arg in arguments.children(&mut cursor) {
+        if let Some((key, value)) = ruby_pair_parts(arg, source) {
+            if (ruby_callback_macro(method) || ruby_validation_macro(method))
+                && ruby_condition_reference_key(&key)
+            {
+                names.extend(ruby_symbol_names_from_node(value, source));
+            }
+            continue;
+        }
+
+        if ruby_callback_macro(method) || method == "validates_with" {
+            names.extend(ruby_symbol_names_from_node(arg, source));
+        }
+    }
+
+    names
+}
+
+fn push_ruby_call(
+    calls: &mut Vec<(String, usize, String)>,
+    seen: &mut HashSet<(String, usize)>,
+    name: String,
+    node: tree_sitter::Node,
+    content: &str,
+) {
+    if name.is_empty() {
+        return;
+    }
+
+    let line = node.start_position().row + 1;
+    if !seen.insert((name.clone(), line)) {
+        return;
+    }
+
+    let context = content.lines().nth(line - 1).unwrap_or("").to_string();
+    calls.push((name, line, context));
+}
+
+fn extract_ruby_calls(content: &str) -> Result<Vec<(String, usize, String)>> {
+    let mut parser = Parser::new();
+    let language = tree_sitter_ruby::LANGUAGE.into();
+    parser
+        .set_language(&language)
+        .context("Failed to set Ruby language")?;
+
+    let tree = match parser.parse(content, None) {
+        Some(t) => t,
+        None => return Ok(Vec::new()),
+    };
+
+    let query = Query::new(
+        &language,
+        r#"
+        (call
+          method: [(identifier) (constant)] @call.name) @call.expr
+        "#,
+    )
+    .context("Failed to create Ruby call query")?;
+
+    let mut cursor = QueryCursor::new();
+    let mut matches = cursor.matches(&query, tree.root_node(), content.as_bytes());
+    let mut calls = Vec::new();
+    let mut seen = HashSet::new();
+
+    while let Some(match_) = matches.next() {
+        let mut call_name = None;
+        let mut name_node = None;
+        let mut call_node = None;
+
+        for capture in match_.captures {
+            let capture_name = query
+                .capture_names()
+                .get(capture.index as usize)
+                .map(|s| s.as_ref());
+
+            match capture_name {
+                Some("call.name") => {
+                    call_name = Some(
+                        capture
+                            .node
+                            .utf8_text(content.as_bytes())
+                            .unwrap_or_default()
+                            .to_string(),
+                    );
+                    name_node = Some(capture.node);
+                }
+                Some("call.expr") => {
+                    call_node = Some(capture.node);
+                }
+                _ => {}
+            }
+        }
+
+        let (Some(call_name), Some(name_node)) = (call_name, name_node) else {
+            continue;
+        };
+
+        push_ruby_call(&mut calls, &mut seen, call_name.clone(), name_node, content);
+
+        if let Some(call_node) = call_node {
+            ruby_dsl_reference_names(&call_name, call_node, content)
+                .into_iter()
+                .for_each(|name| push_ruby_call(&mut calls, &mut seen, name, call_node, content));
+        }
+    }
+
+    Ok(calls)
+}
+
 pub fn is_test_file(path: &Path, language: Language) -> bool {
     let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     let path_str = path.to_string_lossy();
@@ -861,13 +1102,20 @@ pub fn is_test_file(path: &Path, language: Language) -> bool {
                 || path_str.contains("/Tests/")
                 || path_str.contains("\\Tests\\")
         }
+        Language::Ruby => {
+            file_name.ends_with("_test.rb")
+                || file_name.ends_with("_spec.rb")
+                || path_str.contains("/test/")
+                || path_str.contains("\\test\\")
+                || path_str.contains("/spec/")
+                || path_str.contains("\\spec\\")
+        }
         _ => false,
     }
 }
 
 pub fn find_test_deps(index: &CodeIndex, test_file: &Path) -> Result<Vec<TestDep>> {
-    let ext = test_file.extension().and_then(|e| e.to_str()).unwrap_or("");
-    let language = Language::from_extension(ext);
+    let language = Language::from_path(test_file);
 
     if !is_test_file(test_file, language) {
         anyhow::bail!(
@@ -900,13 +1148,7 @@ pub fn find_test_deps(index: &CodeIndex, test_file: &Path) -> Result<Vec<TestDep
                 Err(_) => continue,
             };
 
-            let target_lang = Language::from_extension(
-                target
-                    .file_path
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .unwrap_or(""),
-            );
+            let target_lang = Language::from_path(&target.file_path);
 
             if is_test_file(&target.file_path, target_lang) {
                 continue;
@@ -985,6 +1227,7 @@ pub fn is_test_symbol(symbol: &Symbol, content: &str, language: Language) -> boo
             // swift/xctest usually uses funcs starting with test* inside *Tests classes
             name.starts_with("test") || name.starts_with("Test")
         }
+        Language::Ruby => name.starts_with("test_") || name.starts_with("test"),
         _ => false,
     }
 }
@@ -1312,7 +1555,10 @@ fn categorize_entrypoint(name: &str, symbol_type: SymbolType) -> EntrypointCateg
         }
     }
 
-    if matches!(symbol_type, SymbolType::Class | SymbolType::Enum) {
+    if matches!(
+        symbol_type,
+        SymbolType::Class | SymbolType::Enum | SymbolType::Module
+    ) {
         return EntrypointCategory::ApiFunction;
     }
 
@@ -1451,13 +1697,7 @@ fn find_callees_for_symbol(index: &CodeIndex, symbol: &Symbol) -> Result<Vec<Cal
 
     let symbol_body: String = lines[start_idx..end_idx].join("\n");
 
-    let language = Language::from_extension(
-        symbol
-            .file_path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or(""),
-    );
+    let language = Language::from_path(&symbol.file_path);
 
     let calls = extract_calls_from_source(&symbol_body, language)?;
 
@@ -1549,6 +1789,47 @@ final class Foo {
         let names: Vec<&str> = calls.iter().map(|(n, _, _)| n.as_str()).collect();
         assert_eq!(names.len(), 3);
         assert!(names.iter().all(|n| *n == "connect"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_extract_ruby_calls() -> Result<()> {
+        let source = r#"
+def perform
+  validate!
+  client.deliver_now
+  names.each { |name| define_method(name) { @attributes[name] } }
+end
+"#;
+
+        let calls = extract_ruby_calls(source)?;
+        let names: Vec<&str> = calls.iter().map(|(n, _, _)| n.as_str()).collect();
+        assert!(names.contains(&"validate!"));
+        assert!(names.contains(&"deliver_now"));
+        assert!(names.contains(&"each"));
+        assert!(names.contains(&"define_method"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_extract_ruby_callback_and_validation_references() -> Result<()> {
+        let source = r#"
+class Post
+  before_save :normalize_title, if: :title_changed?
+  validate :check_ready
+  validates :name, presence: true, unless: :skip_name_validation?
+  validates_with CustomValidator
+end
+"#;
+
+        let calls = extract_ruby_calls(source)?;
+        let names: Vec<&str> = calls.iter().map(|(n, _, _)| n.as_str()).collect();
+        assert!(names.contains(&"before_save"));
+        assert!(names.contains(&"normalize_title"));
+        assert!(names.contains(&"title_changed?"));
+        assert!(names.contains(&"check_ready"));
+        assert!(names.contains(&"skip_name_validation?"));
+        assert!(names.contains(&"CustomValidator"));
         Ok(())
     }
 }

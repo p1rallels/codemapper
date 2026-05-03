@@ -6,7 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::ignore;
-use crate::indexer::{detect_language, index_file};
+use crate::indexer::{detect_language, index_file, matches_extension_filter};
 use crate::models::Symbol;
 
 /// Fast text search using ripgrep-style grep for prefiltering candidate files
@@ -129,14 +129,7 @@ impl GrepFilter {
 
     /// Check if file extension matches our filter
     fn matches_extension(&self, path: &Path) -> bool {
-        if self.extensions.is_empty() {
-            return true;
-        }
-
-        path.extension()
-            .and_then(|ext| ext.to_str())
-            .map(|ext| self.extensions.contains(&ext.to_string()))
-            .unwrap_or(false)
+        matches_extension_filter(path, &self.extensions)
     }
 
     /// Stage 2: AST validation of candidate files
@@ -211,9 +204,13 @@ mod tests {
         let path_rs = Path::new("test.rs");
         let path_py = Path::new("test.py");
         let path_js = Path::new("test.js");
+        let path_gemfile = Path::new("Gemfile");
 
         assert!(filter.matches_extension(path_rs));
         assert!(filter.matches_extension(path_py));
         assert!(!filter.matches_extension(path_js));
+
+        let ruby_filter = GrepFilter::new("test", true, vec!["gemfile".to_string()]);
+        assert!(ruby_filter.matches_extension(path_gemfile));
     }
 }
