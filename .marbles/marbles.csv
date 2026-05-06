@@ -953,3 +953,6 @@ m-0f2b,scan unified-dashboard for cm gaps,evaluate /Users/reddot/Desktop/cursor/
 m-ef9c,detect typescript interface implementors beyond classes,implements/schema miss interfaces like DashboardPlugin and object-literal implementors in plugin-style codebases,open,1,pi,pi,,2026-03-11T04:52:38.906Z,2026-03-11T04:52:38.906Z,,
 m-4edd,reduce false unused entrypoints in callback/plugin systems,entrypoints flags exported render/helpers as unused when invoked through plugin registries or callback assembly,open,1,pi,pi,,2026-03-11T04:52:38.931Z,2026-03-11T04:52:38.931Z,,
 m-1a44,probe cm ergonomics with grep-like workflows,"test multi-query, exact/fuzzy, path scoping, and text-search friction on small and large repos",closed,1,pi,pi,pi,2026-03-11T04:57:57.043Z,2026-03-11T04:58:07.066Z,,
+m-fdb0,inspect github issue 14 cache bug,read issue details and reproduce the cache problem,closed,0,pi,pi,pi,2026-05-06T23:24:45.532Z,2026-05-06T23:28:11.763Z,,
+m-4387,verify cache issue 14 root cause,reproduce mismatch before fix and confirm fixed branch behavior,closed,0,pi,pi,pi,2026-05-06T23:30:04.838Z,2026-05-06T23:31:53.372Z,,
+m-a9cc,push cache fix pr for issue 14,push cache-fix and open github pr linked to issue 14,closed,0,pi,pi,pi,2026-05-06T23:34:30.747Z,2026-05-06T23:34:59.965Z,,
