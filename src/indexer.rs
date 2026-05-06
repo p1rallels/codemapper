@@ -158,6 +158,31 @@ pub fn index_file(
     Ok(file_info)
 }
 
+pub fn discover_indexable_files(path: &Path, extensions: &[&str]) -> Result<Vec<PathBuf>> {
+    let walker = WalkBuilder::new(path)
+        .hidden(false)
+        .git_ignore(true)
+        .git_global(false)
+        .git_exclude(false)
+        .filter_entry(|e| {
+            if e.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
+                let name = e.file_name().to_string_lossy();
+                !ignore::is_ignored_dir(&name)
+            } else {
+                true
+            }
+        })
+        .build();
+
+    Ok(walker
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().map(|ft| ft.is_file()).unwrap_or(false))
+        .filter(|e| matches_extension_filter(e.path(), extensions))
+        .map(|e| e.into_path())
+        .filter(|path| detect_language(path) != Language::Unknown)
+        .collect())
+}
+
 pub fn index_directory(path: &Path, extensions: &[&str]) -> Result<CodeIndex> {
     index_directory_with_progress(path, extensions, None)
 }
@@ -175,27 +200,7 @@ pub fn index_directory_with_progress(
         anyhow::bail!("Path is not a directory: {}", path.display());
     }
 
-    let walker = WalkBuilder::new(path)
-        .hidden(false)
-        .git_ignore(true)
-        .git_global(false)
-        .git_exclude(false)
-        .filter_entry(|e| {
-            if e.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
-                let name = e.file_name().to_string_lossy();
-                !ignore::is_ignored_dir(&name)
-            } else {
-                true
-            }
-        })
-        .build();
-
-    let entries: Vec<PathBuf> = walker
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().map(|ft| ft.is_file()).unwrap_or(false))
-        .filter(|e| matches_extension_filter(e.path(), extensions))
-        .map(|e| e.into_path())
-        .collect();
+    let entries = discover_indexable_files(path, extensions)?;
 
     let total_files = entries.len();
     let progress_wrapper = progress.map(|pb| {
