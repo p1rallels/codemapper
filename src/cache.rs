@@ -1,10 +1,9 @@
-use crate::ignore;
 use crate::index::CodeIndex;
-use crate::indexer::matches_extension_filter;
+use crate::indexer::discover_indexable_files;
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
@@ -135,42 +134,16 @@ impl CacheManager {
         root: &Path,
         extensions: &[&str],
     ) -> Result<HashMap<PathBuf, FileMetadata>> {
-        use walkdir::WalkDir;
-
-        let mut metadata_map = HashMap::new();
-
-        for entry in WalkDir::new(root)
-            .follow_links(false)
+        let metadata = discover_indexable_files(root, extensions)?
             .into_iter()
-            .filter_entry(|e| {
-                if e.file_type().is_dir() {
-                    let dir_name = e.file_name().to_string_lossy();
-                    !ignore::is_ignored_dir(&dir_name)
-                } else {
-                    true
-                }
+            .filter_map(|path| {
+                Self::compute_file_metadata_single(&path)
+                    .ok()
+                    .map(|metadata| (path, metadata))
             })
-            .filter_map(|e| e.ok())
-        {
-            let path = entry.path();
-            if !path.is_file() {
-                continue;
-            }
+            .collect();
 
-            if matches_extension_filter(path, extensions) {
-                match Self::compute_file_metadata_single(path) {
-                    Ok(metadata) => {
-                        metadata_map.insert(path.to_path_buf(), metadata);
-                    }
-                    Err(_) => {
-                        // Skip files we can't read
-                        continue;
-                    }
-                }
-            }
-        }
-
-        Ok(metadata_map)
+        Ok(metadata)
     }
 
     /// Compute metadata for a single file (hash, size, mtime)
@@ -230,39 +203,17 @@ impl CacheManager {
         root: &Path,
         extensions: &[String],
     ) -> Result<HashMap<PathBuf, (u64, SystemTime)>> {
-        use walkdir::WalkDir;
-
-        let mut stats = HashMap::new();
-
-        for entry in WalkDir::new(root)
-            .follow_links(false)
+        let ext_refs: Vec<&str> = extensions.iter().map(String::as_str).collect();
+        let stats = discover_indexable_files(root, &ext_refs)?
             .into_iter()
-            .filter_entry(|e| {
-                if e.file_type().is_dir() {
-                    let dir_name = e.file_name().to_string_lossy();
-                    !ignore::is_ignored_dir(&dir_name)
-                } else {
-                    true
-                }
+            .filter_map(|path| {
+                fs::metadata(&path).ok().map(|metadata| {
+                    let size = metadata.len();
+                    let mtime = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+                    (path, (size, mtime))
+                })
             })
-            .filter_map(|e| e.ok())
-        {
-            let path = entry.path();
-            if !path.is_file() {
-                continue;
-            }
-
-            if matches_extension_filter(path, extensions) {
-                match fs::metadata(path) {
-                    Ok(metadata) => {
-                        let size = metadata.len();
-                        let mtime = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-                        stats.insert(path.to_path_buf(), (size, mtime));
-                    }
-                    Err(_) => continue,
-                }
-            }
-        }
+            .collect();
 
         Ok(stats)
     }
@@ -328,6 +279,7 @@ impl CacheManager {
             }
         }
 
+        Self::sync_metadata_with_index(index, &mut file_metadata)?;
         Self::assert_metadata_consistency(index, &file_metadata)?;
 
         let cache_key = Self::compute_cache_key(root, extensions)?;
@@ -358,6 +310,26 @@ impl CacheManager {
         Self::ensure_gitignore(root, cache_dir)?;
 
         Ok(metadata)
+    }
+
+    fn sync_metadata_with_index(
+        index: &CodeIndex,
+        file_metadata: &mut HashMap<PathBuf, FileMetadata>,
+    ) -> Result<()> {
+        let indexed_paths: HashSet<PathBuf> = index.files().map(|file| file.path.clone()).collect();
+
+        file_metadata.retain(|path, _| indexed_paths.contains(path));
+
+        for file in index.files() {
+            if !file_metadata.contains_key(&file.path) {
+                file_metadata.insert(
+                    file.path.clone(),
+                    Self::compute_file_metadata_single(&file.path)?,
+                );
+            }
+        }
+
+        Ok(())
     }
 
     fn assert_metadata_consistency(
@@ -582,5 +554,30 @@ mod tests {
         let hash2 = CacheManager::compute_file_hash(&file_path).unwrap();
 
         assert_ne!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_save_metadata_matches_indexer_gitignore_rules() {
+        let temp = TempDir::new().unwrap();
+        let cache_dir = TempDir::new().unwrap();
+        let root = temp.path();
+
+        fs::create_dir(root.join(".git")).unwrap();
+        fs::write(root.join(".gitignore"), "ignored.rs\n").unwrap();
+        fs::write(root.join("included.rs"), "fn included() {}\n").unwrap();
+        fs::write(root.join("ignored.rs"), "fn ignored() {}\n").unwrap();
+
+        let index = crate::indexer::index_directory(root, &["rs"]).unwrap();
+        assert_eq!(index.total_files(), 1);
+
+        let metadata = CacheManager::save(&index, root, &["rs"], Some(cache_dir.path())).unwrap();
+
+        assert_eq!(metadata.file_metadata.len(), index.total_files());
+        assert!(metadata
+            .file_metadata
+            .contains_key(&root.join("included.rs")));
+        assert!(!metadata
+            .file_metadata
+            .contains_key(&root.join("ignored.rs")));
     }
 }
