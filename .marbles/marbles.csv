@@ -962,3 +962,4 @@ m-a78d,remove exact flag legacy,drop --exact aliases and help mentions now that 
 m-fdb0,inspect github issue 14 cache bug,read issue details and reproduce the cache problem,closed,0,pi,pi,pi,2026-05-06T23:24:45.532Z,2026-05-06T23:28:11.763Z,,
 m-4387,verify cache issue 14 root cause,reproduce mismatch before fix and confirm fixed branch behavior,closed,0,pi,pi,pi,2026-05-06T23:30:04.838Z,2026-05-06T23:31:53.372Z,,
 m-a9cc,push cache fix pr for issue 14,push cache-fix and open github pr linked to issue 14,closed,0,pi,pi,pi,2026-05-06T23:34:30.747Z,2026-05-06T23:34:59.965Z,,
+m-7e38,continue grep ux work,move grep commits onto feature branch and add rg-style text grep mode,closed,0,pi,pi,pi,2026-05-09T04:53:55.218Z,2026-05-09T04:58:34.433Z,,
