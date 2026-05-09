@@ -525,33 +525,44 @@ WHEN TO USE:
         limit: Option<usize>,
     },
 
-    /// [SEARCH] Exact symbol search with grep-style text prefiltering
+    /// [SEARCH] Exact symbol search, or raw rg-style text search with --text
     #[command(
         alias = "g",
-        about = "Grep-style exact symbol search backed by AST validation",
-        long_about = "USE CASE: Replace rg/grep muscle memory with cm-native symbol search
-  • Uses text prefiltering first, then validates matches with the parser
+        about = "Grep-style search: AST-validated symbols by default, raw text with --text",
+        long_about = "USE CASE: Replace rg/grep muscle memory with cm-native search
+  • Default mode uses text prefiltering, then validates matches with the parser
+  • --text mode behaves like rg -n and prints file:line:match text hits
   • Case-sensitive exact symbol matching by default
-  • Outputs AI format by default, so results chain cleanly into other cm commands
+  • Outputs AI format by default for symbol mode, raw grep lines for --text
 
 PIPELINES:
   cm grep Parser | cm inspect -
   cm grep 'parse|index' | cm callers -
-  cm grep CodeIndex --show-body"
+  cm grep --text 'todo|blocked' ."
     )]
     #[command(after_help = "EXAMPLES:
   cm grep Parser                         # Exact symbol search
-  cm grep 'parse|index' ./src            # OR search in src
+  cm grep 'parse|index' ./src            # OR symbol search in src
+  cm grep --text 'todo|blocked' .        # rg -n style text search
+  cm grep --text -i 'todo|blocked' .     # case-insensitive text search
   cm grep CodeIndex --show-body          # Show implementation when small enough
   cm grep Parser | cm inspect -          # Inspect files from results
   cm grep parse | cm callers -           # Find callers of matched symbols")]
     Grep {
-        /// Symbol pattern to search for (supports 'foo|bar|baz' OR syntax, '-' reads stdin)
+        /// Pattern to search for (symbol OR syntax by default, raw regex with --text, '-' reads stdin)
         pattern: String,
 
         /// Directory path to search in
         #[arg(default_value = ".")]
         path: PathBuf,
+
+        /// Search raw text like rg -n instead of AST-validated symbols
+        #[arg(long, default_value_t = false)]
+        text: bool,
+
+        /// Case-insensitive text search (only applies with --text)
+        #[arg(short = 'i', long, default_value_t = false)]
+        ignore_case: bool,
 
         /// Filter by symbol type: 'function', 'class', 'module', 'method', 'enum', 'static', 'heading', 'code_block', 'endpoint'
         #[arg(long)]
@@ -1796,6 +1807,8 @@ fn main() -> Result<()> {
         Commands::Grep {
             pattern,
             path,
+            text,
+            ignore_case,
             r#type,
             context,
             show_body,
@@ -1807,25 +1820,29 @@ fn main() -> Result<()> {
             section,
             limit,
         } => {
-            cmd_query(
-                pattern,
-                path,
-                context,
-                false,
-                true,
-                true,
-                show_body,
-                r#type,
-                section,
-                extensions,
-                no_cache,
-                rebuild_cache,
-                !full,
-                exports_only,
-                format,
-                limit,
-                cache_dir,
-            )?;
+            if text {
+                cmd_grep_text(pattern, path, extensions, ignore_case, limit)?;
+            } else {
+                cmd_query(
+                    pattern,
+                    path,
+                    context,
+                    false,
+                    true,
+                    true,
+                    show_body,
+                    r#type,
+                    section,
+                    extensions,
+                    no_cache,
+                    rebuild_cache,
+                    !full,
+                    exports_only,
+                    format,
+                    limit,
+                    cache_dir,
+                )?;
+            }
         }
         Commands::Inspect {
             file_path,
@@ -2393,6 +2410,33 @@ fn cmd_map(
     let output = formatter.format_map(&index, level);
 
     println!("{}", output);
+
+    Ok(())
+}
+
+fn cmd_grep_text(
+    pattern: String,
+    path: PathBuf,
+    extensions: String,
+    ignore_case: bool,
+    limit: Option<usize>,
+) -> Result<()> {
+    let pattern = pipe::read_symbol_arg(pattern)?;
+    let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
+    let extensions_vec: Vec<String> = ext_list.iter().map(|s| s.to_string()).collect();
+    let filter = fast_search::GrepFilter::new(&pattern, !ignore_case, extensions_vec);
+
+    let mut printed = 0usize;
+    for root in pipe::read_path_arg(path)? {
+        let remaining = limit.map(|limit| limit.saturating_sub(printed));
+        for hit in filter.search_text(&root, remaining)? {
+            println!("{}:{}:{}", hit.path.display(), hit.line_number, hit.line);
+            printed += 1;
+            if limit.map(|limit| printed >= limit).unwrap_or(false) {
+                return Ok(());
+            }
+        }
+    }
 
     Ok(())
 }
