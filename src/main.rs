@@ -542,6 +542,7 @@ PIPELINES
   cm grep parse | cm callers -           # Find callers of matched symbols")]
     Grep {
         /// Pattern to search for (symbol OR syntax by default, raw regex with --text, '-' reads stdin)
+        #[arg(allow_hyphen_values = true)]
         pattern: String,
 
         /// Directory path to search in
@@ -714,7 +715,7 @@ TIP: Great for impact analysis before refactoring"
   cm deps ./main.rs --format ai                         # Token-efficient
 
 TYPICAL WORKFLOW:
-  1. Find symbol: cm query MyClass --fuzzy
+  1. Find symbol: cm query MyClass
   2. Check usage: cm deps MyClass --direction used-by
   3. Review files that use it
   4. Make informed changes
@@ -869,7 +870,7 @@ TIP: Great for understanding function usage patterns"
   cm callers process_data . --format ai    # Token-efficient output
 
 TYPICAL WORKFLOW:
-  1. Find the function: cm query my_func --fuzzy
+  1. Find the function: cm query my_func
   2. See who calls it: cm callers my_func
   3. Understand the call chain before refactoring")]
     Callers {
@@ -925,7 +926,7 @@ TIP: Great for understanding function complexity and dependencies"
   cm callees validate . --format ai        # Token-efficient output
 
 TYPICAL WORKFLOW:
-  1. Find the function: cm query my_func --fuzzy
+  1. Find the function: cm query my_func
   2. See what it calls: cm callees my_func
   3. Understand the dependency graph")]
     Callees {
@@ -1209,7 +1210,7 @@ TIP: Use --fuzzy if you're not sure of exact symbol names"
   cm trace cmd_query format_output --format human  # Pretty table
 
 TYPICAL WORKFLOW:
-  1. Find symbols: cm query func_a --fuzzy
+  1. Find symbols: cm query func_a
   2. Trace path: cm trace func_a func_b
   3. Review the call chain to understand code flow
 
@@ -1260,7 +1261,7 @@ TIP: Run this after changing a function signature"
     )]
     #[command(after_help = "EXAMPLES:
   cm impact symbols_by_type               # quick: counts + top callsites/tests
-  cm impact parse_file ./src --grep       # restrict scope + exact match
+  cm impact parse_file ./src --grep       # restrict scope + symbol substring match
   cm impact auth . --format ai            # token-efficient output
   cm impact output --include-docs         # allow matching headings/code blocks
   cm impact big_function --all            # print full lists (no truncation)")]
@@ -1272,7 +1273,7 @@ TIP: Run this after changing a function signature"
         #[arg(default_value = ".")]
         path: PathBuf,
 
-        /// Use grep/exact matching (default is fuzzy)
+        /// Use grep-style symbol substring matching (default is fuzzy)
         #[arg(long = "grep", default_value_t = false)]
         grep: bool,
 
@@ -1372,7 +1373,7 @@ TIP: Use with 'cm history' to see full evolution of a symbol"
   cm blame validate ./utils.go --format human  # Pretty table
 
 TYPICAL WORKFLOW:
-  1. Find symbol: cm query my_func --fuzzy
+  1. Find symbol: cm query my_func
   2. See last change: cm blame my_func ./path/to/file.rs
   3. See full history: cm history my_func ./path/to/file.rs")]
     Blame {
@@ -1408,7 +1409,7 @@ TIP: Combine with 'cm blame' for quick last-change info"
   cm history MyClass ./models.go --format human   # Pretty table
 
 TYPICAL WORKFLOW:
-  1. Find symbol: cm query my_func --fuzzy
+  1. Find symbol: cm query my_func
   2. See history: cm history my_func ./path/to/file.rs
   3. Compare specific versions using git diff")]
     History {
@@ -1515,7 +1516,7 @@ TIP: Useful for understanding API boundaries and type dependencies"
   cm types validate_input --format ai         # Token-efficient for LLMs
 
 TYPICAL WORKFLOW:
-  1. Find function: cm query my_func --fuzzy
+  1. Find function: cm query my_func
   2. Analyze types: cm types my_func
   3. Inspect type definition: cm query TypeName to see implementation
 
@@ -1575,7 +1576,7 @@ TIP: Use --fuzzy for flexible symbol matching"
   cm schema MyModel --format human         # Pretty table format
 
 TYPICAL WORKFLOW:
-  1. Find class: cm query MyClass --fuzzy
+  1. Find class: cm query MyClass
   2. Show schema: cm schema MyClass
   3. Understand types: cm types related_function
 
@@ -4807,6 +4808,35 @@ mod query_planner_tests {
         rank_symbol_refs(&mut symbols);
 
         assert_eq!(symbols[0].name, "build_index");
+    }
+
+    #[test]
+    fn grep_accepts_flag_shaped_patterns_without_breaking_flags() {
+        let cli = Cli::try_parse_from(["cm", "grep", "--text", "--exact", "README.md"])
+            .expect("grep should accept flag-shaped patterns");
+        match cli.command {
+            Commands::Grep {
+                pattern,
+                path,
+                text,
+                ..
+            } => {
+                assert_eq!(pattern, "--exact");
+                assert_eq!(path, PathBuf::from("README.md"));
+                assert!(text);
+            }
+            _ => panic!("expected grep command"),
+        }
+
+        let cli = Cli::try_parse_from(["cm", "grep", "--limit", "5", "Parser"])
+            .expect("grep should still parse flags before the pattern");
+        match cli.command {
+            Commands::Grep { pattern, limit, .. } => {
+                assert_eq!(pattern, "Parser");
+                assert_eq!(limit, Some(5));
+            }
+            _ => panic!("expected grep command"),
+        }
     }
 
     #[test]

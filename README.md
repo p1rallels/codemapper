@@ -14,7 +14,7 @@ Compared to Python version: **10-50x faster** cold start performance.
 
 ### ⚡ Fast Mode
 
-For large codebases (1000+ files), CodeMapper automatically enables **Fast Mode**—a ripgrep-powered two-stage search:
+For large codebases, CodeMapper automatically plans fast searches with a ripgrep-style text prefilter and AST validation:
 
 | Codebase Size | Before | After | Speedup |
 |---------------|--------|-------|---------|
@@ -30,15 +30,15 @@ For large codebases (1000+ files), CodeMapper automatically enables **Fast Mode*
 ## ✨ Features
 
 - **Smart Caching**: Auto-enabled for projects ≥300ms to parse; small projects stay fast with no `.codemapper/` clutter
-- **Fast Mode**: Ripgrep-powered search with 10-100x speedup (auto-enabled for 1000+ files)
+- **Fast Mode**: Automatic text prefilter planning with 10-100x speedups on large searches
 - **Tree-sitter Parsing**: Accurate AST-based symbol extraction
 - **Multi-language**: Python, JavaScript, TypeScript, Rust, Java, Go, C, Swift, Ruby, Markdown
 - **Parallel Processing**: Uses rayon for concurrent file parsing
-- **Fuzzy Search**: Case-insensitive matching by default (use `--exact` for strict)
+- **Fuzzy Search**: Case-insensitive matching by default; use `cm grep` or `cm query --grep` for symbol substrings
 - **Call Graph Analysis**: callers, callees, trace, tests, entrypoints
 - **Git Integration**: diff, since, blame, history commands
 - **Type Analysis**: types, implements, schema commands
-- **3 Output Formats**: default (markdown), human (tables), ai (token-efficient)
+- **3 Output Formats**: ai (default), human (tables), default (markdown)
 
 ## 📦 Installation
 
@@ -133,16 +133,20 @@ Fuzzy matching is **enabled by default** for more forgiving searches:
 # Default: fuzzy/case-insensitive
 cm query auth                    # Matches authenticate, Authorization, etc.
 
-# Exact matching when needed
-cm query MyClass --exact         # Case-sensitive, precise match
+# Grep-style symbol substring search
+cm grep Parser                   # Case-sensitive symbol search
+cm query Parser --grep           # Same search through query
+
+# Raw text search
+cm grep --text 'TODO|FIXME' .    # rg -n style line output
 ```
 
 ## 📊 Output Formats
 
 ```bash
-cm query Parser --format default   # Markdown (documentation, readable)
+cm query Parser                    # Compact AI output by default
 cm query Parser --format human     # Tables (terminal viewing, pretty)
-cm query Parser --format ai        # Compact (LLM context, token-efficient) ← RECOMMENDED
+cm query Parser --format default   # Markdown (documentation, readable)
 ```
 
 ## 💾 Caching
@@ -238,7 +242,7 @@ cm since <last_release> --breaking # Breaking changes?
 - **parser/**: Language-specific parsers using tree-sitter
 - **indexer.rs**: File walking, hashing, parallel processing
 - **callgraph.rs**: Call graph analysis (callers, callees, trace)
-- **fast_search.rs**: Ripgrep-powered fast mode
+- **fast_search.rs**: Text prefiltering and raw grep-style search
 - **cache.rs**: Smart caching with incremental updates
 - **output.rs**: Three output formatters
 - **main.rs**: CLI interface using clap
@@ -270,8 +274,10 @@ The indexer automatically skips:
 ## 🛠️ Common Flags
 
 ```
---exact              Strict matching (default is fuzzy)
---format <format>    Output: default (markdown), human (tables), ai (compact)
+--grep               Case-sensitive symbol substring search
+--text               Raw rg-style text search for cm grep
+--limit 0            Return all results (default is first 50 for query/grep)
+--format <format>    Output: ai (default), human (tables), default (markdown)
 --show-body          Include actual code (not just signatures)
 --exports-only       Public symbols only (pub, export, etc.)
 --full               Include anonymous/lambda functions
