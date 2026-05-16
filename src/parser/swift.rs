@@ -134,7 +134,7 @@ impl SwiftParser {
                 let (line_start, line_end) = self.get_line_range(node);
                 let is_exported = self.visibility_is_publicish(node, source);
 
-                let signature = decl_kind.as_ref().map(|k| format!("{}", k));
+                let signature = decl_kind.as_ref().map(|k| k.to_string());
 
                 symbols.push(Symbol {
                     name,

@@ -661,7 +661,7 @@ public interface MyInterface {
 }
 "#;
         let result = parser.parse(source, Path::new("test.java"))?;
-        assert!(result.symbols.len() >= 1);
+        assert!(!result.symbols.is_empty());
         Ok(())
     }
 

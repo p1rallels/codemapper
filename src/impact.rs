@@ -45,7 +45,7 @@ pub fn cmd_impact(
         .collect();
 
     if matches.is_empty() {
-        println!("{} Symbol '{}' not found in codebase", "✗", symbol);
+        println!("✗ Symbol '{}' not found in codebase", symbol);
         return Ok(());
     }
 

@@ -12,5 +12,5 @@ pub const IGNORED_DIRS: &[&str] = &[
 ];
 
 pub fn is_ignored_dir(name: &str) -> bool {
-    IGNORED_DIRS.iter().any(|d| *d == name)
+    IGNORED_DIRS.contains(&name)
 }

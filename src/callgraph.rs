@@ -376,7 +376,7 @@ fn extract_rust_calls(content: &str) -> Result<Vec<(String, usize, String)>> {
 
                     // also scan the token_tree for call-ish patterns like `x.foo(...)` inside macros
                     if let Some(macro_node) = match_.captures.iter().find_map(|c| {
-                        let n: &str = &query.capture_names()[c.index as usize];
+                        let n: &str = query.capture_names()[c.index as usize];
                         if n == "macro.expr" {
                             Some(c.node)
                         } else {

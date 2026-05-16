@@ -465,7 +465,7 @@ func HelloWorld() {
 }
 "#;
         let result = parser.parse(source, Path::new("test.go"))?;
-        assert!(result.symbols.len() >= 1);
+        assert!(!result.symbols.is_empty());
 
         let funcs: Vec<_> = result
             .symbols

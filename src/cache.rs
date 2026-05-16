@@ -396,7 +396,7 @@ impl CacheManager {
         match validation_result {
             ValidationResult::Invalid => {
                 // Too many changes, full rebuild needed
-                return Ok(None);
+                Ok(None)
             }
             ValidationResult::Valid => {
                 // Load cache as-is

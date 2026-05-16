@@ -234,10 +234,7 @@ pub fn index_directory_with_progress(
                 }
             };
 
-            let result = match index_file(file_path, &content, language, None) {
-                Ok(info) => Some(info),
-                Err(_) => None,
-            };
+            let result = index_file(file_path, &content, language, None).ok();
 
             if let Some(ref pb) = progress_wrapper {
                 if let Ok(pb) = pb.lock() {

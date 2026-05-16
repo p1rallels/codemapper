@@ -526,6 +526,7 @@ fn parse_java_params(param_str: &str) -> Vec<TypeInfo> {
     let mut params = Vec::new();
 
     let parts = split_by_comma_respecting_brackets(param_str);
+    let annotation_re = Regex::new(r"@\w+\s*").ok();
 
     for part in parts {
         let part = part.trim();
@@ -534,9 +535,10 @@ fn parse_java_params(param_str: &str) -> Vec<TypeInfo> {
         }
 
         // Remove annotations like @NotNull
-        let part = Regex::new(r"@\w+\s*")
+        let part = annotation_re
+            .as_ref()
             .map(|re| re.replace_all(part, ""))
-            .unwrap_or_else(|_| part.into());
+            .unwrap_or_else(|| part.into());
         let part = part.trim();
 
         // Java syntax: `Type name` or `final Type name`

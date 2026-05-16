@@ -233,7 +233,7 @@ fn find_python_implementations(
                     .next()
                     .unwrap_or(parent)
                     .split('.')
-                    .last()
+                    .next_back()
                     .unwrap_or(parent)
                     .trim();
 

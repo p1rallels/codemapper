@@ -39,7 +39,7 @@ impl CodeIndex {
 
             self.symbol_index
                 .entry(symbol.name.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(idx);
 
             self.symbols.push(symbol);
@@ -118,7 +118,7 @@ impl CodeIndex {
             if let Some(symbol) = self.symbols.get(*old_idx) {
                 new_symbol_index
                     .entry(symbol.name.clone())
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(*new_idx);
             }
         }
@@ -263,8 +263,8 @@ fn levenshtein_distance(s1: &str, s2: &str) -> i32 {
 
     let mut matrix = vec![vec![0; len2 + 1]; len1 + 1];
 
-    for i in 0..=len1 {
-        matrix[i][0] = i;
+    for (i, row) in matrix.iter_mut().enumerate().take(len1 + 1) {
+        row[0] = i;
     }
     for j in 0..=len2 {
         matrix[0][j] = j;
