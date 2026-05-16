@@ -5,7 +5,7 @@ use crate::callgraph::{
 use crate::diff::{ChangeType, DiffResult, SymbolDiff};
 use crate::implements::Implementation;
 use crate::index::CodeIndex;
-use crate::models::{Symbol, SymbolType};
+use crate::models::{FileInfo, Symbol, SymbolType};
 use crate::schema::SchemaInfo;
 use crate::snapshot::Snapshot;
 use crate::types::SymbolTypes;
@@ -137,6 +137,36 @@ fn read_markdown_section_snippet(
 }
 
 /// Read specific lines from a file (1-indexed line numbers)
+fn map_symbol_type_short(symbol_type: SymbolType) -> &'static str {
+    match symbol_type {
+        SymbolType::Function => "f",
+        SymbolType::Class => "c",
+        SymbolType::Method => "m",
+        SymbolType::Enum => "e",
+        SymbolType::StaticField => "s",
+        SymbolType::Heading => "h",
+        SymbolType::CodeBlock => "cb",
+        SymbolType::Endpoint => "ep",
+        SymbolType::Interface => "if",
+        SymbolType::TypeAlias => "ty",
+        SymbolType::Module => "mod",
+    }
+}
+
+fn sorted_map_files(index: &CodeIndex) -> Vec<&FileInfo> {
+    let mut files: Vec<&FileInfo> = index.files().collect();
+    files.sort_by(|a, b| {
+        let a_symbols = index.get_file_symbols(&a.path).len();
+        let b_symbols = index.get_file_symbols(&b.path).len();
+
+        b_symbols
+            .cmp(&a_symbols)
+            .then_with(|| b.size.cmp(&a.size))
+            .then_with(|| a.path.cmp(&b.path))
+    });
+    files
+}
+
 fn read_file_lines(path: &Path, start_line: usize, end_line: usize) -> Option<String> {
     let content = fs::read_to_string(path).ok()?;
     let lines: Vec<&str> = content.lines().collect();
@@ -169,273 +199,130 @@ impl OutputFormatter {
         Self { format }
     }
 
-    pub fn format_map(&self, index: &CodeIndex, level: u8) -> String {
+    pub fn format_map(&self, index: &CodeIndex, full: bool) -> String {
         match self.format {
-            OutputFormat::Default => self.format_map_default(index, level),
-            OutputFormat::Human => self.format_map_human(index, level),
-            OutputFormat::AI => self.format_map_ai(index, level),
+            OutputFormat::Default => self.format_map_default(index, full),
+            OutputFormat::Human => self.format_map_human(index, full),
+            OutputFormat::AI => self.format_map_ai(index, full),
         }
     }
 
-    fn format_map_default(&self, index: &CodeIndex, level: u8) -> String {
+    fn format_map_default(&self, index: &CodeIndex, full: bool) -> String {
         let mut output = String::new();
-        output.push_str("# Project Overview\n\n");
+        output.push_str("# Project Map\n\n");
+        output.push_str("Files are ordered by symbol count, then size. Run `cm stats` for aggregate counts.\n\n");
+        output.push_str("## Files\n\n");
 
-        let mut lang_counts: HashMap<&str, usize> = HashMap::new();
-        for file in index.files() {
-            *lang_counts.entry(file.language.as_str()).or_insert(0) += 1;
-        }
+        for file in sorted_map_files(index) {
+            let symbols = index.get_file_symbols(&file.path);
+            output.push_str(&format!("### {}\n", file.path.display()));
+            output.push_str(&format!("- Language: {}\n", file.language.as_str()));
+            output.push_str(&format!("- Size: {} bytes\n", file.size));
+            output.push_str(&format!("- Symbols: {}\n", symbols.len()));
 
-        output.push_str("## Languages\n");
-        for (lang, count) in &lang_counts {
-            output.push_str(&format!("- {}: {} files\n", lang, count));
-        }
-
-        output.push_str("\n## Statistics\n");
-        output.push_str(&format!("- Total files: {}\n", index.total_files()));
-        output.push_str(&format!("- Total symbols: {}\n", index.total_symbols()));
-        output.push_str(&format!(
-            "  - Functions: {}\n",
-            index.symbols_by_type(SymbolType::Function)
-        ));
-        output.push_str(&format!(
-            "  - Classes: {}\n",
-            index.symbols_by_type(SymbolType::Class)
-        ));
-        output.push_str(&format!(
-            "  - Modules: {}\n",
-            index.symbols_by_type(SymbolType::Module)
-        ));
-        output.push_str(&format!(
-            "  - Methods: {}\n",
-            index.symbols_by_type(SymbolType::Method)
-        ));
-        output.push_str(&format!(
-            "  - Enums: {}\n",
-            index.symbols_by_type(SymbolType::Enum)
-        ));
-        output.push_str(&format!(
-            "  - Static Fields: {}\n",
-            index.symbols_by_type(SymbolType::StaticField)
-        ));
-        output.push_str(&format!(
-            "  - Headings: {}\n",
-            index.symbols_by_type(SymbolType::Heading)
-        ));
-        output.push_str(&format!(
-            "  - Code Blocks: {}\n",
-            index.symbols_by_type(SymbolType::CodeBlock)
-        ));
-
-        if level >= 2 {
-            output.push_str("\n## Files\n\n");
-            for file in index.files() {
-                output.push_str(&format!("### {}\n", file.path.display()));
-                output.push_str(&format!("- Language: {}\n", file.language.as_str()));
-                output.push_str(&format!("- Size: {} bytes\n", file.size));
-
-                let symbols = index.get_file_symbols(&file.path);
-                if !symbols.is_empty() {
-                    output.push_str(&format!("- Symbols: {}\n", symbols.len()));
-
-                    if level >= 3 {
-                        for symbol in symbols {
-                            output.push_str(&format!(
-                                "  - {} {} (lines {}-{})",
-                                symbol.symbol_type.as_str(),
-                                symbol.name,
-                                symbol.line_start,
-                                symbol.line_end
-                            ));
-                            if let Some(sig) = &symbol.signature {
-                                output.push_str(sig);
-                            }
-                            output.push('\n');
-                            if let Some(doc) = &symbol.docstring {
-                                output.push_str(&format!("    \"{}\"\n", doc));
-                            }
-                        }
+            if full {
+                for symbol in symbols {
+                    output.push_str(&format!(
+                        "  - {} {} (lines {}-{})",
+                        symbol.symbol_type.as_str(),
+                        symbol.name,
+                        symbol.line_start,
+                        symbol.line_end
+                    ));
+                    if let Some(sig) = &symbol.signature {
+                        output.push_str(&format!(" {}", sig));
+                    }
+                    output.push('\n');
+                    if let Some(doc) = &symbol.docstring {
+                        output.push_str(&format!("    \"{}\"\n", doc));
                     }
                 }
-                output.push('\n');
             }
+
+            output.push('\n');
         }
 
         output
     }
 
-    fn format_map_human(&self, index: &CodeIndex, level: u8) -> String {
+    fn format_map_human(&self, index: &CodeIndex, full: bool) -> String {
         let mut output = String::new();
 
-        output.push_str(&format!("{}\n\n", "Project Overview".bold().green()));
+        output.push_str(&format!("{}\n", "Project Map".bold().green()));
+        output.push_str("Files are ordered by symbol count, then size. Run `cm stats` for aggregate counts.\n\n");
 
-        let mut lang_table = Table::new();
-        lang_table
+        let mut file_table = Table::new();
+        file_table
             .load_preset(UTF8_FULL)
-            .apply_modifier(UTF8_ROUND_CORNERS)
-            .set_header(vec!["Language", "Files"]);
+            .apply_modifier(UTF8_ROUND_CORNERS);
 
-        let mut lang_counts: HashMap<&str, usize> = HashMap::new();
-        for file in index.files() {
-            *lang_counts.entry(file.language.as_str()).or_insert(0) += 1;
+        if full {
+            file_table.set_header(vec!["File", "Language", "Size", "Count", "Symbols"]);
+        } else {
+            file_table.set_header(vec!["File", "Language", "Size", "Symbol Count"]);
         }
 
-        for (lang, count) in &lang_counts {
-            lang_table.add_row(vec![lang.to_string(), count.to_string()]);
-        }
-
-        output.push_str(&format!("{}\n\n", lang_table));
-
-        let mut stats_table = Table::new();
-        stats_table
-            .load_preset(UTF8_FULL)
-            .apply_modifier(UTF8_ROUND_CORNERS)
-            .set_header(vec!["Metric", "Count"]);
-
-        stats_table.add_row(vec!["Total Files", &index.total_files().to_string()]);
-        stats_table.add_row(vec!["Total Symbols", &index.total_symbols().to_string()]);
-        stats_table.add_row(vec![
-            "Functions",
-            &index.symbols_by_type(SymbolType::Function).to_string(),
-        ]);
-        stats_table.add_row(vec![
-            "Classes",
-            &index.symbols_by_type(SymbolType::Class).to_string(),
-        ]);
-        stats_table.add_row(vec![
-            "Modules",
-            &index.symbols_by_type(SymbolType::Module).to_string(),
-        ]);
-        stats_table.add_row(vec![
-            "Methods",
-            &index.symbols_by_type(SymbolType::Method).to_string(),
-        ]);
-        stats_table.add_row(vec![
-            "Enums",
-            &index.symbols_by_type(SymbolType::Enum).to_string(),
-        ]);
-        stats_table.add_row(vec![
-            "Static Fields",
-            &index.symbols_by_type(SymbolType::StaticField).to_string(),
-        ]);
-        stats_table.add_row(vec![
-            "Headings",
-            &index.symbols_by_type(SymbolType::Heading).to_string(),
-        ]);
-        stats_table.add_row(vec![
-            "Code Blocks",
-            &index.symbols_by_type(SymbolType::CodeBlock).to_string(),
-        ]);
-
-        output.push_str(&format!("{}\n", stats_table));
-
-        if level >= 2 {
-            output.push_str(&format!("\n{}\n\n", "Files".bold().green()));
-
-            let mut file_table = Table::new();
-            file_table
-                .load_preset(UTF8_FULL)
-                .apply_modifier(UTF8_ROUND_CORNERS);
-
-            if level >= 3 {
-                file_table.set_header(vec!["File", "Language", "Size", "Symbols"]);
-            } else {
-                file_table.set_header(vec!["File", "Language", "Size", "Symbol Count"]);
-            }
-
-            for file in index.files() {
-                let symbols = index.get_file_symbols(&file.path);
-                let symbol_info = if level >= 3 {
-                    symbols
-                        .iter()
-                        .map(|s| format!("{}:{}", s.symbol_type.as_str(), s.name))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                } else {
-                    symbols.len().to_string()
-                };
+        for file in sorted_map_files(index) {
+            let symbols = index.get_file_symbols(&file.path);
+            if full {
+                let symbol_info = symbols
+                    .iter()
+                    .map(|s| format!("{}:{}", s.symbol_type.as_str(), s.name))
+                    .collect::<Vec<_>>()
+                    .join(", ");
 
                 file_table.add_row(vec![
                     file.path.display().to_string(),
                     file.language.as_str().to_string(),
                     format!("{} bytes", file.size),
+                    symbols.len().to_string(),
                     symbol_info,
                 ]);
+            } else {
+                file_table.add_row(vec![
+                    file.path.display().to_string(),
+                    file.language.as_str().to_string(),
+                    format!("{} bytes", file.size),
+                    symbols.len().to_string(),
+                ]);
             }
-
-            output.push_str(&format!("{}\n", file_table));
         }
 
+        output.push_str(&format!("{}\n", file_table));
         output
     }
 
-    fn format_map_ai(&self, index: &CodeIndex, level: u8) -> String {
+    fn format_map_ai(&self, index: &CodeIndex, full: bool) -> String {
         let mut output = String::new();
-        output.push_str("[PROJECT]\n");
-
-        let mut lang_counts: HashMap<&str, usize> = HashMap::new();
-        for file in index.files() {
-            *lang_counts.entry(file.language.as_str()).or_insert(0) += 1;
+        output.push_str("[MAP]\n");
+        output.push_str("ORDER:symbol_count_desc,size_desc\n");
+        output.push_str("FILE:path|lang|bytes|syms\n");
+        if full {
+            output.push_str("SYM:path|type|name|start-end\n");
         }
+        output.push_str("[FILES]\n");
 
-        output.push_str("LANGS:");
-        for (lang, count) in &lang_counts {
-            output.push_str(&format!(" {}:{}", lang, count));
-        }
-        output.push('\n');
+        for file in sorted_map_files(index) {
+            let symbols = index.get_file_symbols(&file.path);
+            output.push_str(&format!(
+                "{}|{}|{}|{}\n",
+                file.path.display(),
+                file.language.as_str(),
+                file.size,
+                symbols.len()
+            ));
 
-        output.push_str(&format!("FILES:{} SYMBOLS:{} FUNCTIONS:{} CLASSES:{} MODULES:{} METHODS:{} ENUMS:{} STATICS:{} HEADINGS:{} CODE BLOCKS:{}\n",
-            index.total_files(),
-            index.total_symbols(),
-            index.symbols_by_type(SymbolType::Function),
-            index.symbols_by_type(SymbolType::Class),
-            index.symbols_by_type(SymbolType::Module),
-            index.symbols_by_type(SymbolType::Method),
-            index.symbols_by_type(SymbolType::Enum),
-            index.symbols_by_type(SymbolType::StaticField),
-            index.symbols_by_type(SymbolType::Heading),
-            index.symbols_by_type(SymbolType::CodeBlock)
-        ));
-
-        if level >= 2 {
-            output.push_str("\n[FILES]\n");
-            for file in index.files() {
-                output.push_str(&format!(
-                    "{}|{}|{}",
-                    file.path.display(),
-                    file.language.as_str(),
-                    file.size
-                ));
-
-                let symbols = index.get_file_symbols(&file.path);
-                if !symbols.is_empty() && level >= 3 {
-                    output.push('|');
-                    for (i, symbol) in symbols.iter().enumerate() {
-                        if i > 0 {
-                            output.push(',');
-                        }
-                        output.push_str(&format!(
-                            "{}:{}@{}-{}",
-                            match symbol.symbol_type {
-                                SymbolType::Function => "f",
-                                SymbolType::Class => "c",
-                                SymbolType::Method => "m",
-                                SymbolType::Enum => "e",
-                                SymbolType::StaticField => "s",
-                                SymbolType::Heading => "h",
-                                SymbolType::CodeBlock => "cb",
-                                SymbolType::Endpoint => "ep",
-                                SymbolType::Interface => "if",
-                                SymbolType::TypeAlias => "ty",
-                                SymbolType::Module => "mod",
-                            },
-                            symbol.name,
-                            symbol.line_start,
-                            symbol.line_end
-                        ));
-                    }
+            if full {
+                for symbol in symbols {
+                    output.push_str(&format!(
+                        "{}|{}|{}|{}-{}\n",
+                        file.path.display(),
+                        map_symbol_type_short(symbol.symbol_type),
+                        symbol.name,
+                        symbol.line_start,
+                        symbol.line_end
+                    ));
                 }
-                output.push('\n');
             }
         }
 

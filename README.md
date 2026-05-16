@@ -58,7 +58,7 @@ Binary location: `target/release/cm`
 cm stats .                           # Project overview
 
 # 2. See file structure
-cm map . --level 2 --format ai       # File listing with symbol counts
+cm map                              # File listing with symbol counts
 
 # 3. Find and explore
 cm query authenticate                # Fuzzy search (default)
@@ -83,7 +83,7 @@ cm blame authenticate ./auth.py      # Who last touched it?
 | Command | Description |
 |---------|-------------|
 | `stats` | Project size and composition |
-| `map` | File listing with symbol counts (3 detail levels) |
+| `map` | File listing with symbol counts |
 | `query` | Find symbols by name (main search tool) |
 | `inspect` | List all symbols in one file |
 | `deps` | Track imports and usage |
@@ -124,6 +124,14 @@ cm blame authenticate ./auth.py      # Who last touched it?
 |---------|-------------|
 | `snapshot` | Save current state (named checkpoint) |
 | `compare` | Diff current vs saved snapshot |
+
+## 🗺️ Project Maps
+
+```bash
+cm map                  # File list with language, size, and symbol counts
+cm map --full           # Include each symbol name and location
+cm map --limit 0        # Disable the default 100-line output cap
+```
 
 ## 🔍 Search Modes
 
@@ -185,7 +193,7 @@ cm stats .
 ### Exploring Unknown Code
 ```bash
 cm stats .                           # Size and composition
-cm map . --level 2 --format ai       # File structure
+cm map                              # File structure
 cm query <symbol>                    # Find code
 cm inspect ./path/to/file            # Deep dive
 ```
@@ -276,11 +284,11 @@ The indexer automatically skips:
 ```
 --grep               Case-sensitive symbol substring search
 --text               Raw rg-style text search for cm grep
---limit 0            Return all results (default is first 50 for query/grep)
+--limit 0            Return all results (query/grep default to 50 results; map defaults to 100 lines)
 --format <format>    Output: ai (default), human (tables), default (markdown)
 --show-body          Include actual code (not just signatures)
 --exports-only       Public symbols only (pub, export, etc.)
---full               Include anonymous/lambda functions
+--full               Map: include symbol details; search/analysis: include anonymous/lambda functions
 --context minimal    Signatures only (default)
 --context full       Include docstrings and metadata
 --no-cache           Skip cache, always reindex
