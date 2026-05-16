@@ -5,7 +5,8 @@ use grep::searcher::{BinaryDetection, Searcher, SearcherBuilder, Sink, SinkMatch
 use rayon::prelude::*;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
 use crate::ignore;
 use crate::indexer::{detect_language, index_file, matches_extension_filter};
@@ -16,6 +17,20 @@ pub struct TextMatch {
     pub path: PathBuf,
     pub line_number: u64,
     pub line: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrefilterStopReason {
+    Exhausted,
+    CandidateLimit,
+    TimedOut,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrefilterResult {
+    pub candidates: Vec<PathBuf>,
+    pub elapsed: Duration,
+    pub stop_reason: PrefilterStopReason,
 }
 
 /// Fast text search using ripgrep-style grep for prefiltering candidate files
@@ -105,6 +120,16 @@ impl Sink for TextMatchCollector {
     }
 }
 
+fn prefilter_chunk_size() -> usize {
+    (rayon::current_num_threads() * 8).clamp(32, 256)
+}
+
+fn deadline_expired(deadline: Option<Instant>) -> bool {
+    deadline
+        .map(|deadline| Instant::now() >= deadline)
+        .unwrap_or(false)
+}
+
 impl GrepFilter {
     /// Create a new GrepFilter
     pub fn new(pattern: &str, case_sensitive: bool, extensions: Vec<String>) -> Self {
@@ -117,46 +142,97 @@ impl GrepFilter {
 
     /// Stage 1: Fast text search to find candidate files
     /// Returns list of files that contain the pattern (supports | OR syntax)
-    pub fn prefilter_paths(&self, paths: &[PathBuf], limit: Option<usize>) -> Result<Vec<PathBuf>> {
+    pub fn prefilter_paths_with_budget(
+        &self,
+        paths: &[PathBuf],
+        limit: Option<usize>,
+        time_budget: Option<Duration>,
+    ) -> Result<PrefilterResult> {
+        let started = Instant::now();
         if limit == Some(0) {
-            return Ok(Vec::new());
+            return Ok(PrefilterResult {
+                candidates: Vec::new(),
+                elapsed: started.elapsed(),
+                stop_reason: PrefilterStopReason::CandidateLimit,
+            });
         }
 
         let pattern = self.prefilter_pattern();
         let matcher = RegexMatcher::new(&pattern).context("Failed to create regex matcher")?;
-        let found_count = AtomicUsize::new(0);
         let max_matches = limit.unwrap_or(usize::MAX);
+        let deadline = time_budget.map(|budget| started + budget);
+        let mut candidates = Vec::new();
+        let mut stop_reason = PrefilterStopReason::Exhausted;
 
-        let mut candidates: Vec<PathBuf> = paths
-            .par_iter()
-            .filter_map(|path| {
-                if found_count.load(Ordering::Relaxed) >= max_matches {
-                    return None;
-                }
+        for chunk in paths.chunks(prefilter_chunk_size()) {
+            if candidates.len() >= max_matches {
+                stop_reason = PrefilterStopReason::CandidateLimit;
+                break;
+            }
 
-                let mut collector = CandidateCollector::new();
-                let mut searcher = SearcherBuilder::new()
-                    .binary_detection(BinaryDetection::quit(b'\x00'))
-                    .line_number(false)
-                    .build();
+            if deadline_expired(deadline) {
+                stop_reason = PrefilterStopReason::TimedOut;
+                break;
+            }
 
-                collector.set_path(path.clone());
-                let _ = searcher.search_path(&matcher, path, &mut collector);
-                if collector.files.is_empty() {
-                    return None;
-                }
+            let remaining = max_matches.saturating_sub(candidates.len());
+            let found_count = AtomicUsize::new(0);
+            let timed_out = AtomicBool::new(false);
+            let mut chunk_candidates: Vec<PathBuf> = chunk
+                .par_iter()
+                .filter_map(|path| {
+                    if found_count.load(Ordering::Relaxed) >= remaining {
+                        return None;
+                    }
 
-                let slot = found_count.fetch_add(1, Ordering::Relaxed);
-                if slot < max_matches {
-                    Some(path.clone())
-                } else {
-                    None
-                }
-            })
-            .collect();
+                    if deadline_expired(deadline) {
+                        timed_out.store(true, Ordering::Relaxed);
+                        return None;
+                    }
+
+                    let mut collector = CandidateCollector::new();
+                    let mut searcher = SearcherBuilder::new()
+                        .binary_detection(BinaryDetection::quit(b'\x00'))
+                        .line_number(false)
+                        .build();
+
+                    collector.set_path(path.clone());
+                    let _ = searcher.search_path(&matcher, path, &mut collector);
+                    if deadline_expired(deadline) {
+                        timed_out.store(true, Ordering::Relaxed);
+                    }
+                    if collector.files.is_empty() {
+                        return None;
+                    }
+
+                    let slot = found_count.fetch_add(1, Ordering::Relaxed);
+                    if slot < remaining {
+                        Some(path.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            candidates.append(&mut chunk_candidates);
+            if candidates.len() >= max_matches {
+                stop_reason = PrefilterStopReason::CandidateLimit;
+                break;
+            }
+
+            if timed_out.load(Ordering::Relaxed) || deadline_expired(deadline) {
+                stop_reason = PrefilterStopReason::TimedOut;
+                break;
+            }
+        }
+
         candidates.sort();
 
-        Ok(candidates)
+        Ok(PrefilterResult {
+            candidates,
+            elapsed: started.elapsed(),
+            stop_reason,
+        })
     }
 
     fn prefilter_pattern(&self) -> String {
@@ -332,9 +408,42 @@ mod tests {
 
         let filter = GrepFilter::new("Needle", true, vec!["rs".to_string()]);
         let paths = vec![temp.path().join("first.rs"), temp.path().join("second.rs")];
-        let candidates = filter.prefilter_paths(&paths, Some(1)).unwrap();
+        let result = filter
+            .prefilter_paths_with_budget(&paths, Some(1), None)
+            .unwrap();
 
-        assert_eq!(candidates.len(), 1);
+        assert_eq!(result.candidates.len(), 1);
+    }
+
+    #[test]
+    fn test_prefilter_reports_candidate_limit() {
+        let temp = tempfile::TempDir::new().unwrap();
+        fs::write(temp.path().join("first.rs"), "fn Needle() {}\n").unwrap();
+        fs::write(temp.path().join("second.rs"), "fn Needle() {}\n").unwrap();
+
+        let filter = GrepFilter::new("Needle", true, vec!["rs".to_string()]);
+        let paths = vec![temp.path().join("first.rs"), temp.path().join("second.rs")];
+        let result = filter
+            .prefilter_paths_with_budget(&paths, Some(1), None)
+            .unwrap();
+
+        assert_eq!(result.candidates.len(), 1);
+        assert_eq!(result.stop_reason, PrefilterStopReason::CandidateLimit);
+    }
+
+    #[test]
+    fn test_prefilter_reports_timeout() {
+        let temp = tempfile::TempDir::new().unwrap();
+        fs::write(temp.path().join("first.rs"), "fn Needle() {}\n").unwrap();
+
+        let filter = GrepFilter::new("Needle", true, vec!["rs".to_string()]);
+        let paths = vec![temp.path().join("first.rs")];
+        let result = filter
+            .prefilter_paths_with_budget(&paths, Some(1), Some(Duration::from_millis(0)))
+            .unwrap();
+
+        assert!(result.candidates.is_empty());
+        assert_eq!(result.stop_reason, PrefilterStopReason::TimedOut);
     }
 
     #[test]

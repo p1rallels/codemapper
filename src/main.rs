@@ -27,13 +27,14 @@ use models::Symbol;
 use output::{OutputFormat, OutputFormatter};
 use rayon::prelude::*;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 const FAST_MODE_MIN_FILES: usize = 1000;
 const FAST_MODE_MIN_TOTAL_BYTES: u64 = 4 * 1024 * 1024;
 const FAST_MODE_MIN_FILE_BYTES: u64 = 1024 * 1024;
 const MAX_CANDIDATE_FILES: usize = 256;
 const MAX_CANDIDATE_RATIO: f64 = 0.10;
+const DEFAULT_PREFILTER_BUDGET_MS: u64 = 300;
 
 #[derive(Debug, Clone, Default)]
 struct SearchCorpusStats {
@@ -2474,7 +2475,7 @@ fn cmd_query(
     limit: Option<usize>,
     cache_dir: Option<&Path>,
 ) -> Result<()> {
-    use fast_search::GrepFilter;
+    use fast_search::{GrepFilter, PrefilterStopReason};
     use models::SymbolType;
 
     let symbol = pipe::read_symbol_arg(symbol)?;
@@ -2569,118 +2570,30 @@ fn cmd_query(
             );
         }
 
-        // Stage 1: text prefilter
         let extensions_vec: Vec<String> = ext_list.iter().map(|s| s.to_string()).collect();
         let filter = GrepFilter::new(&symbol, !fuzzy, extensions_vec);
-
         let prefilter_limit = candidate_parse_limit(corpus.file_count).saturating_add(1);
-        let candidates = filter.prefilter_paths(&corpus.files, Some(prefilter_limit))?;
-        let candidate_count = candidates.len();
-        let candidates_are_selective = should_parse_candidates(candidate_count, corpus.file_count);
+        let prefilter = filter.prefilter_paths_with_budget(
+            &corpus.files,
+            Some(prefilter_limit),
+            prefilter_time_budget(),
+        )?;
+        let candidate_count = prefilter.candidates.len();
 
-        if candidates.is_empty() {
-            println!(
-                "{} No symbols found matching '{}'",
-                "✗".red(),
-                symbol.bold()
-            );
-            return Ok(());
-        }
-
-        if !candidates_are_selective {
-            eprintln!(
-                "{} Found {} candidate files ({:.1}%), using full index instead",
-                "→".yellow(),
-                candidate_count,
-                candidate_ratio(candidate_count, corpus.file_count) * 100.0
-            );
-            // Fallback: Use normal mode with cache
-            let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
-            let mut symbols = if search_all {
-                index.all_symbols()
-            } else if fuzzy {
-                index.fuzzy_search(&symbol)
-            } else {
-                index.query_symbol(&symbol)
-            };
-
-            // Apply type filter if specified
-            if let Some(ref filter_type) = type_filter {
-                symbols.retain(|s| s.symbol_type == *filter_type);
-            }
-
-            // Merge in symbols matching extra type filters (from pipe plural syntax)
-            if !extra_type_filters.is_empty() {
-                let extra: Vec<&Symbol> = index
-                    .all_symbols()
-                    .into_iter()
-                    .filter(|s| extra_type_filters.contains(&s.symbol_type))
-                    .collect();
-                symbols.extend(extra);
-                dedup_symbols_by_ref(&mut symbols);
-            }
-
-            // Filter anonymous if requested
-            if skip_anonymous {
-                symbols.retain(|s| s.name != "anonymous");
-            }
-
-            // Filter to exports only if requested
-            if exports_only {
-                symbols.retain(|s| s.is_exported);
-            }
-
-            // Markdown section scoping (qualified name prefix)
-            if let Some(ref sec) = section {
-                let sec = sec.trim();
-                if !sec.is_empty() {
-                    let sec_prefix = format!("{} > ", sec);
-                    symbols.retain(|s| {
-                        s.file_path
-                            .extension()
-                            .and_then(|e| e.to_str())
-                            .map(|e| e.eq_ignore_ascii_case("md"))
-                            .unwrap_or(false)
-                            && (s.name == sec || s.name.starts_with(&sec_prefix))
-                    });
-                }
-            }
-
-            // Apply limit if specified
-            if let Some(n) = limit {
-                symbols.truncate(n);
-            }
-
-            if symbols.is_empty() {
-                println!(
-                    "{} No symbols found matching '{}'",
-                    "✗".red(),
-                    symbol.bold()
-                );
-                return Ok(());
-            }
-
-            let show_context = context.to_lowercase() == "full";
-            let formatter = OutputFormatter::new(format);
-            let output = formatter.format_query(symbols, show_context, show_body);
-            println!("{}", output);
-        } else {
+        if should_parse_prefilter_result(prefilter.stop_reason, candidate_count, corpus.file_count)
+        {
             eprintln!(
                 "{} Found {} candidate files, validating with AST...",
                 "→".cyan(),
-                candidates.len()
+                candidate_count
             );
 
-            // Stage 2: AST validation
-            let mut owned_symbols = filter.validate(candidates, &symbol, fuzzy)?;
+            let mut owned_symbols = filter.validate(prefilter.candidates, &symbol, fuzzy)?;
 
-            // Apply type filter if specified
             if let Some(ref filter_type) = type_filter {
                 owned_symbols.retain(|s| s.symbol_type == *filter_type);
             }
 
-            // Merge in symbols matching extra type filters (from pipe plural syntax)
-            // Fast mode can't do this without a full index, so fall back to index for extras
             if !extra_type_filters.is_empty() {
                 let index =
                     try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
@@ -2694,17 +2607,14 @@ fn cmd_query(
                 dedup_symbols_owned(&mut owned_symbols);
             }
 
-            // Filter anonymous if requested
             if skip_anonymous {
                 owned_symbols.retain(|s| s.name != "anonymous");
             }
 
-            // Filter to exports only if requested
             if exports_only {
                 owned_symbols.retain(|s| s.is_exported);
             }
 
-            // Markdown section scoping (qualified name prefix)
             if let Some(ref sec) = section {
                 let sec = sec.trim();
                 if !sec.is_empty() {
@@ -2720,88 +2630,118 @@ fn cmd_query(
                 }
             }
 
-            // Apply limit if specified
             if let Some(n) = limit {
                 owned_symbols.truncate(n);
             }
 
-            if owned_symbols.is_empty() {
-                eprintln!(
-                    "{} No AST matches in text candidates, falling back to full AST scan",
-                    "→".yellow()
-                );
-                let index =
-                    try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
-                let mut symbols = if fuzzy {
-                    index.fuzzy_search(&symbol)
-                } else {
-                    index.query_symbol(&symbol)
-                };
-
-                if let Some(ref filter_type) = type_filter {
-                    symbols.retain(|s| s.symbol_type == *filter_type);
-                }
-
-                if !extra_type_filters.is_empty() {
-                    let extra: Vec<&Symbol> = index
-                        .all_symbols()
-                        .into_iter()
-                        .filter(|s| extra_type_filters.contains(&s.symbol_type))
-                        .collect();
-                    symbols.extend(extra);
-                    dedup_symbols_by_ref(&mut symbols);
-                }
-
-                if skip_anonymous {
-                    symbols.retain(|s| s.name != "anonymous");
-                }
-
-                if exports_only {
-                    symbols.retain(|s| s.is_exported);
-                }
-
-                if let Some(ref sec) = section {
-                    let sec = sec.trim();
-                    if !sec.is_empty() {
-                        let sec_prefix = format!("{} > ", sec);
-                        symbols.retain(|s| {
-                            s.file_path
-                                .extension()
-                                .and_then(|e| e.to_str())
-                                .map(|e| e.eq_ignore_ascii_case("md"))
-                                .unwrap_or(false)
-                                && (s.name == sec || s.name.starts_with(&sec_prefix))
-                        });
-                    }
-                }
-
-                if let Some(n) = limit {
-                    symbols.truncate(n);
-                }
-
-                if symbols.is_empty() {
-                    println!(
-                        "{} No symbols found matching '{}'",
-                        "✗".red(),
-                        symbol.bold()
-                    );
-                    return Ok(());
-                }
-
+            if !owned_symbols.is_empty() {
                 let show_context = context.to_lowercase() == "full";
                 let formatter = OutputFormatter::new(format);
-                let output = formatter.format_query(symbols, show_context, show_body);
+                let symbol_refs: Vec<&Symbol> = owned_symbols.iter().collect();
+                let output = formatter.format_query(symbol_refs, show_context, show_body);
                 println!("{}", output);
                 return Ok(());
             }
 
-            let show_context = context.to_lowercase() == "full";
-            let formatter = OutputFormatter::new(format);
-            // Convert owned symbols to references for formatter
-            let symbol_refs: Vec<&Symbol> = owned_symbols.iter().collect();
-            let output = formatter.format_query(symbol_refs, show_context, show_body);
-            println!("{}", output);
+            eprintln!(
+                "{} No AST matches in text candidates, falling back to full AST scan",
+                "→".yellow()
+            );
+        } else if prefilter.candidates.is_empty()
+            && prefilter.stop_reason == PrefilterStopReason::Exhausted
+        {
+            println!(
+                "{} No symbols found matching '{}'",
+                "✗".red(),
+                symbol.bold()
+            );
+            return Ok(());
+        } else {
+            match prefilter.stop_reason {
+                PrefilterStopReason::TimedOut => eprintln!(
+                    "{} Prefilter budget expired after {}ms with {} candidate files, using full index instead",
+                    "→".yellow(),
+                    prefilter.elapsed.as_millis(),
+                    candidate_count
+                ),
+                PrefilterStopReason::CandidateLimit => eprintln!(
+                    "{} Found at least {} candidate files ({:.1}%+), using full index instead",
+                    "→".yellow(),
+                    candidate_count,
+                    candidate_ratio(candidate_count, corpus.file_count) * 100.0
+                ),
+                PrefilterStopReason::Exhausted => eprintln!(
+                    "{} Found {} candidate files ({:.1}%), using full index instead",
+                    "→".yellow(),
+                    candidate_count,
+                    candidate_ratio(candidate_count, corpus.file_count) * 100.0
+                ),
+            }
         }
+
+        let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
+        let mut symbols = if search_all {
+            index.all_symbols()
+        } else if fuzzy {
+            index.fuzzy_search(&symbol)
+        } else {
+            index.query_symbol(&symbol)
+        };
+
+        if let Some(ref filter_type) = type_filter {
+            symbols.retain(|s| s.symbol_type == *filter_type);
+        }
+
+        if !extra_type_filters.is_empty() {
+            let extra: Vec<&Symbol> = index
+                .all_symbols()
+                .into_iter()
+                .filter(|s| extra_type_filters.contains(&s.symbol_type))
+                .collect();
+            symbols.extend(extra);
+            dedup_symbols_by_ref(&mut symbols);
+        }
+
+        if skip_anonymous {
+            symbols.retain(|s| s.name != "anonymous");
+        }
+
+        if exports_only {
+            symbols.retain(|s| s.is_exported);
+        }
+
+        if let Some(ref sec) = section {
+            let sec = sec.trim();
+            if !sec.is_empty() {
+                let sec_prefix = format!("{} > ", sec);
+                symbols.retain(|s| {
+                    s.file_path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .map(|e| e.eq_ignore_ascii_case("md"))
+                        .unwrap_or(false)
+                        && (s.name == sec || s.name.starts_with(&sec_prefix))
+                });
+            }
+        }
+
+        if let Some(n) = limit {
+            symbols.truncate(n);
+        }
+
+        if symbols.is_empty() {
+            println!(
+                "{} No symbols found matching '{}'",
+                "✗".red(),
+                symbol.bold()
+            );
+            return Ok(());
+        }
+
+        let show_context = context.to_lowercase() == "full";
+        let formatter = OutputFormatter::new(format);
+        let output = formatter.format_query(symbols, show_context, show_body);
+        println!("{}", output);
     } else {
         // Normal mode for small codebases with cache
         let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
@@ -2923,6 +2863,32 @@ fn should_parse_candidates(candidate_count: usize, file_count: usize) -> bool {
     candidate_count > 0 && candidate_count <= candidate_parse_limit(file_count)
 }
 
+fn should_parse_prefilter_result(
+    stop_reason: fast_search::PrefilterStopReason,
+    candidate_count: usize,
+    file_count: usize,
+) -> bool {
+    stop_reason == fast_search::PrefilterStopReason::Exhausted
+        && should_parse_candidates(candidate_count, file_count)
+}
+
+fn prefilter_time_budget() -> Option<Duration> {
+    let value = std::env::var("CM_PREFILTER_BUDGET_MS").ok();
+    parse_prefilter_time_budget(value.as_deref())
+}
+
+fn parse_prefilter_time_budget(value: Option<&str>) -> Option<Duration> {
+    let budget_ms = value
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or(DEFAULT_PREFILTER_BUDGET_MS);
+
+    if budget_ms == 0 {
+        None
+    } else {
+        Some(Duration::from_millis(budget_ms))
+    }
+}
+
 fn candidate_parse_limit(file_count: usize) -> usize {
     let ratio_limit = (file_count as f64 * MAX_CANDIDATE_RATIO).floor() as usize;
     MAX_CANDIDATE_FILES.min(ratio_limit)
@@ -2981,6 +2947,38 @@ mod query_planner_tests {
         assert!(!should_parse_candidates(1446, 6102));
         assert!(!should_parse_candidates(300, 6102));
         assert!(!should_parse_candidates(0, 6102));
+    }
+
+    #[test]
+    fn prefilter_result_must_be_complete_to_parse_candidates() {
+        assert!(should_parse_prefilter_result(
+            fast_search::PrefilterStopReason::Exhausted,
+            7,
+            6102,
+        ));
+        assert!(!should_parse_prefilter_result(
+            fast_search::PrefilterStopReason::CandidateLimit,
+            7,
+            6102,
+        ));
+        assert!(!should_parse_prefilter_result(
+            fast_search::PrefilterStopReason::TimedOut,
+            7,
+            6102,
+        ));
+    }
+
+    #[test]
+    fn prefilter_budget_env_parsing() {
+        assert_eq!(
+            parse_prefilter_time_budget(None),
+            Some(Duration::from_millis(DEFAULT_PREFILTER_BUDGET_MS))
+        );
+        assert_eq!(parse_prefilter_time_budget(Some("0")), None);
+        assert_eq!(
+            parse_prefilter_time_budget(Some("25")),
+            Some(Duration::from_millis(25))
+        );
     }
 }
 
