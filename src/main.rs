@@ -35,6 +35,9 @@ const FAST_MODE_MIN_FILE_BYTES: u64 = 1024 * 1024;
 const MAX_CANDIDATE_FILES: usize = 256;
 const MAX_CANDIDATE_RATIO: f64 = 0.10;
 const DEFAULT_PREFILTER_BUDGET_MS: u64 = 300;
+const ESTIMATED_AST_PARSE_MS_PER_FILE: u64 = 8;
+const ESTIMATED_AST_PARSE_BYTES_PER_MS: u64 = 16 * 1024;
+const ESTIMATED_WARM_CACHE_QUERY_MS: u64 = 250;
 
 #[derive(Debug, Clone, Default)]
 struct SearchCorpusStats {
@@ -2572,16 +2575,26 @@ fn cmd_query(
 
         let extensions_vec: Vec<String> = ext_list.iter().map(|s| s.to_string()).collect();
         let filter = GrepFilter::new(&symbol, !fuzzy, extensions_vec);
-        let prefilter_limit = candidate_parse_limit(corpus.file_count).saturating_add(1);
+        let cache_available = !no_cache
+            && !rebuild_cache
+            && cache::CacheManager::exists(&path, &ext_list, cache_dir).unwrap_or(false);
+        let prefilter_limit = prefilter_candidate_limit(corpus.file_count, cache_available);
         let prefilter = filter.prefilter_paths_with_budget(
             &corpus.files,
             Some(prefilter_limit),
             prefilter_time_budget(),
         )?;
         let candidate_count = prefilter.candidates.len();
+        let candidate_bytes = total_file_bytes(&prefilter.candidates);
+        let prefer_cache =
+            should_prefer_cache_for_candidates(cache_available, candidate_count, candidate_bytes);
 
-        if should_parse_prefilter_result(prefilter.stop_reason, candidate_count, corpus.file_count)
-        {
+        if should_parse_prefilter_result(
+            prefilter.stop_reason,
+            candidate_count,
+            corpus.file_count,
+            prefer_cache,
+        ) {
             eprintln!(
                 "{} Found {} candidate files, validating with AST...",
                 "→".cyan(),
@@ -2664,11 +2677,22 @@ fn cmd_query(
                     prefilter.elapsed.as_millis(),
                     candidate_count
                 ),
+                PrefilterStopReason::CandidateLimit if prefer_cache => eprintln!(
+                    "{} Candidate AST cost estimate exceeds warm-cache path (at least {} files), using full index instead",
+                    "→".yellow(),
+                    candidate_count
+                ),
                 PrefilterStopReason::CandidateLimit => eprintln!(
                     "{} Found at least {} candidate files ({:.1}%+), using full index instead",
                     "→".yellow(),
                     candidate_count,
                     candidate_ratio(candidate_count, corpus.file_count) * 100.0
+                ),
+                PrefilterStopReason::Exhausted if prefer_cache => eprintln!(
+                    "{} Candidate AST cost estimate exceeds warm-cache path ({} files, {:.1} MB), using full index instead",
+                    "→".yellow(),
+                    candidate_count,
+                    candidate_bytes as f64 / 1_048_576.0
                 ),
                 PrefilterStopReason::Exhausted => eprintln!(
                     "{} Found {} candidate files ({:.1}%), using full index instead",
@@ -2867,9 +2891,48 @@ fn should_parse_prefilter_result(
     stop_reason: fast_search::PrefilterStopReason,
     candidate_count: usize,
     file_count: usize,
+    prefer_cache: bool,
 ) -> bool {
     stop_reason == fast_search::PrefilterStopReason::Exhausted
         && should_parse_candidates(candidate_count, file_count)
+        && !prefer_cache
+}
+
+fn should_prefer_cache_for_candidates(
+    cache_available: bool,
+    candidate_count: usize,
+    candidate_bytes: u64,
+) -> bool {
+    cache_available
+        && estimated_candidate_parse_ms(candidate_count, candidate_bytes)
+            >= ESTIMATED_WARM_CACHE_QUERY_MS
+}
+
+fn prefilter_candidate_limit(file_count: usize, cache_available: bool) -> usize {
+    let broad_limit = candidate_parse_limit(file_count).saturating_add(1);
+    if cache_available {
+        broad_limit.min(cache_candidate_parse_limit().saturating_add(1))
+    } else {
+        broad_limit
+    }
+}
+
+fn cache_candidate_parse_limit() -> usize {
+    (ESTIMATED_WARM_CACHE_QUERY_MS / ESTIMATED_AST_PARSE_MS_PER_FILE).max(1) as usize
+}
+
+fn estimated_candidate_parse_ms(candidate_count: usize, candidate_bytes: u64) -> u64 {
+    let file_cost = candidate_count as u64 * ESTIMATED_AST_PARSE_MS_PER_FILE;
+    let byte_cost = candidate_bytes.div_ceil(ESTIMATED_AST_PARSE_BYTES_PER_MS);
+    file_cost + byte_cost
+}
+
+fn total_file_bytes(paths: &[PathBuf]) -> u64 {
+    paths
+        .iter()
+        .filter_map(|path| path.metadata().ok())
+        .map(|metadata| metadata.len())
+        .sum()
 }
 
 fn prefilter_time_budget() -> Option<Duration> {
@@ -2955,17 +3018,41 @@ mod query_planner_tests {
             fast_search::PrefilterStopReason::Exhausted,
             7,
             6102,
+            false,
         ));
         assert!(!should_parse_prefilter_result(
             fast_search::PrefilterStopReason::CandidateLimit,
             7,
             6102,
+            false,
         ));
         assert!(!should_parse_prefilter_result(
             fast_search::PrefilterStopReason::TimedOut,
             7,
             6102,
+            false,
         ));
+        assert!(!should_parse_prefilter_result(
+            fast_search::PrefilterStopReason::Exhausted,
+            7,
+            6102,
+            true,
+        ));
+    }
+
+    #[test]
+    fn cache_preference_uses_candidate_parse_cost_estimate() {
+        assert!(!should_prefer_cache_for_candidates(true, 7, 64 * 1024));
+        assert!(should_prefer_cache_for_candidates(true, 124, 64 * 1024));
+        assert!(should_prefer_cache_for_candidates(true, 1, 4 * 1024 * 1024));
+        assert!(!should_prefer_cache_for_candidates(false, 124, 64 * 1024));
+    }
+
+    #[test]
+    fn prefilter_candidate_limit_uses_cache_cutoff_when_available() {
+        assert_eq!(prefilter_candidate_limit(6102, false), 257);
+        assert_eq!(prefilter_candidate_limit(6102, true), 32);
+        assert_eq!(prefilter_candidate_limit(30, true), 4);
     }
 
     #[test]

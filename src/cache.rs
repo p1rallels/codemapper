@@ -111,6 +111,11 @@ impl CacheManager {
         Ok((cache_file, meta_file))
     }
 
+    pub fn exists(root: &Path, extensions: &[&str], cache_dir: Option<&Path>) -> Result<bool> {
+        let (cache_file, meta_file) = Self::get_cache_paths(root, extensions, cache_dir)?;
+        Ok(cache_file.exists() && meta_file.exists())
+    }
+
     /// Compute Blake3 hash of a file
     pub fn compute_file_hash(path: &Path) -> Result<String> {
         let mut file = File::open(path).context("Failed to open file for hashing")?;
