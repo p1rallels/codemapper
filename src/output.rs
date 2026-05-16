@@ -120,7 +120,8 @@ fn read_markdown_section_snippet(
     path: &Path,
     start_line: usize,
     level: usize,
-) -> Option<(String, bool)> {
+    full_body: bool,
+) -> Option<(String, bool, usize)> {
     let content = fs::read_to_string(path).ok()?;
     let lines: Vec<&str> = content.lines().collect();
 
@@ -129,11 +130,23 @@ fn read_markdown_section_snippet(
     }
 
     let section_end = find_markdown_section_end_line(&lines, start_line, level);
-    let want_end = section_end.min(start_line.saturating_add(MARKDOWN_SECTION_SNIPPET_LINES - 1));
+    let want_end = if full_body {
+        section_end
+    } else {
+        section_end.min(start_line.saturating_add(MARKDOWN_SECTION_SNIPPET_LINES - 1))
+    };
     let truncated = want_end < section_end;
+    let line_count = section_end.saturating_sub(start_line) + 1;
 
     let body = read_file_lines(path, start_line, want_end)?;
-    Some((body, truncated))
+    Some((body, truncated, line_count))
+}
+
+fn truncation_warning(shown_lines: usize, total_lines: usize) -> String {
+    format!(
+        "(truncated: showing first {} of {} lines; add --context full to show the full body)\n",
+        shown_lines, total_lines
+    )
 }
 
 /// Read specific lines from a file (1-indexed line numbers)
@@ -387,26 +400,29 @@ impl OutputFormatter {
                         .as_deref()
                         .and_then(markdown_heading_level_from_signature)
                         .unwrap_or(1);
-                    if let Some((body, truncated)) =
-                        read_markdown_section_snippet(&symbol.file_path, symbol.line_start, level)
-                    {
+                    if let Some((body, truncated, line_count)) = read_markdown_section_snippet(
+                        &symbol.file_path,
+                        symbol.line_start,
+                        level,
+                        context,
+                    ) {
                         output.push_str("\nSection:\n");
-                        output.push_str(&body);
                         if truncated {
-                            output.push_str("(truncated)\n");
+                            output.push_str(&truncation_warning(
+                                MARKDOWN_SECTION_SNIPPET_LINES,
+                                line_count,
+                            ));
                         }
+                        output.push_str(&body);
                     }
                 } else if let Some((body, truncated, line_count)) =
                     read_symbol_code_body(symbol, context)
                 {
                     output.push_str("\nCode:\n");
-                    output.push_str(&body);
                     if truncated {
-                        output.push_str(&format!(
-                            "(truncated: showing first {} of {} lines; add --context full to show the full body)\n",
-                            CODE_BODY_SNIPPET_LINES, line_count
-                        ));
+                        output.push_str(&truncation_warning(CODE_BODY_SNIPPET_LINES, line_count));
                     }
+                    output.push_str(&body);
                 }
             }
 
@@ -477,31 +493,34 @@ impl OutputFormatter {
                         .as_deref()
                         .and_then(markdown_heading_level_from_signature)
                         .unwrap_or(1);
-                    if let Some((body, truncated)) =
-                        read_markdown_section_snippet(&symbol.file_path, symbol.line_start, level)
-                    {
+                    if let Some((body, truncated, line_count)) = read_markdown_section_snippet(
+                        &symbol.file_path,
+                        symbol.line_start,
+                        level,
+                        context,
+                    ) {
                         output.push_str(&format!(
                             "{} {}\n",
                             "Section for".cyan(),
                             symbol.name.bold()
                         ));
-                        output.push_str(&body);
                         if truncated {
-                            output.push_str("(truncated)\n");
+                            output.push_str(&truncation_warning(
+                                MARKDOWN_SECTION_SNIPPET_LINES,
+                                line_count,
+                            ));
                         }
+                        output.push_str(&body);
                         output.push('\n');
                     }
                 } else if let Some((body, truncated, line_count)) =
                     read_symbol_code_body(symbol, context)
                 {
                     output.push_str(&format!("{} {}\n", "Code for".cyan(), symbol.name.bold()));
-                    output.push_str(&body);
                     if truncated {
-                        output.push_str(&format!(
-                            "(truncated: showing first {} of {} lines; add --context full to show the full body)\n",
-                            CODE_BODY_SNIPPET_LINES, line_count
-                        ));
+                        output.push_str(&truncation_warning(CODE_BODY_SNIPPET_LINES, line_count));
                     }
+                    output.push_str(&body);
                     output.push('\n');
                 }
             }
@@ -560,29 +579,36 @@ impl OutputFormatter {
                         .as_deref()
                         .and_then(markdown_heading_level_from_signature)
                         .unwrap_or(1);
-                    if let Some((body, truncated)) =
-                        read_markdown_section_snippet(&symbol.file_path, symbol.line_start, level)
-                    {
+                    if let Some((body, truncated, line_count)) = read_markdown_section_snippet(
+                        &symbol.file_path,
+                        symbol.line_start,
+                        level,
+                        context,
+                    ) {
                         output.push_str("|body:");
+                        if truncated {
+                            output.push_str(&format!(
+                                "\n  {}",
+                                truncation_warning(MARKDOWN_SECTION_SNIPPET_LINES, line_count)
+                                    .trim_end()
+                            ));
+                        }
                         for line in body.lines() {
                             output.push_str(&format!("\n  {}", line));
-                        }
-                        if truncated {
-                            output.push_str("\n  (truncated)");
                         }
                     }
                 } else if let Some((body, truncated, line_count)) =
                     read_symbol_code_body(symbol, context)
                 {
                     output.push_str("|body:");
-                    for line in body.lines() {
-                        output.push_str(&format!("\n  {}", line));
-                    }
                     if truncated {
                         output.push_str(&format!(
-                            "\n  (truncated: showing first {} of {} lines; add --context full to show the full body)",
-                            CODE_BODY_SNIPPET_LINES, line_count
+                            "\n  {}",
+                            truncation_warning(CODE_BODY_SNIPPET_LINES, line_count).trim_end()
                         ));
+                    }
+                    for line in body.lines() {
+                        output.push_str(&format!("\n  {}", line));
                     }
                 }
             }
@@ -2915,6 +2941,33 @@ mod tests {
         assert!(output.contains("line 120"));
         assert!(!output.contains("line 121"));
         assert!(output.contains("truncated"));
+        assert!(output.find("truncated").unwrap() < output.find("line 1").unwrap());
+    }
+
+    #[test]
+    fn markdown_show_body_full_context_includes_full_section() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("doc.md");
+        let content = std::iter::once("# title".to_string())
+            .chain((2..=30).map(|line| format!("line {line}")))
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(&path, content).unwrap();
+        let symbol = Symbol {
+            symbol_type: SymbolType::Heading,
+            signature: Some("h1 (#)".to_string()),
+            ..test_symbol(path, 1)
+        };
+
+        let truncated =
+            OutputFormatter::new(OutputFormat::AI).format_query(vec![&symbol], false, true);
+        assert!(truncated.contains("truncated"));
+        assert!(!truncated.contains("line 30"));
+        assert!(truncated.find("truncated").unwrap() < truncated.find("# title").unwrap());
+
+        let full = OutputFormatter::new(OutputFormat::AI).format_query(vec![&symbol], true, true);
+        assert!(full.contains("line 30"));
+        assert!(!full.contains("truncated"));
     }
 
     #[test]
