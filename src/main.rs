@@ -189,7 +189,7 @@ OUTPUT FORMATS:
 PERFORMANCE:
   Small repos (< 100 files)    → < 20ms instant
   Medium repos (100-1000)      → Cached, ~0.5s load
-  Large repos (1000+)          → Fast mode auto-enabled (10-100x speedup)
+  Large repos (1000+)          → Automatic search planning (10-100x speedup)
   Incremental rebuilds         → 45-55x faster than full reindex
 
 CACHING:
@@ -482,10 +482,6 @@ PERFORMANCE
         /// Show the actual code implementation in results
         #[arg(long, default_value = "false")]
         show_body: bool,
-
-        /// Force text prefilter planning (normally automatic)
-        #[arg(long, default_value = "false")]
-        fast: bool,
 
         /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,rb,md')
         #[arg(
@@ -1803,7 +1799,6 @@ fn run_cli() -> Result<()> {
             r#type,
             context,
             show_body,
-            fast,
             extensions,
             no_cache,
             rebuild_cache,
@@ -1817,7 +1812,6 @@ fn run_cli() -> Result<()> {
                 path,
                 context,
                 !grep,
-                fast || grep,
                 grep,
                 show_body,
                 r#type,
@@ -1856,7 +1850,6 @@ fn run_cli() -> Result<()> {
                     path,
                     context,
                     false,
-                    true,
                     true,
                     show_body,
                     r#type,
@@ -2483,7 +2476,6 @@ fn cmd_query(
     path: PathBuf,
     context: String,
     fuzzy: bool,
-    fast: bool,
     grep_mode: bool,
     show_body: bool,
     symbol_type_filter: Option<String>,
@@ -2568,25 +2560,18 @@ fn cmd_query(
     let corpus = inspect_indexable_corpus(&path, &ext_list)?;
     let output_limit = effective_query_limit(limit);
     let force_normal_mode = std::env::var_os("CM_FORCE_NORMAL").is_some();
-    let use_fast_mode =
-        !force_normal_mode && !search_all && should_prefilter(fast, grep_mode, &corpus);
+    let use_prefilter = !force_normal_mode && !search_all && should_prefilter(grep_mode, &corpus);
 
-    if use_fast_mode {
+    if use_prefilter {
         if grep_mode {
             planner_eprintln!(
                 "{} Grep mode enabled ({} files)",
                 "→".cyan(),
                 corpus.file_count
             );
-        } else if fast {
-            planner_eprintln!(
-                "{} Fast mode enabled by --fast flag ({} files)",
-                "→".cyan(),
-                corpus.file_count
-            );
         } else {
             planner_eprintln!(
-                "{} Fast mode auto-enabled ({} files, {:.1} MB)",
+                "{} Text prefilter auto-enabled ({} files, {:.1} MB)",
                 "→".cyan(),
                 corpus.file_count,
                 corpus.total_bytes as f64 / 1_048_576.0
@@ -3027,8 +3012,8 @@ fn inspect_indexable_corpus(path: &Path, extensions: &[&str]) -> Result<SearchCo
     Ok(stats)
 }
 
-fn should_prefilter(fast: bool, grep_mode: bool, corpus: &SearchCorpusStats) -> bool {
-    fast || grep_mode
+fn should_prefilter(grep_mode: bool, corpus: &SearchCorpusStats) -> bool {
+    grep_mode
         || corpus.file_count >= FAST_MODE_MIN_FILES
         || corpus.total_bytes >= FAST_MODE_MIN_TOTAL_BYTES
         || corpus.max_file_bytes >= FAST_MODE_MIN_FILE_BYTES
@@ -4696,7 +4681,6 @@ mod query_planner_tests {
     fn prefilter_uses_file_count_and_corpus_weight() {
         assert!(should_prefilter(
             false,
-            false,
             &SearchCorpusStats {
                 file_count: FAST_MODE_MIN_FILES,
                 total_bytes: 1,
@@ -4706,7 +4690,6 @@ mod query_planner_tests {
         ));
         assert!(should_prefilter(
             false,
-            false,
             &SearchCorpusStats {
                 file_count: 1,
                 total_bytes: FAST_MODE_MIN_TOTAL_BYTES,
@@ -4714,8 +4697,16 @@ mod query_planner_tests {
                 files: Vec::new(),
             },
         ));
+        assert!(should_prefilter(
+            true,
+            &SearchCorpusStats {
+                file_count: 10,
+                total_bytes: 1024,
+                max_file_bytes: 512,
+                files: Vec::new(),
+            },
+        ));
         assert!(!should_prefilter(
-            false,
             false,
             &SearchCorpusStats {
                 file_count: 10,
@@ -4807,6 +4798,11 @@ mod query_planner_tests {
         assert_eq!(effective_query_limit(None), Some(DEFAULT_QUERY_LIMIT));
         assert_eq!(effective_query_limit(Some(10)), Some(10));
         assert_eq!(effective_query_limit(Some(0)), None);
+    }
+
+    #[test]
+    fn query_fast_flag_is_removed() {
+        assert!(Cli::try_parse_from(["cm", "query", "Parser", "--fast"]).is_err());
     }
 
     #[test]
