@@ -2,8 +2,10 @@ use ::ignore::WalkBuilder;
 use anyhow::{Context, Result};
 use grep::regex::RegexMatcher;
 use grep::searcher::{BinaryDetection, Searcher, SearcherBuilder, Sink, SinkMatch};
+use rayon::prelude::*;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::ignore;
 use crate::indexer::{detect_language, index_file, matches_extension_filter};
@@ -115,14 +117,56 @@ impl GrepFilter {
 
     /// Stage 1: Fast text search to find candidate files
     /// Returns list of files that contain the pattern (supports | OR syntax)
-    pub fn prefilter(&self, root: &Path) -> Result<Vec<PathBuf>> {
+    pub fn prefilter_paths(&self, paths: &[PathBuf], limit: Option<usize>) -> Result<Vec<PathBuf>> {
+        if limit == Some(0) {
+            return Ok(Vec::new());
+        }
+
+        let pattern = self.prefilter_pattern();
+        let matcher = RegexMatcher::new(&pattern).context("Failed to create regex matcher")?;
+        let found_count = AtomicUsize::new(0);
+        let max_matches = limit.unwrap_or(usize::MAX);
+
+        let mut candidates: Vec<PathBuf> = paths
+            .par_iter()
+            .filter_map(|path| {
+                if found_count.load(Ordering::Relaxed) >= max_matches {
+                    return None;
+                }
+
+                let mut collector = CandidateCollector::new();
+                let mut searcher = SearcherBuilder::new()
+                    .binary_detection(BinaryDetection::quit(b'\x00'))
+                    .line_number(false)
+                    .build();
+
+                collector.set_path(path.clone());
+                let _ = searcher.search_path(&matcher, path, &mut collector);
+                if collector.files.is_empty() {
+                    return None;
+                }
+
+                let slot = found_count.fetch_add(1, Ordering::Relaxed);
+                if slot < max_matches {
+                    Some(path.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        candidates.sort();
+
+        Ok(candidates)
+    }
+
+    fn prefilter_pattern(&self) -> String {
         let terms: Vec<&str> = self
             .pattern
             .split('|')
             .map(|t| t.trim())
             .filter(|t| !t.is_empty())
             .collect();
-        let pattern = if terms.len() > 1 {
+        if terms.len() > 1 {
             let escaped: Vec<String> = terms.iter().map(|t| regex::escape(t)).collect();
             let alternation = escaped.join("|");
             if self.case_sensitive {
@@ -134,52 +178,7 @@ impl GrepFilter {
             self.pattern.clone()
         } else {
             format!("(?i){}", regex::escape(&self.pattern))
-        };
-
-        let matcher = RegexMatcher::new(&pattern).context("Failed to create regex matcher")?;
-
-        let mut collector = CandidateCollector::new();
-        let mut searcher = SearcherBuilder::new()
-            .binary_detection(BinaryDetection::quit(b'\x00'))
-            .line_number(false)
-            .build();
-
-        // Walk files respecting .gitignore
-        let walker = WalkBuilder::new(root)
-            .hidden(false)
-            .git_ignore(true)
-            .git_global(false)
-            .git_exclude(false)
-            .filter_entry(|e| {
-                if e.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
-                    let name = e.file_name().to_string_lossy();
-                    !ignore::is_ignored_dir(&name)
-                } else {
-                    true
-                }
-            })
-            .build();
-
-        for entry in walker {
-            let entry = entry.context("Failed to read directory entry")?;
-
-            if !entry.file_type().map(|ft| ft.is_file()).unwrap_or(false) {
-                continue;
-            }
-
-            let path = entry.path();
-
-            // Filter by extension
-            if !self.matches_extension(path) {
-                continue;
-            }
-
-            // Search file for pattern
-            collector.set_path(path.to_path_buf());
-            let _ = searcher.search_path(&matcher, path, &mut collector);
         }
-
-        Ok(collector.files)
     }
 
     /// Check if file extension matches our filter
@@ -253,31 +252,29 @@ impl GrepFilter {
         query: &str,
         fuzzy: bool,
     ) -> Result<Vec<Symbol>> {
-        let mut all_symbols = Vec::new();
+        let symbol_batches: Vec<Vec<Symbol>> = candidates
+            .par_iter()
+            .map(|path| {
+                let content = match fs::read_to_string(path) {
+                    Ok(content) => content,
+                    Err(_) => return Vec::new(),
+                };
 
-        for path in candidates {
-            // Read file content
-            let content = match fs::read_to_string(&path) {
-                Ok(c) => c,
-                Err(_) => continue, // Skip files we can't read
-            };
+                let language = detect_language(path);
+                let file_info = match index_file(path, &content, language, None) {
+                    Ok(file_info) => file_info,
+                    Err(_) => return Vec::new(),
+                };
 
-            // Detect language and parse
-            let language = detect_language(&path);
-            let file_info = match index_file(&path, &content, language, None) {
-                Ok(info) => info,
-                Err(_) => continue, // Skip files we can't parse
-            };
+                file_info
+                    .symbols
+                    .into_iter()
+                    .filter(|symbol| self.symbol_matches(&symbol.name, query, fuzzy))
+                    .collect()
+            })
+            .collect();
 
-            // Filter symbols matching query
-            for symbol in file_info.symbols {
-                if self.symbol_matches(&symbol.name, query, fuzzy) {
-                    all_symbols.push(symbol);
-                }
-            }
-        }
-
-        Ok(all_symbols)
+        Ok(symbol_batches.into_iter().flatten().collect())
     }
 
     /// Check if a symbol name matches the query (supports | OR syntax)
@@ -325,6 +322,19 @@ mod tests {
 
         let ruby_filter = GrepFilter::new("test", true, vec!["gemfile".to_string()]);
         assert!(ruby_filter.matches_extension(path_gemfile));
+    }
+
+    #[test]
+    fn test_prefilter_respects_limit() {
+        let temp = tempfile::TempDir::new().unwrap();
+        fs::write(temp.path().join("first.rs"), "fn Needle() {}\n").unwrap();
+        fs::write(temp.path().join("second.rs"), "fn Needle() {}\n").unwrap();
+
+        let filter = GrepFilter::new("Needle", true, vec!["rs".to_string()]);
+        let paths = vec![temp.path().join("first.rs"), temp.path().join("second.rs")];
+        let candidates = filter.prefilter_paths(&paths, Some(1)).unwrap();
+
+        assert_eq!(candidates.len(), 1);
     }
 
     #[test]
