@@ -3,7 +3,7 @@ use crate::models::{Language, Symbol, SymbolType};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{Parser, Query, QueryCursor};
 
@@ -69,7 +69,7 @@ pub fn analyze_schema(
     Ok(schemas)
 }
 
-fn detect_language(path: &PathBuf) -> Language {
+fn detect_language(path: &Path) -> Language {
     Language::from_path(path)
 }
 

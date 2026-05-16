@@ -134,9 +134,9 @@ fn strip_line_suffix(token: &str) -> &str {
 }
 
 fn split_rg_line(token: &str) -> Option<(&str, &str, &str)> {
-    let (path, rest) = token.split_once(':')?;
-    let (line, suffix) = rest.split_once(':')?;
-    if line.chars().all(|c| c.is_ascii_digit()) {
+    let (path_and_line, suffix) = token.rsplit_once(':')?;
+    let (path, line) = path_and_line.rsplit_once(':')?;
+    if !path.is_empty() && line.chars().all(|c| c.is_ascii_digit()) {
         Some((path, line, suffix))
     } else {
         None
@@ -213,6 +213,12 @@ mod tests {
     fn extracts_paths_from_text_grep_lines() {
         let input = "src/main.rs:10:fn main() {}\n./src/lib.rs:20:mod tests;\n";
         assert_eq!(extract_paths(input), vec!["src/main.rs", "./src/lib.rs"]);
+    }
+
+    #[test]
+    fn extracts_windows_paths_from_text_grep_lines() {
+        let input = r"C:\repo\src\main.rs:10:fn main() {}";
+        assert_eq!(extract_paths(input), vec![r"C:\repo\src\main.rs"]);
     }
 
     #[test]

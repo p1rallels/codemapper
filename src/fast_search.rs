@@ -5,7 +5,7 @@ use grep::searcher::{BinaryDetection, Searcher, SearcherBuilder, Sink, SinkMatch
 use rayon::prelude::*;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::ignore;
@@ -176,15 +176,10 @@ impl GrepFilter {
             }
 
             let remaining = max_matches.saturating_sub(candidates.len());
-            let found_count = AtomicUsize::new(0);
             let timed_out = AtomicBool::new(false);
             let mut chunk_candidates: Vec<PathBuf> = chunk
                 .par_iter()
                 .filter_map(|path| {
-                    if found_count.load(Ordering::Relaxed) >= remaining {
-                        return None;
-                    }
-
                     if deadline_expired(deadline) {
                         timed_out.store(true, Ordering::Relaxed);
                         return None;
@@ -202,18 +197,15 @@ impl GrepFilter {
                         timed_out.store(true, Ordering::Relaxed);
                     }
                     if collector.files.is_empty() {
-                        return None;
-                    }
-
-                    let slot = found_count.fetch_add(1, Ordering::Relaxed);
-                    if slot < remaining {
-                        Some(path.clone())
-                    } else {
                         None
+                    } else {
+                        Some(path.clone())
                     }
                 })
                 .collect();
 
+            chunk_candidates.sort();
+            chunk_candidates.truncate(remaining);
             candidates.append(&mut chunk_candidates);
             if candidates.len() >= max_matches {
                 stop_reason = PrefilterStopReason::CandidateLimit;

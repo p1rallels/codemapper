@@ -191,7 +191,7 @@ impl OutputFormatter {
             output.push_str(&format!("- {}: {} files\n", lang, count));
         }
 
-        output.push_str(&format!("\n## Statistics\n"));
+        output.push_str("\n## Statistics\n");
         output.push_str(&format!("- Total files: {}\n", index.total_files()));
         output.push_str(&format!("- Total symbols: {}\n", index.total_symbols()));
         output.push_str(&format!(
@@ -248,7 +248,7 @@ impl OutputFormatter {
                                 symbol.line_end
                             ));
                             if let Some(sig) = &symbol.signature {
-                                output.push_str(&format!("{}", sig));
+                                output.push_str(sig);
                             }
                             output.push('\n');
                             if let Some(doc) = &symbol.docstring {
@@ -409,7 +409,7 @@ impl OutputFormatter {
 
                 let symbols = index.get_file_symbols(&file.path);
                 if !symbols.is_empty() && level >= 3 {
-                    output.push_str("|");
+                    output.push('|');
                     for (i, symbol) in symbols.iter().enumerate() {
                         if i > 0 {
                             output.push(',');
@@ -576,7 +576,7 @@ impl OutputFormatter {
         output.push_str(&format!("{}\n", table));
 
         if show_body {
-            output.push_str("\n");
+            output.push('\n');
             for symbol in &symbols {
                 if symbol
                     .file_path
@@ -602,7 +602,7 @@ impl OutputFormatter {
                         if truncated {
                             output.push_str("(truncated)\n");
                         }
-                        output.push_str("\n");
+                        output.push('\n');
                     }
                 } else if let Some((body, truncated, line_count)) =
                     read_symbol_code_body(symbol, context)
@@ -615,7 +615,7 @@ impl OutputFormatter {
                             CODE_BODY_SNIPPET_LINES, line_count
                         ));
                     }
-                    output.push_str("\n");
+                    output.push('\n');
                 }
             }
         }
@@ -819,7 +819,7 @@ impl OutputFormatter {
             index.symbols_by_type(SymbolType::CodeBlock)
         ));
 
-        output.push_str(&format!("\n## Totals\n"));
+        output.push_str("\n## Totals\n");
         output.push_str(&format!("- Total Files: {}\n", index.total_files()));
         output.push_str(&format!("- Total Symbols: {}\n", index.total_symbols()));
         output.push_str(&format!("- Total Bytes: {}\n", total_loc));
@@ -961,7 +961,7 @@ impl OutputFormatter {
 
     fn format_diff_default(&self, result: &DiffResult) -> String {
         let mut output = String::new();
-        output.push_str(&format!("# Symbol Diff\n\n"));
+        output.push_str("# Symbol Diff\n\n");
         output.push_str(&format!(
             "Comparing HEAD to commit: `{}`\n\n",
             &result.commit[..8.min(result.commit.len())]

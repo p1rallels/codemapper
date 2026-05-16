@@ -203,41 +203,38 @@ impl MarkdownParser {
         let mut stack = vec![tree_root];
 
         while let Some(node) = stack.pop() {
-            match node.kind() {
-                "atx_heading" => {
-                    let mut level = 1;
-                    let mut cursor = node.walk();
-                    if cursor.goto_first_child() {
-                        let marker = cursor.node();
-                        level = self.get_header_level(marker.kind()).unwrap_or(1);
-                    }
-
-                    if let Some(text) = self.extract_header_text(node, source) {
-                        let line_start = node.start_position().row + 1;
-                        let line_end = node.end_position().row + 1;
-                        let parent_id = self.find_parent_header(level, &symbols);
-
-                        let name = match parent_id {
-                            Some(pid) => format!("{} > {}", symbols[pid].name, text),
-                            None => text,
-                        };
-
-                        let level_prefix = "#".repeat(level);
-
-                        symbols.push(Symbol {
-                            name,
-                            symbol_type: SymbolType::Heading,
-                            signature: Some(format!("h{} ({})", level, level_prefix)),
-                            docstring: None,
-                            line_start,
-                            line_end,
-                            parent_id,
-                            file_path: file_path.to_path_buf(),
-                            is_exported: false,
-                        });
-                    }
+            if node.kind() == "atx_heading" {
+                let mut level = 1;
+                let mut cursor = node.walk();
+                if cursor.goto_first_child() {
+                    let marker = cursor.node();
+                    level = self.get_header_level(marker.kind()).unwrap_or(1);
                 }
-                _ => {}
+
+                if let Some(text) = self.extract_header_text(node, source) {
+                    let line_start = node.start_position().row + 1;
+                    let line_end = node.end_position().row + 1;
+                    let parent_id = self.find_parent_header(level, &symbols);
+
+                    let name = match parent_id {
+                        Some(pid) => format!("{} > {}", symbols[pid].name, text),
+                        None => text,
+                    };
+
+                    let level_prefix = "#".repeat(level);
+
+                    symbols.push(Symbol {
+                        name,
+                        symbol_type: SymbolType::Heading,
+                        signature: Some(format!("h{} ({})", level, level_prefix)),
+                        docstring: None,
+                        line_start,
+                        line_end,
+                        parent_id,
+                        file_path: file_path.to_path_buf(),
+                        is_exported: false,
+                    });
+                }
             }
 
             let mut child_cursor = node.walk();
@@ -271,70 +268,67 @@ impl MarkdownParser {
         let mut stack = vec![tree_root];
 
         while let Some(node) = stack.pop() {
-            match node.kind() {
-                "fenced_code_block" => {
-                    let line_start = node.start_position().row + 1;
-                    let line_end = node.end_position().row + 1;
+            if node.kind() == "fenced_code_block" {
+                let line_start = node.start_position().row + 1;
+                let line_end = node.end_position().row + 1;
 
-                    let mut language = "unknown".to_string();
-                    let mut code_content = String::new();
+                let mut language = "unknown".to_string();
+                let mut code_content = String::new();
 
-                    let mut cursor = node.walk();
-                    if cursor.goto_first_child() {
-                        loop {
-                            let child = cursor.node();
-                            match child.kind() {
-                                "info_string" => {
-                                    if let Some(lang) = self.extract_text(child, source) {
-                                        language = lang.trim().to_string();
+                let mut cursor = node.walk();
+                if cursor.goto_first_child() {
+                    loop {
+                        let child = cursor.node();
+                        match child.kind() {
+                            "info_string" => {
+                                if let Some(lang) = self.extract_text(child, source) {
+                                    language = lang.trim().to_string();
+                                }
+                            }
+                            "code_fence_content" => {
+                                if let Some(content) = self.extract_text(child, source) {
+                                    let lines: Vec<&str> = content.lines().take(3).collect();
+                                    code_content = lines.join("\n");
+                                    if content.lines().count() > 3 {
+                                        code_content.push_str("\n...");
                                     }
                                 }
-                                "code_fence_content" => {
-                                    if let Some(content) = self.extract_text(child, source) {
-                                        let lines: Vec<&str> = content.lines().take(3).collect();
-                                        code_content = lines.join("\n");
-                                        if content.lines().count() > 3 {
-                                            code_content.push_str("\n...");
-                                        }
-                                    }
-                                }
-                                _ => {}
                             }
-                            if !cursor.goto_next_sibling() {
-                                break;
-                            }
+                            _ => {}
+                        }
+                        if !cursor.goto_next_sibling() {
+                            break;
                         }
                     }
-
-                    let parent_id = self.nearest_heading_before_line(headings, line_start);
-                    let name = match parent_id {
-                        Some(pid) => {
-                            let parent_name = heading_symbols
-                                .get(pid)
-                                .map(|s| s.name.as_str())
-                                .unwrap_or("?");
-                            format!("{} > [code: {}]", parent_name, language)
-                        }
-                        None => format!("[code: {}]", language),
-                    };
-
-                    code_blocks.push(Symbol {
-                        name,
-                        symbol_type: SymbolType::CodeBlock,
-                        signature: Some(language.clone()),
-                        docstring: if code_content.is_empty() {
-                            None
-                        } else {
-                            Some(code_content)
-                        },
-                        line_start,
-                        line_end,
-                        parent_id,
-                        file_path: file_path.to_path_buf(),
-                        is_exported: false,
-                    });
                 }
-                _ => {}
+
+                let parent_id = self.nearest_heading_before_line(headings, line_start);
+                let name = match parent_id {
+                    Some(pid) => {
+                        let parent_name = heading_symbols
+                            .get(pid)
+                            .map(|s| s.name.as_str())
+                            .unwrap_or("?");
+                        format!("{} > [code: {}]", parent_name, language)
+                    }
+                    None => format!("[code: {}]", language),
+                };
+
+                code_blocks.push(Symbol {
+                    name,
+                    symbol_type: SymbolType::CodeBlock,
+                    signature: Some(language.clone()),
+                    docstring: if code_content.is_empty() {
+                        None
+                    } else {
+                        Some(code_content)
+                    },
+                    line_start,
+                    line_end,
+                    parent_id,
+                    file_path: file_path.to_path_buf(),
+                    is_exported: false,
+                });
             }
 
             let mut child_cursor = node.walk();

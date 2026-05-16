@@ -980,3 +980,5 @@ m-a446,ux pipe text grep into inspect,cm grep --text emits path:line rows but cm
 m-6181,ux avoid broken pipe panic,"when a downstream command exits early, upstream cm can panic on broken stdout pipe; handle epipe quietly",closed,1,pi,pi,pi,2026-05-16T18:32:15.676Z,2026-05-16T18:45:21.587Z,,
 m-3fae,ux rank broad type queries,cm query functions returns test helpers first; rank production/non-test/high-signal symbols ahead of tests for default first page,closed,1,pi,pi,pi,2026-05-16T18:32:15.686Z,2026-05-16T18:45:21.598Z,,
 m-bdcd,ux reduce planner noise,query/grep stderr exposes planner internals like bounded candidate fallback; consider quiet default with --verbose for diagnostics,closed,1,pi,pi,pi,2026-05-16T18:32:15.697Z,2026-05-16T18:45:21.609Z,,
+m-27e3,audit search ux code,review recent search ux paths for correctness and clean up any slop,closed,0,pi,pi,pi,2026-05-16T18:53:06.365Z,2026-05-16T19:05:02.857Z,,
+m-bb92,second audit search ux code,rerun cm-led audit and validation after cleanup pass,closed,0,pi,pi,pi,2026-05-16T19:28:00.731Z,2026-05-16T19:29:19.960Z,,

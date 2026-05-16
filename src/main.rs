@@ -2179,7 +2179,7 @@ fn run_cli() -> Result<()> {
 
 /// Auto-rebuild wrapper: Try cache first, rebuild if needed
 fn try_load_or_rebuild(
-    path: &PathBuf,
+    path: &Path,
     extensions: &[&str],
     no_cache: bool,
     rebuild_cache: bool,
@@ -2420,7 +2420,7 @@ fn cmd_map(
     format: OutputFormat,
     cache_dir: Option<&Path>,
 ) -> Result<()> {
-    if level < 1 || level > 3 {
+    if !(1..=3).contains(&level) {
         eprintln!("{} Level must be between 1 and 3", "Error:".red());
         std::process::exit(1);
     }
@@ -2649,7 +2649,9 @@ fn cmd_query(
                 }
             }
 
-            rank_owned_symbols(&mut owned_symbols);
+            if should_rank_query_results(search_all, grep_mode) {
+                rank_owned_symbols(&mut owned_symbols);
+            }
 
             if let Some(n) = output_limit {
                 owned_symbols.truncate(n);
@@ -2721,7 +2723,9 @@ fn cmd_query(
                     }
                 }
 
-                rank_owned_symbols(&mut owned_symbols);
+                if should_rank_query_results(search_all, grep_mode) {
+                    rank_owned_symbols(&mut owned_symbols);
+                }
 
                 if let Some(n) = output_limit {
                     if owned_symbols.len() >= n {
@@ -2814,7 +2818,9 @@ fn cmd_query(
             }
         }
 
-        rank_symbol_refs(&mut symbols);
+        if should_rank_query_results(search_all, grep_mode) {
+            rank_symbol_refs(&mut symbols);
+        }
 
         if let Some(n) = output_limit {
             symbols.truncate(n);
@@ -2880,7 +2886,9 @@ fn cmd_query(
             }
         }
 
-        rank_symbol_refs(&mut symbols);
+        if should_rank_query_results(search_all, grep_mode) {
+            rank_symbol_refs(&mut symbols);
+        }
 
         // Apply limit if specified
         if let Some(n) = output_limit {
@@ -2905,7 +2913,7 @@ fn cmd_query(
     Ok(())
 }
 
-fn dedup_symbols_by_ref<'a>(symbols: &mut Vec<&'a Symbol>) {
+fn dedup_symbols_by_ref(symbols: &mut Vec<&Symbol>) {
     let mut seen = std::collections::HashSet::new();
     symbols.retain(|s| {
         let key = (&s.name, s.line_start, &s.file_path);
@@ -2953,12 +2961,16 @@ fn symbol_name_matches_grep(name: &str, query: &str) -> bool {
     terms.iter().any(|term| name.contains(*term))
 }
 
-fn rank_symbol_refs(symbols: &mut Vec<&Symbol>) {
+fn rank_symbol_refs(symbols: &mut [&Symbol]) {
     symbols.sort_by_key(|symbol| symbol_rank_key(symbol));
 }
 
-fn rank_owned_symbols(symbols: &mut Vec<Symbol>) {
-    symbols.sort_by_key(|symbol| symbol_rank_key(symbol));
+fn rank_owned_symbols(symbols: &mut [Symbol]) {
+    symbols.sort_by_key(symbol_rank_key);
+}
+
+fn should_rank_query_results(search_all: bool, grep_mode: bool) -> bool {
+    search_all || grep_mode
 }
 
 fn symbol_rank_key(symbol: &Symbol) -> (u8, String, usize, String) {
@@ -2984,7 +2996,7 @@ fn is_test_like_symbol(symbol: &Symbol) -> bool {
         || name.starts_with("test")
 }
 
-fn inspect_indexable_corpus(path: &PathBuf, extensions: &[&str]) -> Result<SearchCorpusStats> {
+fn inspect_indexable_corpus(path: &Path, extensions: &[&str]) -> Result<SearchCorpusStats> {
     let files = indexer::discover_indexable_files(path, extensions)?;
     let mut stats = SearchCorpusStats {
         file_count: files.len(),
@@ -3112,173 +3124,6 @@ fn effective_query_limit(limit: Option<usize>) -> Option<usize> {
     }
 }
 
-#[cfg(test)]
-mod query_planner_tests {
-    use super::*;
-
-    #[test]
-    fn prefilter_uses_file_count_and_corpus_weight() {
-        assert!(should_prefilter(
-            false,
-            false,
-            &SearchCorpusStats {
-                file_count: FAST_MODE_MIN_FILES,
-                total_bytes: 1,
-                max_file_bytes: 1,
-                files: Vec::new(),
-            },
-        ));
-        assert!(should_prefilter(
-            false,
-            false,
-            &SearchCorpusStats {
-                file_count: 1,
-                total_bytes: FAST_MODE_MIN_TOTAL_BYTES,
-                max_file_bytes: 1,
-                files: Vec::new(),
-            },
-        ));
-        assert!(!should_prefilter(
-            false,
-            false,
-            &SearchCorpusStats {
-                file_count: 10,
-                total_bytes: 1024,
-                max_file_bytes: 512,
-                files: Vec::new(),
-            },
-        ));
-    }
-
-    #[test]
-    fn candidate_parsing_requires_selective_matches() {
-        assert!(should_parse_candidates(7, 6102));
-        assert!(should_parse_candidates(124, 6102));
-        assert!(!should_parse_candidates(1446, 6102));
-        assert!(!should_parse_candidates(300, 6102));
-        assert!(!should_parse_candidates(0, 6102));
-    }
-
-    #[test]
-    fn prefilter_result_must_be_complete_to_parse_candidates() {
-        assert!(should_parse_prefilter_result(
-            fast_search::PrefilterStopReason::Exhausted,
-            7,
-            6102,
-            false,
-        ));
-        assert!(!should_parse_prefilter_result(
-            fast_search::PrefilterStopReason::CandidateLimit,
-            7,
-            6102,
-            false,
-        ));
-        assert!(!should_parse_prefilter_result(
-            fast_search::PrefilterStopReason::TimedOut,
-            7,
-            6102,
-            false,
-        ));
-        assert!(!should_parse_prefilter_result(
-            fast_search::PrefilterStopReason::Exhausted,
-            7,
-            6102,
-            true,
-        ));
-    }
-
-    #[test]
-    fn cache_preference_uses_candidate_parse_cost_estimate() {
-        assert!(!should_prefer_cache_for_candidates(true, 7, 64 * 1024));
-        assert!(should_prefer_cache_for_candidates(true, 124, 64 * 1024));
-        assert!(should_prefer_cache_for_candidates(true, 1, 4 * 1024 * 1024));
-        assert!(!should_prefer_cache_for_candidates(false, 124, 64 * 1024));
-    }
-
-    #[test]
-    fn prefilter_candidate_limit_uses_cache_cutoff_when_available() {
-        assert_eq!(prefilter_candidate_limit(6102, false), 257);
-        assert_eq!(prefilter_candidate_limit(6102, true), 32);
-        assert_eq!(prefilter_candidate_limit(30, true), 4);
-    }
-
-    #[test]
-    fn bounded_candidate_page_only_applies_without_cache_and_with_limit() {
-        assert!(should_try_bounded_candidate_page(
-            fast_search::PrefilterStopReason::CandidateLimit,
-            false,
-            Some(50),
-        ));
-        assert!(!should_try_bounded_candidate_page(
-            fast_search::PrefilterStopReason::Exhausted,
-            false,
-            Some(50),
-        ));
-        assert!(!should_try_bounded_candidate_page(
-            fast_search::PrefilterStopReason::CandidateLimit,
-            true,
-            Some(50),
-        ));
-        assert!(!should_try_bounded_candidate_page(
-            fast_search::PrefilterStopReason::CandidateLimit,
-            false,
-            None,
-        ));
-    }
-
-    #[test]
-    fn query_limit_defaults_to_first_page() {
-        assert_eq!(effective_query_limit(None), Some(DEFAULT_QUERY_LIMIT));
-        assert_eq!(effective_query_limit(Some(10)), Some(10));
-        assert_eq!(effective_query_limit(Some(0)), None);
-    }
-
-    #[test]
-    fn grep_symbol_matching_uses_case_sensitive_substrings() {
-        assert!(symbol_name_matches_grep("RustParser", "Parser"));
-        assert!(symbol_name_matches_grep("RustParser", "Parser|Indexer"));
-        assert!(!symbol_name_matches_grep("rustparser", "Parser"));
-    }
-
-    #[test]
-    fn ranking_pushes_tests_after_production_symbols() {
-        let prod = Symbol {
-            name: "build_index".to_string(),
-            symbol_type: models::SymbolType::Function,
-            signature: None,
-            docstring: None,
-            line_start: 1,
-            line_end: 1,
-            parent_id: None,
-            file_path: PathBuf::from("src/index.rs"),
-            is_exported: false,
-        };
-        let test = Symbol {
-            name: "test_build_index".to_string(),
-            file_path: PathBuf::from("tests/index_test.rs"),
-            ..prod.clone()
-        };
-        let mut symbols = vec![&test, &prod];
-
-        rank_symbol_refs(&mut symbols);
-
-        assert_eq!(symbols[0].name, "build_index");
-    }
-
-    #[test]
-    fn prefilter_budget_env_parsing() {
-        assert_eq!(
-            parse_prefilter_time_budget(None),
-            Some(Duration::from_millis(DEFAULT_PREFILTER_BUDGET_MS))
-        );
-        assert_eq!(parse_prefilter_time_budget(Some("0")), None);
-        assert_eq!(
-            parse_prefilter_time_budget(Some("25")),
-            Some(Duration::from_millis(25))
-        );
-    }
-}
-
 fn cmd_deps(
     target: String,
     path: PathBuf,
@@ -3321,7 +3166,7 @@ fn cmd_deps_file(
         index
             .get_dependencies(&target_path)
             .or_else(|| index.get_dependencies(&target_canonical))
-            .map(|d| d.clone())
+            .cloned()
             .unwrap_or_default()
     } else if direction.to_lowercase() == "used-by" {
         let mut used_by = Vec::new();
@@ -4802,4 +4647,178 @@ fn cmd_compare(
     println!("{}", output);
 
     Ok(())
+}
+
+#[cfg(test)]
+mod query_planner_tests {
+    use super::*;
+
+    #[test]
+    fn prefilter_uses_file_count_and_corpus_weight() {
+        assert!(should_prefilter(
+            false,
+            false,
+            &SearchCorpusStats {
+                file_count: FAST_MODE_MIN_FILES,
+                total_bytes: 1,
+                max_file_bytes: 1,
+                files: Vec::new(),
+            },
+        ));
+        assert!(should_prefilter(
+            false,
+            false,
+            &SearchCorpusStats {
+                file_count: 1,
+                total_bytes: FAST_MODE_MIN_TOTAL_BYTES,
+                max_file_bytes: 1,
+                files: Vec::new(),
+            },
+        ));
+        assert!(!should_prefilter(
+            false,
+            false,
+            &SearchCorpusStats {
+                file_count: 10,
+                total_bytes: 1024,
+                max_file_bytes: 512,
+                files: Vec::new(),
+            },
+        ));
+    }
+
+    #[test]
+    fn candidate_parsing_requires_selective_matches() {
+        assert!(should_parse_candidates(7, 6102));
+        assert!(should_parse_candidates(124, 6102));
+        assert!(!should_parse_candidates(1446, 6102));
+        assert!(!should_parse_candidates(300, 6102));
+        assert!(!should_parse_candidates(0, 6102));
+    }
+
+    #[test]
+    fn prefilter_result_must_be_complete_to_parse_candidates() {
+        assert!(should_parse_prefilter_result(
+            fast_search::PrefilterStopReason::Exhausted,
+            7,
+            6102,
+            false,
+        ));
+        assert!(!should_parse_prefilter_result(
+            fast_search::PrefilterStopReason::CandidateLimit,
+            7,
+            6102,
+            false,
+        ));
+        assert!(!should_parse_prefilter_result(
+            fast_search::PrefilterStopReason::TimedOut,
+            7,
+            6102,
+            false,
+        ));
+        assert!(!should_parse_prefilter_result(
+            fast_search::PrefilterStopReason::Exhausted,
+            7,
+            6102,
+            true,
+        ));
+    }
+
+    #[test]
+    fn cache_preference_uses_candidate_parse_cost_estimate() {
+        assert!(!should_prefer_cache_for_candidates(true, 7, 64 * 1024));
+        assert!(should_prefer_cache_for_candidates(true, 124, 64 * 1024));
+        assert!(should_prefer_cache_for_candidates(true, 1, 4 * 1024 * 1024));
+        assert!(!should_prefer_cache_for_candidates(false, 124, 64 * 1024));
+    }
+
+    #[test]
+    fn prefilter_candidate_limit_uses_cache_cutoff_when_available() {
+        assert_eq!(prefilter_candidate_limit(6102, false), 257);
+        assert_eq!(prefilter_candidate_limit(6102, true), 32);
+        assert_eq!(prefilter_candidate_limit(30, true), 4);
+    }
+
+    #[test]
+    fn bounded_candidate_page_only_applies_without_cache_and_with_limit() {
+        assert!(should_try_bounded_candidate_page(
+            fast_search::PrefilterStopReason::CandidateLimit,
+            false,
+            Some(50),
+        ));
+        assert!(!should_try_bounded_candidate_page(
+            fast_search::PrefilterStopReason::Exhausted,
+            false,
+            Some(50),
+        ));
+        assert!(!should_try_bounded_candidate_page(
+            fast_search::PrefilterStopReason::CandidateLimit,
+            true,
+            Some(50),
+        ));
+        assert!(!should_try_bounded_candidate_page(
+            fast_search::PrefilterStopReason::CandidateLimit,
+            false,
+            None,
+        ));
+    }
+
+    #[test]
+    fn query_limit_defaults_to_first_page() {
+        assert_eq!(effective_query_limit(None), Some(DEFAULT_QUERY_LIMIT));
+        assert_eq!(effective_query_limit(Some(10)), Some(10));
+        assert_eq!(effective_query_limit(Some(0)), None);
+    }
+
+    #[test]
+    fn grep_symbol_matching_uses_case_sensitive_substrings() {
+        assert!(symbol_name_matches_grep("RustParser", "Parser"));
+        assert!(symbol_name_matches_grep("RustParser", "Parser|Indexer"));
+        assert!(!symbol_name_matches_grep("rustparser", "Parser"));
+    }
+
+    #[test]
+    fn ranking_is_limited_to_broad_or_grep_queries() {
+        assert!(should_rank_query_results(true, false));
+        assert!(should_rank_query_results(false, true));
+        assert!(!should_rank_query_results(false, false));
+    }
+
+    #[test]
+    fn ranking_pushes_tests_after_production_symbols() {
+        let prod = Symbol {
+            name: "build_index".to_string(),
+            symbol_type: models::SymbolType::Function,
+            signature: None,
+            docstring: None,
+            line_start: 1,
+            line_end: 1,
+            parent_id: None,
+            file_path: PathBuf::from("src/index.rs"),
+            is_exported: false,
+        };
+        let test = Symbol {
+            name: "test_build_index".to_string(),
+            file_path: PathBuf::from("tests/index_test.rs"),
+            ..prod.clone()
+        };
+        let mut symbols = vec![&test, &prod];
+
+        rank_symbol_refs(&mut symbols);
+
+        assert_eq!(symbols[0].name, "build_index");
+    }
+
+    #[test]
+    fn prefilter_budget_env_parsing() {
+        assert_eq!(
+            parse_prefilter_time_budget(None),
+            Some(Duration::from_millis(DEFAULT_PREFILTER_BUDGET_MS))
+        );
+        assert_eq!(parse_prefilter_time_budget(Some("0")), None);
+        assert_eq!(
+            parse_prefilter_time_budget(Some("25")),
+            Some(Duration::from_millis(25))
+        );
+    }
 }
