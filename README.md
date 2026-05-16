@@ -6,7 +6,7 @@
 
 - **Small projects (< 100 files)**: < 20ms instant
 - **Medium projects (100-1000 files)**: Cached, ~0.5s load
-- **Large projects (1000+ files)**: Fast mode auto-enabled (10-100x speedup)
+- **Large projects (1000+ files)**: Automatic search planning (10-100x speedup)
 - **Incremental rebuilds**: 45-55x faster than full reindex
 - **Binary size**: ~2MB (stripped)
 
