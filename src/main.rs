@@ -40,6 +40,7 @@ const ESTIMATED_AST_PARSE_MS_PER_FILE: u64 = 8;
 const ESTIMATED_AST_PARSE_BYTES_PER_MS: u64 = 16 * 1024;
 const ESTIMATED_WARM_CACHE_QUERY_MS: u64 = 250;
 const DEFAULT_QUERY_LIMIT: usize = 50;
+const DEFAULT_MAP_LINE_LIMIT: usize = 100;
 
 macro_rules! planner_eprintln {
     ($($arg:tt)*) => {
@@ -74,7 +75,7 @@ TYPICAL WORKFLOWS
    Step 1: cm stats .
    → Size and composition (how big? what languages?)
    
-   Step 2: cm map . --level 2 --format ai
+   Step 2: cm map
    → File structure (where's the logic?)
    
    Step 3: cm query <symbol>
@@ -148,7 +149,7 @@ COMMANDS (organized by task)
 
 [DISCOVERY - Start here]
   stats        → Project size and composition (functions, classes, imports)
-  map          → File listing with symbol counts (3 detail levels)
+  map          → File listing with symbol counts
   query        → Find symbols by name (main search tool)
   inspect      → List all symbols in one file (markdown: tree navigation)
   deps         → Track imports and usage
@@ -233,7 +234,7 @@ COMMON FLAGS
 --format <format>    → Output style: ai (default), human (tables), default (markdown)
 --show-body          → Include actual code (not just signatures)
 --exports-only       → Public symbols only (functions with export, pub, etc.)
---full               → Include anonymous/lambda functions (normally hidden)
+--full               → Map: include symbol details; search/analysis: include anonymous/lambda functions
 --context minimal    → Signatures only (default, fast)
 --context full       → Include docstrings and metadata
 --no-cache           → Skip cache, always reindex (troubleshooting)
@@ -251,7 +252,7 @@ NO SYMBOLS FOUND?
   ✓ Run: cm stats . (to see what's indexed)
 
 SLOW QUERIES?
-  ✓ Large repo (1000+ files)? Fast mode auto-enables (use --fast explicitly)
+  ✓ Large repo? Search planning is automatic; use cache flags only for troubleshooting
   ✓ First run builds cache (~10s), cache hits ~0.5s after
   ✓ Try --no-cache if cache is stale (rare)
 
@@ -273,7 +274,7 @@ NO TEST COVERAGE?
 EXAMPLES:
   # Get the lay of the land
   cm stats .                           # Project overview
-  cm map . --level 2                   # File structure (AI format by default)
+  cm map                              # File structure (AI format by default)
   
   # Find and explore
   cm query authenticate                # Search (fuzzy by default)
@@ -375,41 +376,42 @@ TYPICAL WORKFLOW:
         rebuild_cache: bool,
     },
 
-    /// [DISCOVERY] Hierarchical project structure - from overview to detailed symbol listings
+    /// [DISCOVERY] File-level project map for choosing what to inspect next
     #[command(
-        about = "Generate a map showing project organization at different detail levels (1-3)",
-        long_about = "USE CASE: Visualize how your codebase is organized
-  • Level 1: High-level overview (languages, totals) - START HERE
-  • Level 2: File listing with symbol counts per file
-  • Level 3: Complete catalog with all symbol signatures
-  • Results are cached for instant loading on subsequent runs
+        about = "Show project files with language, size, and symbol counts",
+        long_about = "PROJECT MAP
+  cm map                 file list with language, size, and symbol counts
+  cm map --full          include symbol names/signatures for each file
+  cm map --limit 0       return the full map without truncation
 
-WHEN TO USE WHICH LEVEL:
-  Level 1 → Getting oriented in a new project
-  Level 2 → Finding which files contain what you need
-  Level 3 → Comprehensive reference (warning: verbose for large projects)
-
-TIP: Use --format human for best terminal readability"
+OUTPUT
+  default format is ai: compact, pipeable, LLM-friendly
+  output is capped by default to protect agent context windows
+  stats owns aggregate language/count summaries; map tells you where the code is"
     )]
     #[command(after_help = "EXAMPLES:
-  cm map . --level 1                    # Quick overview (languages, counts)
-  cm map . --level 2                    # File listing with symbol counts
-  cm map . --level 3                    # Full symbol signatures (verbose)
-  cm map ./src --level 2 --format human # Pretty tables for src/ directory
-  cm map . --level 2 --format ai        # Token-efficient for LLM context
+  cm map
+  cm map ./src
+  cm map --full
+  cm map --limit 0
+  cm map ./src --format human
 
 TYPICAL WORKFLOW:
-  1. Start with level 1 to see the big picture
-  2. Use level 2 to find relevant files
+  1. Run 'cm stats .' for aggregate scale/composition
+  2. Run 'cm map' to find relevant files
   3. Then 'cm inspect <file>' or 'cm query <symbol>' for details")]
     Map {
         /// Directory path to map
         #[arg(default_value = ".")]
         path: PathBuf,
 
-        /// Detail level: 1=overview, 2=files, 3=symbols with details
-        #[arg(long, default_value = "1", value_parser = clap::value_parser!(u8).range(1..=3))]
-        level: u8,
+        /// Include symbol names and locations for every file
+        #[arg(long, default_value_t = false)]
+        full: bool,
+
+        /// Maximum output lines to return (default: 100, use --limit 0 for all)
+        #[arg(long)]
+        limit: Option<usize>,
 
         /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,rb,md')
         #[arg(
@@ -630,7 +632,7 @@ TIP: Combine with --show-body to see implementations"
   cm inspect ./docs/api.md --section 'Orders' --code-blocks
 
 TYPICAL WORKFLOW:
-  1. Use 'cm map --level 2' to find interesting files
+  1. Use 'cm map' to find interesting files
   2. Inspect specific files: cm inspect ./path/to/file.py
   3. Then query symbols or check dependencies
 
@@ -1326,7 +1328,7 @@ TIP: Great for reviewing test scope before refactoring"
   cm test-deps ./auth.test.ts --format human     # Pretty table
 
 TYPICAL WORKFLOW:
-  1. Find test file: cm map . --level 2 (look for test files)
+  1. Find test file: cm map (look for test files)
   2. Check test scope: cm test-deps ./path/to/test_file.py
   3. Ensure test covers intended functionality")]
     TestDeps {
@@ -1777,20 +1779,22 @@ fn run_cli() -> Result<()> {
         }
         Commands::Map {
             path,
-            level,
+            full,
+            limit,
             extensions,
             no_cache,
             rebuild_cache,
         } => {
-            cmd_map(
+            cmd_map(MapOptions {
                 path,
-                level,
+                full,
+                limit,
                 extensions,
                 no_cache,
                 rebuild_cache,
                 format,
                 cache_dir,
-            )?;
+            })?;
         }
         Commands::Query {
             symbol,
@@ -2412,26 +2416,35 @@ fn cmd_index(path: PathBuf, extensions: String) -> Result<()> {
     Ok(())
 }
 
-fn cmd_map(
+struct MapOptions<'a> {
     path: PathBuf,
-    level: u8,
+    full: bool,
+    limit: Option<usize>,
     extensions: String,
     no_cache: bool,
     rebuild_cache: bool,
     format: OutputFormat,
-    cache_dir: Option<&Path>,
-) -> Result<()> {
-    if !(1..=3).contains(&level) {
-        eprintln!("{} Level must be between 1 and 3", "Error:".red());
-        std::process::exit(1);
-    }
+    cache_dir: Option<&'a Path>,
+}
 
-    let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
+fn cmd_map(options: MapOptions<'_>) -> Result<()> {
+    let ext_list: Vec<&str> = options.extensions.split(',').map(|s| s.trim()).collect();
 
-    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
+    let index = try_load_or_rebuild(
+        &options.path,
+        &ext_list,
+        options.no_cache,
+        options.rebuild_cache,
+        options.cache_dir,
+    )?;
 
-    let formatter = OutputFormatter::new(format);
-    let output = formatter.format_map(&index, level);
+    let formatter = OutputFormatter::new(options.format);
+    let output = formatter.format_map(&index, options.full);
+    let output = truncate_output_lines(
+        &output,
+        effective_map_line_limit(options.limit),
+        "--limit 0",
+    );
 
     println!("{}", output);
 
@@ -3123,6 +3136,31 @@ fn effective_query_limit(limit: Option<usize>) -> Option<usize> {
         Some(limit) => Some(limit),
         None => Some(DEFAULT_QUERY_LIMIT),
     }
+}
+
+fn effective_map_line_limit(limit: Option<usize>) -> Option<usize> {
+    match limit {
+        Some(0) => None,
+        Some(limit) => Some(limit),
+        None => Some(DEFAULT_MAP_LINE_LIMIT),
+    }
+}
+
+fn truncate_output_lines(output: &str, limit: Option<usize>, full_args: &str) -> String {
+    let Some(limit) = limit else {
+        return output.to_string();
+    };
+
+    let total_lines = output.lines().count();
+    if total_lines <= limit {
+        return output.to_string();
+    }
+
+    let shown = output.lines().take(limit).collect::<Vec<_>>().join("\n");
+    format!(
+        "[TRUNCATED] showing first {} of {} lines. run the same command with {} for the full response.\n{}",
+        limit, total_lines, full_args, shown
+    )
 }
 
 fn cmd_deps(
@@ -4769,6 +4807,50 @@ mod query_planner_tests {
         assert_eq!(effective_query_limit(None), Some(DEFAULT_QUERY_LIMIT));
         assert_eq!(effective_query_limit(Some(10)), Some(10));
         assert_eq!(effective_query_limit(Some(0)), None);
+    }
+
+    #[test]
+    fn map_defaults_to_bounded_file_map_with_full_opt_in() {
+        let cli = Cli::try_parse_from(["cm", "map"]).expect("map should parse without levels");
+        match cli.command {
+            Commands::Map {
+                full, limit, path, ..
+            } => {
+                assert!(!full);
+                assert_eq!(limit, None);
+                assert_eq!(path, PathBuf::from("."));
+            }
+            _ => panic!("expected map command"),
+        }
+
+        let cli = Cli::try_parse_from(["cm", "map", "--full", "--limit", "0"])
+            .expect("map full should parse");
+        match cli.command {
+            Commands::Map { full, limit, .. } => {
+                assert!(full);
+                assert_eq!(limit, Some(0));
+            }
+            _ => panic!("expected map command"),
+        }
+
+        assert!(Cli::try_parse_from(["cm", "map", "--level", "2"]).is_err());
+    }
+
+    #[test]
+    fn map_line_limit_defaults_to_context_safe_first_page() {
+        assert_eq!(effective_map_line_limit(None), Some(DEFAULT_MAP_LINE_LIMIT));
+        assert_eq!(effective_map_line_limit(Some(25)), Some(25));
+        assert_eq!(effective_map_line_limit(Some(0)), None);
+    }
+
+    #[test]
+    fn truncation_warning_is_at_top() {
+        let output = truncate_output_lines("a\nb\nc", Some(2), "--limit 0");
+
+        assert!(output.starts_with(
+            "[TRUNCATED] showing first 2 of 3 lines. run the same command with --limit 0"
+        ));
+        assert!(output.ends_with("a\nb"));
     }
 
     #[test]
