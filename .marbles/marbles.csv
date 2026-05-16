@@ -985,3 +985,4 @@ m-bb92,second audit search ux code,rerun cm-led audit and validation after clean
 m-7c3f,third audit search ux code,run another cm-led audit pass and fix anything safe,closed,0,pi,pi,pi,2026-05-16T19:52:30.325Z,2026-05-16T19:57:17.015Z,,
 m-faee,simplify map command,"remove map levels, make default file map, add --full and top truncation warning",closed,0,pi,pi,pi,2026-05-16T20:26:50.693Z,2026-05-16T20:34:15.114Z,,
 m-e8bf,remove fast flag,delete query --fast flag and stale fast help/docs,closed,0,pi,pi,pi,2026-05-16T20:38:03.908Z,2026-05-16T20:40:46.978Z,,
+m-e67d,audit after map fast cleanup,cm-led audit pass after map simplification and fast flag removal,closed,0,pi,pi,pi,2026-05-16T20:41:58.400Z,2026-05-16T20:45:28.980Z,,

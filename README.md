@@ -12,7 +12,7 @@
 
 Compared to Python version: **10-50x faster** cold start performance.
 
-### ⚡ Fast Mode
+### ⚡ Automatic Search Planning
 
 For large codebases, CodeMapper automatically plans fast searches with a ripgrep-style text prefilter and AST validation:
 
@@ -30,7 +30,7 @@ For large codebases, CodeMapper automatically plans fast searches with a ripgrep
 ## ✨ Features
 
 - **Smart Caching**: Auto-enabled for projects ≥300ms to parse; small projects stay fast with no `.codemapper/` clutter
-- **Fast Mode**: Automatic text prefilter planning with 10-100x speedups on large searches
+- **Automatic Search Planning**: Text prefilter planning with 10-100x speedups on large searches
 - **Tree-sitter Parsing**: Accurate AST-based symbol extraction
 - **Multi-language**: Python, JavaScript, TypeScript, Rust, Java, Go, C, Swift, Ruby, Markdown
 - **Parallel Processing**: Uses rayon for concurrent file parsing
