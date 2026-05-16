@@ -20,7 +20,7 @@ mod types;
 
 use anyhow::Result;
 use cache::FileChangeKind;
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use colored::*;
 use indicatif::{ProgressBar, ProgressStyle};
 use models::Symbol;
@@ -131,7 +131,7 @@ TYPICAL WORKFLOWS
    → Full changelog (what changed?)
 
 6. NAVIGATING LARGE MARKDOWN API DOCS
-   Step 1: cm inspect ./docs/api.md --tree --sizes --level 2
+   Step 1: cm inspect ./docs/api.md --tree --h2 --sizes
    → Triage sections by size (what's worth reading?)
 
    Step 2: cm inspect ./docs/api.md --section 'Orders'
@@ -319,6 +319,42 @@ struct Cli {
 
     #[command(subcommand)]
     command: Commands,
+}
+
+#[derive(Debug, Clone, Copy, Default, Args)]
+struct HeadingFlags {
+    /// Markdown only: show heading levels through h1
+    #[arg(long, default_value_t = false)]
+    h1: bool,
+
+    /// Markdown only: show heading levels through h2
+    #[arg(long, default_value_t = false)]
+    h2: bool,
+
+    /// Markdown only: show heading levels through h3
+    #[arg(long, default_value_t = false)]
+    h3: bool,
+
+    /// Markdown only: show heading levels through h4
+    #[arg(long, default_value_t = false)]
+    h4: bool,
+
+    /// Markdown only: show heading levels through h5
+    #[arg(long, default_value_t = false)]
+    h5: bool,
+
+    /// Markdown only: show heading levels through h6
+    #[arg(long, default_value_t = false)]
+    h6: bool,
+}
+
+impl HeadingFlags {
+    fn depth(self) -> Option<usize> {
+        [self.h1, self.h2, self.h3, self.h4, self.h5, self.h6]
+            .iter()
+            .rposition(|enabled| *enabled)
+            .map(|idx| idx + 1)
+    }
 }
 
 #[derive(Subcommand)]
@@ -623,8 +659,8 @@ TIP: Combine with --show-body to see implementations"
   cm inspect ./utils.js --format ai        # Token-efficient output
 
   # markdown docs
-  cm inspect ./docs/api.md --level 1       # just h1 headings
-  cm inspect ./docs/api.md --tree --sizes  # heading tree + section sizes
+  cm inspect ./docs/api.md --h1            # just h1 headings
+  cm inspect ./docs/api.md --tree --h2 --sizes  # heading tree through h2 + section sizes
   cm inspect ./docs/api.md --section 'Orders' --code-blocks
 
 TYPICAL WORKFLOW:
@@ -648,9 +684,8 @@ WHEN TO USE:
         #[arg(long, default_value_t = false)]
         tree: bool,
 
-        /// Markdown only: show headings up to level N (e.g. 1 = h1, 2 = h1+h2)
-        #[arg(long)]
-        level: Option<usize>,
+        #[command(flatten)]
+        heading: HeadingFlags,
 
         /// Markdown only: scope output to a heading path (e.g. "Orders" or "Orders > Order Strategy")
         #[arg(long)]
@@ -1869,25 +1904,25 @@ fn run_cli() -> Result<()> {
             file_path,
             show_body,
             tree,
-            level,
+            heading,
             section,
             sizes,
             code_blocks,
             full,
             exports_only,
         } => {
-            cmd_inspect(
+            cmd_inspect(InspectOptions {
                 file_path,
                 show_body,
                 tree,
-                level,
+                heading_depth: heading.depth(),
                 section,
                 sizes,
                 code_blocks,
-                !full,
+                skip_anonymous: !full,
                 exports_only,
                 format,
-            )?;
+            })?;
         }
         Commands::Deps {
             target,
@@ -3329,46 +3364,42 @@ fn cmd_stats(
     Ok(())
 }
 
-fn cmd_inspect(
+#[derive(Clone)]
+struct InspectOptions {
     file_path: PathBuf,
     show_body: bool,
     tree: bool,
-    level: Option<usize>,
+    heading_depth: Option<usize>,
     section: Option<String>,
     sizes: bool,
     code_blocks: bool,
     skip_anonymous: bool,
     exports_only: bool,
     format: OutputFormat,
-) -> Result<()> {
+}
+
+fn cmd_inspect(options: InspectOptions) -> Result<()> {
     use std::fs;
 
-    if pipe::is_stdin_path(&file_path) {
-        for path in pipe::read_path_arg(file_path)? {
-            cmd_inspect(
-                path,
-                show_body,
-                tree,
-                level,
-                section.clone(),
-                sizes,
-                code_blocks,
-                skip_anonymous,
-                exports_only,
-                format,
-            )?;
+    if pipe::is_stdin_path(&options.file_path) {
+        for path in pipe::read_path_arg(options.file_path.clone())? {
+            cmd_inspect(InspectOptions {
+                file_path: path,
+                ..options.clone()
+            })?;
         }
         return Ok(());
     }
 
-    if !file_path.exists() {
-        anyhow::bail!("File does not exist: {}", file_path.display());
+    if !options.file_path.exists() {
+        anyhow::bail!("File does not exist: {}", options.file_path.display());
     }
 
-    if !file_path.is_file() {
-        anyhow::bail!("Path is not a file: {}", file_path.display());
+    if !options.file_path.is_file() {
+        anyhow::bail!("Path is not a file: {}", options.file_path.display());
     }
 
+    let file_path = options.file_path;
     let language = indexer::detect_language(&file_path);
     if language == models::Language::Unknown {
         anyhow::bail!("Unknown or unsupported file type: {}", file_path.display());
@@ -3380,12 +3411,12 @@ fn cmd_inspect(
     let elapsed_ms = start.elapsed().as_millis();
 
     // Filter anonymous if requested
-    if skip_anonymous {
+    if options.skip_anonymous {
         file_info.symbols.retain(|s| s.name != "anonymous");
     }
 
     // Filter to exports only if requested
-    if exports_only {
+    if options.exports_only {
         file_info.symbols.retain(|s| s.is_exported);
     }
 
@@ -3399,8 +3430,12 @@ fn cmd_inspect(
     }
 
     let is_markdown = language == models::Language::Markdown;
-    let wants_markdown_view =
-        is_markdown && (tree || level.is_some() || section.is_some() || sizes || code_blocks);
+    let wants_markdown_view = is_markdown
+        && (options.tree
+            || options.heading_depth.is_some()
+            || options.section.is_some()
+            || options.sizes
+            || options.code_blocks);
 
     if wants_markdown_view {
         use crate::inspect_md::{
@@ -3421,7 +3456,7 @@ fn cmd_inspect(
 
         let end_lines = compute_heading_end_lines(&headings, total_lines);
 
-        let section_root_idx = match section.as_deref() {
+        let section_root_idx = match options.section.as_deref() {
             Some(s) => Some(select_section_heading(&file_info.symbols, s)?),
             None => None,
         };
@@ -3429,13 +3464,7 @@ fn cmd_inspect(
         let section_root_level =
             section_root_idx.and_then(|idx| heading_level(&file_info.symbols[idx]));
 
-        let max_level_abs = level.map(|n| {
-            if let Some(root_level) = section_root_level {
-                root_level.saturating_add(n.saturating_sub(1))
-            } else {
-                n
-            }
-        });
+        let max_heading_level = options.heading_depth;
 
         let in_scope = |idx: usize| -> bool {
             section_root_idx
@@ -3447,12 +3476,12 @@ fn cmd_inspect(
             if !in_scope(idx) {
                 return false;
             }
-            max_level_abs.map(|max| lvl <= max).unwrap_or(true)
+            max_heading_level.map(|max| lvl <= max).unwrap_or(true)
         };
 
         let base_level = section_root_level.unwrap_or(1);
 
-        if tree {
+        if options.tree {
             #[derive(Clone)]
             enum EntryKind {
                 Heading {
@@ -3495,7 +3524,7 @@ fn cmd_inspect(
                 });
             }
 
-            if code_blocks {
+            if options.code_blocks {
                 for (idx, sym) in file_info.symbols.iter().enumerate() {
                     if sym.symbol_type != models::SymbolType::CodeBlock {
                         continue;
@@ -3560,7 +3589,7 @@ fn cmd_inspect(
 
                         parent_indent_cache.insert(idx, lvl);
 
-                        if sizes {
+                        if options.sizes {
                             out_lines.push(format!(
                                 "{}{} {} (L{}, {} lines)",
                                 indent, hashes, leaf, sym.line_start, size
@@ -3591,7 +3620,7 @@ fn cmd_inspect(
                 }
             }
 
-            match format {
+            match options.format {
                 OutputFormat::AI => {
                     println!("[FILE:{}]", file_path.display());
                     println!(
@@ -3625,12 +3654,12 @@ fn cmd_inspect(
                 filtered_idxs.retain(|idx| is_descendant(&file_info.symbols, *idx, root));
             }
 
-            if code_blocks {
+            if options.code_blocks {
                 filtered_idxs.retain(|idx| {
                     file_info.symbols[*idx].symbol_type == models::SymbolType::CodeBlock
                 });
             } else if section_root_idx.is_none() {
-                if let Some(max) = max_level_abs {
+                if let Some(max) = max_heading_level {
                     filtered_idxs.retain(|idx| {
                         let s = &file_info.symbols[*idx];
                         s.symbol_type == models::SymbolType::Heading
@@ -3641,7 +3670,7 @@ fn cmd_inspect(
 
             let sym_count = filtered_idxs.len();
 
-            match format {
+            match options.format {
                 OutputFormat::AI => {
                     println!("[FILE:{}]", file_path.display());
                     println!(
@@ -3679,7 +3708,7 @@ fn cmd_inspect(
                     }
                 }
                 _ => {
-                    let formatter = OutputFormatter::new(format);
+                    let formatter = OutputFormatter::new(options.format);
                     println!(
                         "{} Inspecting: {}\n",
                         "→".cyan(),
@@ -3692,14 +3721,14 @@ fn cmd_inspect(
                         .iter()
                         .map(|i| &file_info.symbols[*i])
                         .collect();
-                    let output = formatter.format_query(symbol_refs, false, show_body);
+                    let output = formatter.format_query(symbol_refs, false, options.show_body);
                     println!("{}", output);
                 }
             }
         }
 
         if let Some(root) = section_root_idx {
-            if show_body {
+            if options.show_body {
                 let start_line = file_info.symbols[root].line_start;
                 let end_line = end_lines.get(&root).copied().unwrap_or(total_lines);
                 let slice = content
@@ -3709,7 +3738,7 @@ fn cmd_inspect(
                     .collect::<Vec<_>>()
                     .join("\n");
 
-                match format {
+                match options.format {
                     OutputFormat::AI => {
                         println!("[SECTION_BODY:{}-{}]", start_line, end_line);
                         println!("{}", slice);
@@ -3722,9 +3751,9 @@ fn cmd_inspect(
             }
         }
     } else {
-        let formatter = OutputFormatter::new(format);
+        let formatter = OutputFormatter::new(options.format);
 
-        match format {
+        match options.format {
             OutputFormat::AI => {
                 println!("[FILE:{}]", file_path.display());
                 println!(
@@ -3770,7 +3799,7 @@ fn cmd_inspect(
                 println!("Symbols: {}\n", file_info.symbols.len());
 
                 let symbol_refs: Vec<&models::Symbol> = file_info.symbols.iter().collect();
-                let output = formatter.format_query(symbol_refs, false, show_body);
+                let output = formatter.format_query(symbol_refs, false, options.show_body);
                 println!("{}", output);
             }
         }
@@ -4803,6 +4832,25 @@ mod query_planner_tests {
     #[test]
     fn query_fast_flag_is_removed() {
         assert!(Cli::try_parse_from(["cm", "query", "Parser", "--fast"]).is_err());
+    }
+
+    #[test]
+    fn inspect_uses_heading_flags_without_level_compat() {
+        let cli = Cli::try_parse_from(["cm", "inspect", "README.md", "--h2"])
+            .expect("inspect should accept heading flags");
+        match cli.command {
+            Commands::Inspect { heading, .. } => assert_eq!(heading.depth(), Some(2)),
+            _ => panic!("expected inspect command"),
+        }
+
+        let cli = Cli::try_parse_from(["cm", "inspect", "README.md", "--h1", "--h3"])
+            .expect("inspect should accept repeated heading flags");
+        match cli.command {
+            Commands::Inspect { heading, .. } => assert_eq!(heading.depth(), Some(3)),
+            _ => panic!("expected inspect command"),
+        }
+
+        assert!(Cli::try_parse_from(["cm", "inspect", "README.md", "--level", "2"]).is_err());
     }
 
     #[test]
