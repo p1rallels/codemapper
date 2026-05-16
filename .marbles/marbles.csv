@@ -986,3 +986,4 @@ m-7c3f,third audit search ux code,run another cm-led audit pass and fix anything
 m-faee,simplify map command,"remove map levels, make default file map, add --full and top truncation warning",closed,0,pi,pi,pi,2026-05-16T20:26:50.693Z,2026-05-16T20:34:15.114Z,,
 m-e8bf,remove fast flag,delete query --fast flag and stale fast help/docs,closed,0,pi,pi,pi,2026-05-16T20:38:03.908Z,2026-05-16T20:40:46.978Z,,
 m-e67d,audit after map fast cleanup,cm-led audit pass after map simplification and fast flag removal,closed,0,pi,pi,pi,2026-05-16T20:41:58.400Z,2026-05-16T20:45:28.980Z,,
+m-217a,replace inspect level with heading flags,"remove inspect --level, add markdown --h1..--h6 flags, update docs/tests",closed,0,pi,pi,pi,2026-05-16T23:45:18.397Z,2026-05-16T23:49:51.245Z,,
