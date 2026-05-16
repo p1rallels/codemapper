@@ -420,70 +420,34 @@ TYPICAL WORKFLOW:
 
     /// [SEARCH] Find symbols by name - the main workhorse for code exploration
     #[command(
-        about = "Search for functions, classes, and methods across your codebase",
-        long_about = "USE CASE: The primary command for finding code
-  • Fuzzy search: Find 'auth' matches 'authenticate', 'Authorization', etc.
-  • Grep search: Find exact symbols with text-prefilter speed
-  • Fast mode: Auto-enables for 1000+ files (10-100x speedup)
-  • Results are cached for instant loading (< 10ms for most projects)
+        about = "Search symbols quickly; fuzzy by default, exact with --grep",
+        long_about = "SEARCH SYMBOLS
+  cm query auth              fuzzy symbol search (default)
+  cm query Parser            finds parser-ish symbols, first 50 results by default
+  cm query Parser --grep     exact/case-sensitive symbol search
+  cm grep Parser             same exact-symbol path, grep-shaped alias
+  cm query 'parse|index'     OR search
+  cm query Parser | cm inspect -
 
-SEARCH MODES:
-  Fuzzy   → cm query myclass              (DEFAULT: case-insensitive, flexible)
-  Grep    → cm query MyClass --grep       (case-sensitive + text prefilter)
-  Grep    → cm grep MyClass               (exact symbol search, rg-style muscle memory)
-  Multi   → cm query 'foo|bar|baz'        (OR search, matches any term)
+OUTPUT
+  default format is ai: compact, pipeable, LLM-friendly
+  --limit N returns N results; --limit 0 returns everything
+  --show-body includes implementations
+  --context full includes docs/metadata
 
-CONTEXT OPTIONS:
-  --context minimal → Signatures only (default, fast)
-  --context full    → Includes docstrings and metadata
-  --show-body       → Show actual code implementation
-
-PERFORMANCE (Fast Mode):
-  • 18,457 files: 76s → 1.2s (63x faster)
-  • 17,005 files: 122s → 9.6s (12x faster)
-  • Auto-enabled for 1000+ files
-  • Two-stage: ripgrep text search → AST validation
-
-PIPELINES:
-  cm query Parser | cm inspect -          → inspect files from prior results
-  cm query 'parse|index' | cm callers -   → chase callers for prior symbols
-  cm map . --level 2 | cm inspect -       → inspect files emitted by cm
-
-TIP: Start with fuzzy search, use grep mode when you want strict symbols"
+PERFORMANCE
+  just run the query. cm auto-selects text prefilter, bounded first-page search, or cache/full index.
+  use --no-cache only for troubleshooting, --rebuild-cache only when you intentionally want a fresh cache."
     )]
     #[command(after_help = "EXAMPLES:
-  # Basic searches
-  cm query authenticate                      # Exact match (case-sensitive)
-  cm query auth                              # Fuzzy search (default)
-
-  # With context
-  cm query process_payment --context full    # Include docstrings
-  cm query validate --show-body              # Show implementation
-  cm query REST ./docs --section 'Orders'    # Scope to a markdown section
-
-  # Fast mode (for large codebases)
-  cm query MyClass /large/repo --fast        # Explicit fast mode
-  cm query auth /monorepo                    # Auto-enabled fast mode for 1000+ files
-
-  # OR search (pipe-separated)
-  cm query 'parse|index|cache'               # Match any of the terms
-  cm query 'Foo|Bar' --grep                  # Grep/exact match on multiple names
-
-  # Output formats
-  cm query Parser --format human             # Pretty tables
-  cm query CodeIndex                         # AI format is default
-
-TYPICAL WORKFLOW:
-  1. Quick fuzzy search: cm query auth
-  2. Get more context: cm query authenticate --context full
-  3. See implementation: cm query authenticate --show-body
-  4. Find usage: cm deps authenticate --direction used-by
-
-WHEN TO USE:
-  ✓ \"Where is the authenticate function?\"
-  ✓ \"Find all parser-related code\"
-  ✓ \"What methods does the User class have?\"
-  ✓ \"Show me the validate_input implementation\"")]
+  cm query auth
+  cm query Parser ./src
+  cm query Parser --grep
+  cm grep Parser
+  cm query 'parse|index|cache'
+  cm query CodeIndex --show-body
+  cm query Parser --limit 0
+  cm query Parser | cm inspect -")]
     Query {
         /// Symbol name to search for (supports 'foo|bar|baz' OR syntax, '-' reads stdin)
         symbol: String,
@@ -492,7 +456,7 @@ WHEN TO USE:
         #[arg(default_value = ".")]
         path: PathBuf,
 
-        /// Use grep-style exact matching with text prefiltering
+        /// Exact/case-sensitive symbol search, like cm grep
         #[arg(long = "grep", default_value_t = false)]
         grep: bool,
 
@@ -508,7 +472,7 @@ WHEN TO USE:
         #[arg(long, default_value = "false")]
         show_body: bool,
 
-        /// Enable fast mode explicitly (auto-enabled for 1000+ files)
+        /// Force text prefilter planning (normally automatic)
         #[arg(long, default_value = "false")]
         fast: bool,
 
@@ -547,14 +511,14 @@ WHEN TO USE:
     /// [SEARCH] Exact symbol search, or raw rg-style text search with --text
     #[command(
         alias = "g",
-        about = "Grep-style search: AST-validated symbols by default, raw text with --text",
-        long_about = "USE CASE: Replace rg/grep muscle memory with cm-native search
-  • Default mode uses text prefiltering, then validates matches with the parser
-  • --text mode behaves like rg -n and prints file:line:match text hits
-  • Case-sensitive exact symbol matching by default
-  • Outputs AI format by default for symbol mode, raw grep lines for --text
+        about = "Grep-style search: exact symbols by default, raw text with --text",
+        long_about = "GREP-SHAPED SEARCH
+  cm grep Parser                 exact/case-sensitive symbol search
+  cm grep 'parse|index'          OR symbol search
+  cm grep --text 'todo|blocked'  raw rg -n style text search
+  cm grep --text -i todo         case-insensitive raw text search
 
-PIPELINES:
+PIPELINES
   cm grep Parser | cm inspect -
   cm grep 'parse|index' | cm callers -
   cm grep --text 'todo|blocked' ."
