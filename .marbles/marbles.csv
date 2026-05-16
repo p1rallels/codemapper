@@ -972,3 +972,4 @@ m-c389,benchmark large repo fast mode,clear local cm cache and compare default a
 m-8965,measure count-only search costs,compare rg count/list/line search timings and infer cheap selectivity probes for cm planner,closed,0,pi,pi,pi,2026-05-16T04:51:15.618Z,2026-05-16T04:51:37.313Z,,
 m-5354,adaptive search planner,choose candidate parsing versus full index using selectivity/corpus stats and parallelize candidate validation,closed,0,pi,pi,pi,2026-05-16T04:55:23.460Z,2026-05-16T05:16:35.185Z,,
 m-70de,scrub sensitive task log string,remove workspace-specific benchmark naming from committed marbles rows,closed,0,pi,pi,pi,2026-05-16T05:30:35.190Z,2026-05-16T05:30:58.847Z,,
+m-e0c5,benchmark planner variants,wire a bounded prefilter planner and compare it against the current candidate-cap planner,closed,0,pi,pi,pi,2026-05-16T15:38:50.329Z,2026-05-16T15:47:11.453Z,,
