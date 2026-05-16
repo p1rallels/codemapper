@@ -365,7 +365,7 @@ impl GrepFilter {
             if fuzzy {
                 name.to_lowercase().contains(&term.to_lowercase())
             } else {
-                name == *term
+                name.contains(*term)
             }
         })
     }
@@ -444,6 +444,14 @@ mod tests {
 
         assert!(result.candidates.is_empty());
         assert_eq!(result.stop_reason, PrefilterStopReason::TimedOut);
+    }
+
+    #[test]
+    fn test_symbol_matches_exact_mode_uses_case_sensitive_substrings() {
+        let filter = GrepFilter::new("Parser", true, vec!["rs".to_string()]);
+
+        assert!(filter.symbol_matches("RustParser", "Parser", false));
+        assert!(!filter.symbol_matches("rustparser", "Parser", false));
     }
 
     #[test]

@@ -109,7 +109,9 @@ fn path_from_token(token: &str) -> Option<String> {
     let pathish = candidate.starts_with('/')
         || candidate.starts_with("./")
         || candidate.starts_with("../")
-        || candidate.starts_with('~');
+        || candidate.starts_with('~')
+        || candidate.contains('/')
+        || candidate.contains('\\');
 
     if pathish {
         non_empty(candidate)
@@ -119,12 +121,26 @@ fn path_from_token(token: &str) -> Option<String> {
 }
 
 fn strip_line_suffix(token: &str) -> &str {
+    if let Some((path, _line, _rest)) = split_rg_line(token) {
+        return path;
+    }
+
     if let Some((path, suffix)) = token.rsplit_once(':') {
         if suffix.chars().all(|c| c.is_ascii_digit() || c == '-') {
             return path;
         }
     }
     token
+}
+
+fn split_rg_line(token: &str) -> Option<(&str, &str, &str)> {
+    let (path, rest) = token.split_once(':')?;
+    let (line, suffix) = rest.split_once(':')?;
+    if line.chars().all(|c| c.is_ascii_digit()) {
+        Some((path, line, suffix))
+    } else {
+        None
+    }
 }
 
 fn usable_line(line: &str) -> Option<&str> {
@@ -191,6 +207,12 @@ mod tests {
                 "/repo/src/output.rs"
             ]
         );
+    }
+
+    #[test]
+    fn extracts_paths_from_text_grep_lines() {
+        let input = "src/main.rs:10:fn main() {}\n./src/lib.rs:20:mod tests;\n";
+        assert_eq!(extract_paths(input), vec!["src/main.rs", "./src/lib.rs"]);
     }
 
     #[test]

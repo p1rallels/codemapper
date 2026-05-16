@@ -26,6 +26,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use models::Symbol;
 use output::{OutputFormat, OutputFormatter};
 use rayon::prelude::*;
+use std::any::Any;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -39,6 +40,14 @@ const ESTIMATED_AST_PARSE_MS_PER_FILE: u64 = 8;
 const ESTIMATED_AST_PARSE_BYTES_PER_MS: u64 = 16 * 1024;
 const ESTIMATED_WARM_CACHE_QUERY_MS: u64 = 250;
 const DEFAULT_QUERY_LIMIT: usize = 50;
+
+macro_rules! planner_eprintln {
+    ($($arg:tt)*) => {
+        if planner_verbose() {
+            eprintln!($($arg)*);
+        }
+    };
+}
 
 #[derive(Debug, Clone, Default)]
 struct SearchCorpusStats {
@@ -194,7 +203,7 @@ CACHING:
 SEARCH MODES:
   Fuzzy   → cm query myclass          (DEFAULT: case-insensitive, flexible)
   Grep    → cm query MyClass --grep   (case-sensitive + text prefilter)
-  Grep    → cm grep MyClass           (exact symbol search, rg-style muscle memory)
+  Grep    → cm grep MyClass           (case-sensitive symbol search, rg-style muscle memory)
   Multi   → cm query 'foo|bar|baz'   (OR search, matches any term)
 
 LANGUAGES SUPPORTED:
@@ -420,12 +429,12 @@ TYPICAL WORKFLOW:
 
     /// [SEARCH] Find symbols by name - the main workhorse for code exploration
     #[command(
-        about = "Search symbols quickly; fuzzy by default, exact with --grep",
+        about = "Search symbols quickly; fuzzy by default, grep-style with --grep",
         long_about = "SEARCH SYMBOLS
   cm query auth              fuzzy symbol search (default)
   cm query Parser            finds parser-ish symbols, first 50 results by default
-  cm query Parser --grep     exact/case-sensitive symbol search
-  cm grep Parser             same exact-symbol path, grep-shaped alias
+  cm query Parser --grep     case-sensitive symbol substring search
+  cm grep Parser             same symbol path, grep-shaped alias
   cm query 'parse|index'     OR search
   cm query Parser | cm inspect -
 
@@ -456,7 +465,7 @@ PERFORMANCE
         #[arg(default_value = ".")]
         path: PathBuf,
 
-        /// Exact/case-sensitive symbol search, like cm grep
+        /// Case-sensitive symbol substring search, like cm grep
         #[arg(long = "grep", default_value_t = false)]
         grep: bool,
 
@@ -508,12 +517,12 @@ PERFORMANCE
         limit: Option<usize>,
     },
 
-    /// [SEARCH] Exact symbol search, or raw rg-style text search with --text
+    /// [SEARCH] Grep-style symbol search, or raw rg-style text search with --text
     #[command(
         alias = "g",
-        about = "Grep-style search: exact symbols by default, raw text with --text",
+        about = "Grep-style search: symbol substrings by default, raw text with --text",
         long_about = "GREP-SHAPED SEARCH
-  cm grep Parser                 exact/case-sensitive symbol search
+  cm grep Parser                 case-sensitive symbol substring search
   cm grep 'parse|index'          OR symbol search
   cm grep --text 'todo|blocked'  raw rg -n style text search
   cm grep --text -i todo         case-insensitive raw text search
@@ -524,7 +533,7 @@ PIPELINES
   cm grep --text 'todo|blocked' ."
     )]
     #[command(after_help = "EXAMPLES:
-  cm grep Parser                         # Exact symbol search
+  cm grep Parser                         # Symbol substring search
   cm grep 'parse|index' ./src            # OR symbol search in src
   cm grep --text 'todo|blocked' .        # rg -n style text search
   cm grep --text -i 'todo|blocked' .     # case-insensitive text search
@@ -1715,7 +1724,38 @@ TYPICAL WORKFLOW:
     },
 }
 
+fn install_broken_pipe_panic_handler() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        if !panic_info_is_broken_pipe(info) {
+            default_hook(info);
+        }
+    }));
+}
+
+fn panic_info_is_broken_pipe(info: &std::panic::PanicHookInfo<'_>) -> bool {
+    panic_payload_is_broken_pipe(info.payload())
+}
+
+fn panic_payload_is_broken_pipe(payload: &(dyn Any + Send)) -> bool {
+    payload
+        .downcast_ref::<String>()
+        .is_some_and(|message| message.contains("Broken pipe"))
+        || payload
+            .downcast_ref::<&str>()
+            .is_some_and(|message| message.contains("Broken pipe"))
+}
+
 fn main() -> Result<()> {
+    install_broken_pipe_panic_handler();
+    match std::panic::catch_unwind(run_cli) {
+        Ok(result) => result,
+        Err(payload) if panic_payload_is_broken_pipe(payload.as_ref()) => Ok(()),
+        Err(payload) => std::panic::resume_unwind(payload),
+    }
+}
+
+fn run_cli() -> Result<()> {
     let cli = Cli::parse();
 
     let format = OutputFormat::from_str(&cli.format).unwrap_or_else(|err| {
@@ -2519,19 +2559,19 @@ fn cmd_query(
 
     if use_fast_mode {
         if grep_mode {
-            eprintln!(
+            planner_eprintln!(
                 "{} Grep mode enabled ({} files)",
                 "→".cyan(),
                 corpus.file_count
             );
         } else if fast {
-            eprintln!(
+            planner_eprintln!(
                 "{} Fast mode enabled by --fast flag ({} files)",
                 "→".cyan(),
                 corpus.file_count
             );
         } else {
-            eprintln!(
+            planner_eprintln!(
                 "{} Fast mode auto-enabled ({} files, {:.1} MB)",
                 "→".cyan(),
                 corpus.file_count,
@@ -2561,7 +2601,7 @@ fn cmd_query(
             corpus.file_count,
             prefer_cache,
         ) {
-            eprintln!(
+            planner_eprintln!(
                 "{} Found {} candidate files, validating with AST...",
                 "→".cyan(),
                 candidate_count
@@ -2609,6 +2649,8 @@ fn cmd_query(
                 }
             }
 
+            rank_owned_symbols(&mut owned_symbols);
+
             if let Some(n) = output_limit {
                 owned_symbols.truncate(n);
             }
@@ -2622,7 +2664,7 @@ fn cmd_query(
                 return Ok(());
             }
 
-            eprintln!(
+            planner_eprintln!(
                 "{} No AST matches in text candidates, falling back to full AST scan",
                 "→".yellow()
             );
@@ -2643,7 +2685,7 @@ fn cmd_query(
                     output_limit,
                 )
             {
-                eprintln!(
+                planner_eprintln!(
                     "{} Broad match, validating first {} candidate files before full index...",
                     "→".cyan(),
                     candidate_count
@@ -2679,6 +2721,8 @@ fn cmd_query(
                     }
                 }
 
+                rank_owned_symbols(&mut owned_symbols);
+
                 if let Some(n) = output_limit {
                     if owned_symbols.len() >= n {
                         owned_symbols.truncate(n);
@@ -2691,37 +2735,37 @@ fn cmd_query(
                     }
                 }
 
-                eprintln!(
+                planner_eprintln!(
                     "{} Bounded candidate page had too few symbols, using full index instead",
                     "→".yellow()
                 );
             }
 
             match prefilter.stop_reason {
-                PrefilterStopReason::TimedOut => eprintln!(
+                PrefilterStopReason::TimedOut => planner_eprintln!(
                     "{} Prefilter budget expired after {}ms with {} candidate files, using full index instead",
                     "→".yellow(),
                     prefilter.elapsed.as_millis(),
                     candidate_count
                 ),
-                PrefilterStopReason::CandidateLimit if prefer_cache => eprintln!(
+                PrefilterStopReason::CandidateLimit if prefer_cache => planner_eprintln!(
                     "{} Candidate AST cost estimate exceeds warm-cache path (at least {} files), using full index instead",
                     "→".yellow(),
                     candidate_count
                 ),
-                PrefilterStopReason::CandidateLimit => eprintln!(
+                PrefilterStopReason::CandidateLimit => planner_eprintln!(
                     "{} Found at least {} candidate files ({:.1}%+), using full index instead",
                     "→".yellow(),
                     candidate_count,
                     candidate_ratio(candidate_count, corpus.file_count) * 100.0
                 ),
-                PrefilterStopReason::Exhausted if prefer_cache => eprintln!(
+                PrefilterStopReason::Exhausted if prefer_cache => planner_eprintln!(
                     "{} Candidate AST cost estimate exceeds warm-cache path ({} files, {:.1} MB), using full index instead",
                     "→".yellow(),
                     candidate_count,
                     candidate_bytes as f64 / 1_048_576.0
                 ),
-                PrefilterStopReason::Exhausted => eprintln!(
+                PrefilterStopReason::Exhausted => planner_eprintln!(
                     "{} Found {} candidate files ({:.1}%), using full index instead",
                     "→".yellow(),
                     candidate_count,
@@ -2731,13 +2775,7 @@ fn cmd_query(
         }
 
         let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
-        let mut symbols = if search_all {
-            index.all_symbols()
-        } else if fuzzy {
-            index.fuzzy_search(&symbol)
-        } else {
-            index.query_symbol(&symbol)
-        };
+        let mut symbols = search_index_symbols(&index, &symbol, search_all, fuzzy, grep_mode);
 
         if let Some(ref filter_type) = type_filter {
             symbols.retain(|s| s.symbol_type == *filter_type);
@@ -2776,6 +2814,8 @@ fn cmd_query(
             }
         }
 
+        rank_symbol_refs(&mut symbols);
+
         if let Some(n) = output_limit {
             symbols.truncate(n);
         }
@@ -2796,14 +2836,7 @@ fn cmd_query(
     } else {
         // Normal mode for small codebases with cache
         let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
-        let mut symbols = if search_all {
-            // Get all symbols when searching for all of a specific type
-            index.all_symbols()
-        } else if fuzzy {
-            index.fuzzy_search(&symbol)
-        } else {
-            index.query_symbol(&symbol)
-        };
+        let mut symbols = search_index_symbols(&index, &symbol, search_all, fuzzy, grep_mode);
 
         // Apply type filter if specified
         if let Some(ref filter_type) = type_filter {
@@ -2847,6 +2880,8 @@ fn cmd_query(
             }
         }
 
+        rank_symbol_refs(&mut symbols);
+
         // Apply limit if specified
         if let Some(n) = output_limit {
             symbols.truncate(n);
@@ -2886,6 +2921,69 @@ fn dedup_symbols_owned(symbols: &mut Vec<Symbol>) {
     });
 }
 
+fn search_index_symbols<'a>(
+    index: &'a index::CodeIndex,
+    symbol: &str,
+    search_all: bool,
+    fuzzy: bool,
+    grep_mode: bool,
+) -> Vec<&'a Symbol> {
+    if search_all {
+        index.all_symbols()
+    } else if grep_mode {
+        index
+            .all_symbols()
+            .into_iter()
+            .filter(|candidate| symbol_name_matches_grep(&candidate.name, symbol))
+            .collect()
+    } else if fuzzy {
+        index.fuzzy_search(symbol)
+    } else {
+        index.query_symbol(symbol)
+    }
+}
+
+fn symbol_name_matches_grep(name: &str, query: &str) -> bool {
+    let terms: Vec<&str> = query
+        .split('|')
+        .map(str::trim)
+        .filter(|term| !term.is_empty())
+        .collect();
+    let terms = if terms.is_empty() { vec![query] } else { terms };
+    terms.iter().any(|term| name.contains(*term))
+}
+
+fn rank_symbol_refs(symbols: &mut Vec<&Symbol>) {
+    symbols.sort_by_key(|symbol| symbol_rank_key(symbol));
+}
+
+fn rank_owned_symbols(symbols: &mut Vec<Symbol>) {
+    symbols.sort_by_key(|symbol| symbol_rank_key(symbol));
+}
+
+fn symbol_rank_key(symbol: &Symbol) -> (u8, String, usize, String) {
+    (
+        if is_test_like_symbol(symbol) { 1 } else { 0 },
+        symbol.file_path.to_string_lossy().into_owned(),
+        symbol.line_start,
+        symbol.name.clone(),
+    )
+}
+
+fn is_test_like_symbol(symbol: &Symbol) -> bool {
+    let path = symbol.file_path.to_string_lossy().to_lowercase();
+    let name = symbol.name.to_lowercase();
+    path.contains("/test")
+        || path.contains("/tests/")
+        || path.contains("/spec")
+        || path.contains("/__tests__/")
+        || path.contains("_test.")
+        || path.contains(".test.")
+        || path.contains("_spec.")
+        || name.starts_with("test_")
+        || name.starts_with("test")
+}
+
 fn inspect_indexable_corpus(path: &PathBuf, extensions: &[&str]) -> Result<SearchCorpusStats> {
     let files = indexer::discover_indexable_files(path, extensions)?;
     let mut stats = SearchCorpusStats {
@@ -2908,6 +3006,10 @@ fn should_prefilter(fast: bool, grep_mode: bool, corpus: &SearchCorpusStats) -> 
         || corpus.file_count >= FAST_MODE_MIN_FILES
         || corpus.total_bytes >= FAST_MODE_MIN_TOTAL_BYTES
         || corpus.max_file_bytes >= FAST_MODE_MIN_FILE_BYTES
+}
+
+fn planner_verbose() -> bool {
+    std::env::var_os("CM_VERBOSE").is_some()
 }
 
 fn should_parse_candidates(candidate_count: usize, file_count: usize) -> bool {
@@ -3129,6 +3231,38 @@ mod query_planner_tests {
         assert_eq!(effective_query_limit(None), Some(DEFAULT_QUERY_LIMIT));
         assert_eq!(effective_query_limit(Some(10)), Some(10));
         assert_eq!(effective_query_limit(Some(0)), None);
+    }
+
+    #[test]
+    fn grep_symbol_matching_uses_case_sensitive_substrings() {
+        assert!(symbol_name_matches_grep("RustParser", "Parser"));
+        assert!(symbol_name_matches_grep("RustParser", "Parser|Indexer"));
+        assert!(!symbol_name_matches_grep("rustparser", "Parser"));
+    }
+
+    #[test]
+    fn ranking_pushes_tests_after_production_symbols() {
+        let prod = Symbol {
+            name: "build_index".to_string(),
+            symbol_type: models::SymbolType::Function,
+            signature: None,
+            docstring: None,
+            line_start: 1,
+            line_end: 1,
+            parent_id: None,
+            file_path: PathBuf::from("src/index.rs"),
+            is_exported: false,
+        };
+        let test = Symbol {
+            name: "test_build_index".to_string(),
+            file_path: PathBuf::from("tests/index_test.rs"),
+            ..prod.clone()
+        };
+        let mut symbols = vec![&test, &prod];
+
+        rank_symbol_refs(&mut symbols);
+
+        assert_eq!(symbols[0].name, "build_index");
     }
 
     #[test]
