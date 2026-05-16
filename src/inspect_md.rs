@@ -26,6 +26,49 @@ pub fn heading_leaf(name: &str) -> &str {
     name.rsplit(" > ").next().unwrap_or(name)
 }
 
+fn normalized_section_key(value: &str) -> String {
+    let mut normalized = String::new();
+    let mut pending_space = false;
+
+    for ch in value.chars().flat_map(char::to_lowercase) {
+        if ch.is_alphanumeric() {
+            if pending_space && !normalized.is_empty() {
+                normalized.push(' ');
+            }
+            normalized.push(ch);
+            pending_space = false;
+        } else {
+            pending_space = true;
+        }
+    }
+
+    normalized
+}
+
+fn resolve_section_matches(
+    symbols: &[Symbol],
+    section: &str,
+    matches: Vec<usize>,
+) -> Result<usize> {
+    match matches.len() {
+        0 => anyhow::bail!("section not found: {}", section),
+        1 => Ok(matches[0]),
+        _ => {
+            let mut names: Vec<String> = matches.iter().map(|i| symbols[*i].name.clone()).collect();
+            names.sort();
+            anyhow::bail!(
+                "section is ambiguous: {}\n\nmatched headings:\n{}",
+                section,
+                names
+                    .into_iter()
+                    .map(|n| format!("- {}", n))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            )
+        }
+    }
+}
+
 pub fn compute_heading_end_lines(
     headings: &[(usize, usize, usize)],
     total_lines: usize,
@@ -76,27 +119,23 @@ pub fn select_section_heading(symbols: &[Symbol], section: &str) -> Result<usize
         .filter(|(_, s)| heading_leaf(&s.name) == section)
         .map(|(i, _)| i)
         .collect();
-
-    match leaf_matches.len() {
-        0 => anyhow::bail!("section not found: {}", section),
-        1 => Ok(leaf_matches[0]),
-        _ => {
-            let mut names: Vec<String> = leaf_matches
-                .iter()
-                .map(|i| symbols[*i].name.clone())
-                .collect();
-            names.sort();
-            anyhow::bail!(
-                "section is ambiguous: {}\n\nmatched headings:\n{}",
-                section,
-                names
-                    .into_iter()
-                    .map(|n| format!("- {}", n))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            )
-        }
+    if !leaf_matches.is_empty() {
+        return resolve_section_matches(symbols, section, leaf_matches);
     }
+
+    let section_key = normalized_section_key(section);
+    let normalized_matches: Vec<usize> = symbols
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| s.symbol_type == SymbolType::Heading)
+        .filter(|(_, s)| {
+            normalized_section_key(heading_leaf(&s.name)) == section_key
+                || normalized_section_key(&s.name) == section_key
+        })
+        .map(|(i, _)| i)
+        .collect();
+
+    resolve_section_matches(symbols, section, normalized_matches)
 }
 
 pub fn is_descendant(symbols: &[Symbol], symbol_idx: usize, root_idx: usize) -> bool {
@@ -189,6 +228,17 @@ mod tests {
     fn test_select_section_heading_leaf_match() -> Result<()> {
         let syms = vec![heading("Orders", 1, 1), heading("Foo > Orders", 2, 10)];
         assert_eq!(select_section_heading(&syms, "Orders")?, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn test_select_section_heading_ignores_decorative_punctuation() -> Result<()> {
+        let syms = vec![
+            heading("Root", 1, 1),
+            heading("Root > 🗺️ Project Maps", 2, 10),
+        ];
+
+        assert_eq!(select_section_heading(&syms, "Project Maps")?, 1);
         Ok(())
     }
 }

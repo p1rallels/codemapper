@@ -3658,14 +3658,12 @@ fn cmd_inspect(options: InspectOptions) -> Result<()> {
                 filtered_idxs.retain(|idx| {
                     file_info.symbols[*idx].symbol_type == models::SymbolType::CodeBlock
                 });
-            } else if section_root_idx.is_none() {
-                if let Some(max) = max_heading_level {
-                    filtered_idxs.retain(|idx| {
-                        let s = &file_info.symbols[*idx];
-                        s.symbol_type == models::SymbolType::Heading
-                            && heading_level(s).map(|lvl| lvl <= max).unwrap_or(false)
-                    });
-                }
+            } else if let Some(max) = max_heading_level {
+                filtered_idxs.retain(|idx| {
+                    let s = &file_info.symbols[*idx];
+                    s.symbol_type == models::SymbolType::Heading
+                        && heading_level(s).map(|lvl| lvl <= max).unwrap_or(false)
+                });
             }
 
             let sym_count = filtered_idxs.len();
