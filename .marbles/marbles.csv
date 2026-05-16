@@ -982,3 +982,4 @@ m-3fae,ux rank broad type queries,cm query functions returns test helpers first;
 m-bdcd,ux reduce planner noise,query/grep stderr exposes planner internals like bounded candidate fallback; consider quiet default with --verbose for diagnostics,closed,1,pi,pi,pi,2026-05-16T18:32:15.697Z,2026-05-16T18:45:21.609Z,,
 m-27e3,audit search ux code,review recent search ux paths for correctness and clean up any slop,closed,0,pi,pi,pi,2026-05-16T18:53:06.365Z,2026-05-16T19:05:02.857Z,,
 m-bb92,second audit search ux code,rerun cm-led audit and validation after cleanup pass,closed,0,pi,pi,pi,2026-05-16T19:28:00.731Z,2026-05-16T19:29:19.960Z,,
+m-7c3f,third audit search ux code,run another cm-led audit pass and fix anything safe,closed,0,pi,pi,pi,2026-05-16T19:52:30.325Z,2026-05-16T19:57:17.015Z,,
