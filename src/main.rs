@@ -29,6 +29,20 @@ use rayon::prelude::*;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+const FAST_MODE_MIN_FILES: usize = 1000;
+const FAST_MODE_MIN_TOTAL_BYTES: u64 = 4 * 1024 * 1024;
+const FAST_MODE_MIN_FILE_BYTES: u64 = 1024 * 1024;
+const MAX_CANDIDATE_FILES: usize = 256;
+const MAX_CANDIDATE_RATIO: f64 = 0.10;
+
+#[derive(Debug, Clone, Default)]
+struct SearchCorpusStats {
+    file_count: usize,
+    total_bytes: u64,
+    max_file_bytes: u64,
+    files: Vec<PathBuf>,
+}
+
 #[derive(clap::Parser)]
 #[command(name = "cm")]
 #[command(
@@ -2528,39 +2542,57 @@ fn cmd_query(
     let search_all =
         symbol.trim().is_empty() && (type_filter.is_some() || !extra_type_filters.is_empty());
 
-    // Count files for auto-detection
-    let file_count = count_indexable_files(&path, &ext_list)?;
-
-    // Auto-enable fast mode for large codebases (1000+ files), but not when searching for all symbols
-    let use_fast_mode = !search_all && (fast || file_count >= 1000);
+    let corpus = inspect_indexable_corpus(&path, &ext_list)?;
+    let force_normal_mode = std::env::var_os("CM_FORCE_NORMAL").is_some();
+    let use_fast_mode =
+        !force_normal_mode && !search_all && should_prefilter(fast, grep_mode, &corpus);
 
     if use_fast_mode {
         if grep_mode {
-            eprintln!("{} Grep mode enabled ({} files)", "→".cyan(), file_count);
+            eprintln!(
+                "{} Grep mode enabled ({} files)",
+                "→".cyan(),
+                corpus.file_count
+            );
         } else if fast {
             eprintln!(
                 "{} Fast mode enabled by --fast flag ({} files)",
                 "→".cyan(),
-                file_count
+                corpus.file_count
             );
         } else {
             eprintln!(
-                "{} Fast mode auto-enabled ({} files detected)",
+                "{} Fast mode auto-enabled ({} files, {:.1} MB)",
                 "→".cyan(),
-                file_count
+                corpus.file_count,
+                corpus.total_bytes as f64 / 1_048_576.0
             );
         }
 
-        // Stage 1: Ripgrep prefilter
+        // Stage 1: text prefilter
         let extensions_vec: Vec<String> = ext_list.iter().map(|s| s.to_string()).collect();
         let filter = GrepFilter::new(&symbol, !fuzzy, extensions_vec);
 
-        let candidates = filter.prefilter(&path)?;
+        let prefilter_limit = candidate_parse_limit(corpus.file_count).saturating_add(1);
+        let candidates = filter.prefilter_paths(&corpus.files, Some(prefilter_limit))?;
+        let candidate_count = candidates.len();
+        let candidates_are_selective = should_parse_candidates(candidate_count, corpus.file_count);
 
         if candidates.is_empty() {
+            println!(
+                "{} No symbols found matching '{}'",
+                "✗".red(),
+                symbol.bold()
+            );
+            return Ok(());
+        }
+
+        if !candidates_are_selective {
             eprintln!(
-                "{} No text matches found, falling back to full AST scan",
-                "→".yellow()
+                "{} Found {} candidate files ({:.1}%), using full index instead",
+                "→".yellow(),
+                candidate_count,
+                candidate_ratio(candidate_count, corpus.file_count) * 100.0
             );
             // Fallback: Use normal mode with cache
             let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
@@ -2863,39 +2895,93 @@ fn dedup_symbols_owned(symbols: &mut Vec<Symbol>) {
     });
 }
 
-/// Count indexable files in directory for auto-detection logic
-fn count_indexable_files(path: &PathBuf, extensions: &[&str]) -> Result<usize> {
-    use ::ignore::WalkBuilder;
+fn inspect_indexable_corpus(path: &PathBuf, extensions: &[&str]) -> Result<SearchCorpusStats> {
+    let files = indexer::discover_indexable_files(path, extensions)?;
+    let mut stats = SearchCorpusStats {
+        file_count: files.len(),
+        files,
+        ..SearchCorpusStats::default()
+    };
 
-    use crate::ignore;
-
-    let mut count = 0;
-    let walker = WalkBuilder::new(path)
-        .hidden(false)
-        .git_ignore(true)
-        .git_global(false)
-        .git_exclude(false)
-        .filter_entry(|e| {
-            if e.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
-                let name = e.file_name().to_string_lossy();
-                !ignore::is_ignored_dir(&name)
-            } else {
-                true
-            }
-        })
-        .build();
-
-    for entry in walker.filter_map(|e| e.ok()) {
-        if !entry.file_type().map(|ft| ft.is_file()).unwrap_or(false) {
-            continue;
-        }
-
-        if indexer::matches_extension_filter(entry.path(), extensions) {
-            count += 1;
-        }
+    for path in &stats.files {
+        let file_bytes = path.metadata().map(|metadata| metadata.len()).unwrap_or(0);
+        stats.total_bytes += file_bytes;
+        stats.max_file_bytes = stats.max_file_bytes.max(file_bytes);
     }
 
-    Ok(count)
+    Ok(stats)
+}
+
+fn should_prefilter(fast: bool, grep_mode: bool, corpus: &SearchCorpusStats) -> bool {
+    fast || grep_mode
+        || corpus.file_count >= FAST_MODE_MIN_FILES
+        || corpus.total_bytes >= FAST_MODE_MIN_TOTAL_BYTES
+        || corpus.max_file_bytes >= FAST_MODE_MIN_FILE_BYTES
+}
+
+fn should_parse_candidates(candidate_count: usize, file_count: usize) -> bool {
+    candidate_count > 0 && candidate_count <= candidate_parse_limit(file_count)
+}
+
+fn candidate_parse_limit(file_count: usize) -> usize {
+    let ratio_limit = (file_count as f64 * MAX_CANDIDATE_RATIO).floor() as usize;
+    MAX_CANDIDATE_FILES.min(ratio_limit)
+}
+
+fn candidate_ratio(candidate_count: usize, file_count: usize) -> f64 {
+    if file_count == 0 {
+        return 0.0;
+    }
+
+    candidate_count as f64 / file_count as f64
+}
+
+#[cfg(test)]
+mod query_planner_tests {
+    use super::*;
+
+    #[test]
+    fn prefilter_uses_file_count_and_corpus_weight() {
+        assert!(should_prefilter(
+            false,
+            false,
+            &SearchCorpusStats {
+                file_count: FAST_MODE_MIN_FILES,
+                total_bytes: 1,
+                max_file_bytes: 1,
+                files: Vec::new(),
+            },
+        ));
+        assert!(should_prefilter(
+            false,
+            false,
+            &SearchCorpusStats {
+                file_count: 1,
+                total_bytes: FAST_MODE_MIN_TOTAL_BYTES,
+                max_file_bytes: 1,
+                files: Vec::new(),
+            },
+        ));
+        assert!(!should_prefilter(
+            false,
+            false,
+            &SearchCorpusStats {
+                file_count: 10,
+                total_bytes: 1024,
+                max_file_bytes: 512,
+                files: Vec::new(),
+            },
+        ));
+    }
+
+    #[test]
+    fn candidate_parsing_requires_selective_matches() {
+        assert!(should_parse_candidates(7, 6102));
+        assert!(should_parse_candidates(124, 6102));
+        assert!(!should_parse_candidates(1446, 6102));
+        assert!(!should_parse_candidates(300, 6102));
+        assert!(!should_parse_candidates(0, 6102));
+    }
 }
 
 fn cmd_deps(
