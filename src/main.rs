@@ -38,6 +38,7 @@ const DEFAULT_PREFILTER_BUDGET_MS: u64 = 300;
 const ESTIMATED_AST_PARSE_MS_PER_FILE: u64 = 8;
 const ESTIMATED_AST_PARSE_BYTES_PER_MS: u64 = 16 * 1024;
 const ESTIMATED_WARM_CACHE_QUERY_MS: u64 = 250;
+const DEFAULT_QUERY_LIMIT: usize = 50;
 
 #[derive(Debug, Clone, Default)]
 struct SearchCorpusStats {
@@ -538,7 +539,7 @@ WHEN TO USE:
         #[arg(long)]
         section: Option<String>,
 
-        /// Maximum number of results to return (prevents overwhelming output)
+        /// Maximum number of results to return (default: 50, use --limit 0 for all)
         #[arg(long)]
         limit: Option<usize>,
     },
@@ -621,7 +622,7 @@ PIPELINES:
         #[arg(long)]
         section: Option<String>,
 
-        /// Maximum number of results to return (prevents overwhelming output)
+        /// Maximum number of results to return (default: 50, use --limit 0 for all)
         #[arg(long)]
         limit: Option<usize>,
     },
@@ -2547,6 +2548,7 @@ fn cmd_query(
         symbol.trim().is_empty() && (type_filter.is_some() || !extra_type_filters.is_empty());
 
     let corpus = inspect_indexable_corpus(&path, &ext_list)?;
+    let output_limit = effective_query_limit(limit);
     let force_normal_mode = std::env::var_os("CM_FORCE_NORMAL").is_some();
     let use_fast_mode =
         !force_normal_mode && !search_all && should_prefilter(fast, grep_mode, &corpus);
@@ -2643,7 +2645,7 @@ fn cmd_query(
                 }
             }
 
-            if let Some(n) = limit {
+            if let Some(n) = output_limit {
                 owned_symbols.truncate(n);
             }
 
@@ -2670,6 +2672,67 @@ fn cmd_query(
             );
             return Ok(());
         } else {
+            if extra_type_filters.is_empty()
+                && should_try_bounded_candidate_page(
+                    prefilter.stop_reason,
+                    cache_available,
+                    output_limit,
+                )
+            {
+                eprintln!(
+                    "{} Broad match, validating first {} candidate files before full index...",
+                    "→".cyan(),
+                    candidate_count
+                );
+
+                let mut owned_symbols =
+                    filter.validate(prefilter.candidates.clone(), &symbol, fuzzy)?;
+
+                if let Some(ref filter_type) = type_filter {
+                    owned_symbols.retain(|s| s.symbol_type == *filter_type);
+                }
+
+                if skip_anonymous {
+                    owned_symbols.retain(|s| s.name != "anonymous");
+                }
+
+                if exports_only {
+                    owned_symbols.retain(|s| s.is_exported);
+                }
+
+                if let Some(ref sec) = section {
+                    let sec = sec.trim();
+                    if !sec.is_empty() {
+                        let sec_prefix = format!("{} > ", sec);
+                        owned_symbols.retain(|s| {
+                            s.file_path
+                                .extension()
+                                .and_then(|e| e.to_str())
+                                .map(|e| e.eq_ignore_ascii_case("md"))
+                                .unwrap_or(false)
+                                && (s.name == sec || s.name.starts_with(&sec_prefix))
+                        });
+                    }
+                }
+
+                if let Some(n) = output_limit {
+                    if owned_symbols.len() >= n {
+                        owned_symbols.truncate(n);
+                        let show_context = context.to_lowercase() == "full";
+                        let formatter = OutputFormatter::new(format);
+                        let symbol_refs: Vec<&Symbol> = owned_symbols.iter().collect();
+                        let output = formatter.format_query(symbol_refs, show_context, show_body);
+                        println!("{}", output);
+                        return Ok(());
+                    }
+                }
+
+                eprintln!(
+                    "{} Bounded candidate page had too few symbols, using full index instead",
+                    "→".yellow()
+                );
+            }
+
             match prefilter.stop_reason {
                 PrefilterStopReason::TimedOut => eprintln!(
                     "{} Prefilter budget expired after {}ms with {} candidate files, using full index instead",
@@ -2749,7 +2812,7 @@ fn cmd_query(
             }
         }
 
-        if let Some(n) = limit {
+        if let Some(n) = output_limit {
             symbols.truncate(n);
         }
 
@@ -2821,7 +2884,7 @@ fn cmd_query(
         }
 
         // Apply limit if specified
-        if let Some(n) = limit {
+        if let Some(n) = output_limit {
             symbols.truncate(n);
         }
 
@@ -2908,6 +2971,16 @@ fn should_prefer_cache_for_candidates(
             >= ESTIMATED_WARM_CACHE_QUERY_MS
 }
 
+fn should_try_bounded_candidate_page(
+    stop_reason: fast_search::PrefilterStopReason,
+    cache_available: bool,
+    output_limit: Option<usize>,
+) -> bool {
+    stop_reason == fast_search::PrefilterStopReason::CandidateLimit
+        && !cache_available
+        && output_limit.is_some()
+}
+
 fn prefilter_candidate_limit(file_count: usize, cache_available: bool) -> usize {
     let broad_limit = candidate_parse_limit(file_count).saturating_add(1);
     if cache_available {
@@ -2963,6 +3036,14 @@ fn candidate_ratio(candidate_count: usize, file_count: usize) -> f64 {
     }
 
     candidate_count as f64 / file_count as f64
+}
+
+fn effective_query_limit(limit: Option<usize>) -> Option<usize> {
+    match limit {
+        Some(0) => None,
+        Some(limit) => Some(limit),
+        None => Some(DEFAULT_QUERY_LIMIT),
+    }
 }
 
 #[cfg(test)]
@@ -3053,6 +3134,37 @@ mod query_planner_tests {
         assert_eq!(prefilter_candidate_limit(6102, false), 257);
         assert_eq!(prefilter_candidate_limit(6102, true), 32);
         assert_eq!(prefilter_candidate_limit(30, true), 4);
+    }
+
+    #[test]
+    fn bounded_candidate_page_only_applies_without_cache_and_with_limit() {
+        assert!(should_try_bounded_candidate_page(
+            fast_search::PrefilterStopReason::CandidateLimit,
+            false,
+            Some(50),
+        ));
+        assert!(!should_try_bounded_candidate_page(
+            fast_search::PrefilterStopReason::Exhausted,
+            false,
+            Some(50),
+        ));
+        assert!(!should_try_bounded_candidate_page(
+            fast_search::PrefilterStopReason::CandidateLimit,
+            true,
+            Some(50),
+        ));
+        assert!(!should_try_bounded_candidate_page(
+            fast_search::PrefilterStopReason::CandidateLimit,
+            false,
+            None,
+        ));
+    }
+
+    #[test]
+    fn query_limit_defaults_to_first_page() {
+        assert_eq!(effective_query_limit(None), Some(DEFAULT_QUERY_LIMIT));
+        assert_eq!(effective_query_limit(Some(10)), Some(10));
+        assert_eq!(effective_query_limit(Some(0)), None);
     }
 
     #[test]
