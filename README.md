@@ -63,6 +63,7 @@ cm map                              # File listing with symbol counts
 # 3. Find and explore
 cm query authenticate                # Fuzzy search (default)
 cm query Parser --show-body          # See implementation
+cm query Parser ./src/parser/mod.rs  # Scope search to one file
 cm inspect ./src/auth.py             # All symbols in a file
 
 # 4. Understand code flow
@@ -138,8 +139,10 @@ cm map --limit 0        # Disable the default 100-line output cap
 Fuzzy matching is **enabled by default** for more forgiving searches:
 
 ```bash
-# Default: fuzzy/case-insensitive
+# Default: fuzzy/case-insensitive symbol search
 cm query auth                    # Matches authenticate, Authorization, etc.
+cm query inspect_md              # Matches Rust module declarations
+cm query Parser ./src/parser/mod.rs  # Scope to one file
 
 # Raw text search belongs to grep/rg
 rg 'TODO|FIXME' .                # Variables, literals, TODO, FIXME, HACK
