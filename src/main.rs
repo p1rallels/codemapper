@@ -2438,7 +2438,7 @@ fn cmd_query(
             corpus.total_bytes as f64 / 1_048_576.0
         );
 
-        let filter = TextPrefilter::new(&symbol, false);
+        let filter = TextPrefilter::new(&symbol);
         let cache_available = !no_cache
             && !rebuild_cache
             && cache::CacheManager::exists(&path, &ext_list, cache_dir).unwrap_or(false);
@@ -2465,7 +2465,7 @@ fn cmd_query(
                 candidate_count
             );
 
-            let mut owned_symbols = filter.validate(prefilter.candidates, &symbol, true)?;
+            let mut owned_symbols = filter.validate(prefilter.candidates, &symbol)?;
 
             if let Some(ref filter_type) = type_filter {
                 owned_symbols.retain(|s| s.symbol_type == *filter_type);
@@ -2540,8 +2540,7 @@ fn cmd_query(
                     candidate_count
                 );
 
-                let mut owned_symbols =
-                    filter.validate(prefilter.candidates.clone(), &symbol, true)?;
+                let mut owned_symbols = filter.validate(prefilter.candidates.clone(), &symbol)?;
 
                 if let Some(ref filter_type) = type_filter {
                     owned_symbols.retain(|s| s.symbol_type == *filter_type);
