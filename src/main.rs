@@ -4855,6 +4855,7 @@ mod query_planner_tests {
         }
 
         assert!(Cli::try_parse_from(["cm", "grep", "Parser"]).is_err());
+        assert!(Cli::try_parse_from(["cm", "g", "Parser"]).is_err());
     }
 
     #[test]
