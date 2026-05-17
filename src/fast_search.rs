@@ -25,12 +25,12 @@ pub struct PrefilterResult {
 }
 
 /// Fast text search using ripgrep-style grep for prefiltering candidate files
-pub struct GrepFilter {
+pub struct TextPrefilter {
     pattern: String,
     case_sensitive: bool,
 }
 
-/// Collects file paths that match the grep pattern
+/// Collects file paths that match the text pattern
 struct CandidateCollector {
     files: Vec<PathBuf>,
     current_path: Option<PathBuf>,
@@ -72,8 +72,8 @@ fn deadline_expired(deadline: Option<Instant>) -> bool {
         .unwrap_or(false)
 }
 
-impl GrepFilter {
-    /// Create a new GrepFilter
+impl TextPrefilter {
+    /// Create a new TextPrefilter
     pub fn new(pattern: &str, case_sensitive: bool) -> Self {
         Self {
             pattern: pattern.to_string(),
@@ -246,8 +246,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_grep_filter_creation() {
-        let filter = GrepFilter::new("test", true);
+    fn test_text_prefilter_creation() {
+        let filter = TextPrefilter::new("test", true);
         assert_eq!(filter.pattern, "test");
         assert!(filter.case_sensitive);
     }
@@ -258,7 +258,7 @@ mod tests {
         fs::write(temp.path().join("first.rs"), "fn Needle() {}\n").unwrap();
         fs::write(temp.path().join("second.rs"), "fn Needle() {}\n").unwrap();
 
-        let filter = GrepFilter::new("Needle", true);
+        let filter = TextPrefilter::new("Needle", true);
         let paths = vec![temp.path().join("first.rs"), temp.path().join("second.rs")];
         let result = filter
             .prefilter_paths_with_budget(&paths, Some(1), None)
@@ -273,7 +273,7 @@ mod tests {
         fs::write(temp.path().join("first.rs"), "fn Needle() {}\n").unwrap();
         fs::write(temp.path().join("second.rs"), "fn Needle() {}\n").unwrap();
 
-        let filter = GrepFilter::new("Needle", true);
+        let filter = TextPrefilter::new("Needle", true);
         let paths = vec![temp.path().join("first.rs"), temp.path().join("second.rs")];
         let result = filter
             .prefilter_paths_with_budget(&paths, Some(1), None)
@@ -288,7 +288,7 @@ mod tests {
         let temp = tempfile::TempDir::new().unwrap();
         fs::write(temp.path().join("first.rs"), "fn Needle() {}\n").unwrap();
 
-        let filter = GrepFilter::new("Needle", true);
+        let filter = TextPrefilter::new("Needle", true);
         let paths = vec![temp.path().join("first.rs")];
         let result = filter
             .prefilter_paths_with_budget(&paths, Some(1), Some(Duration::from_millis(0)))
@@ -300,7 +300,7 @@ mod tests {
 
     #[test]
     fn test_symbol_matches_case_sensitive_substrings() {
-        let filter = GrepFilter::new("Parser", true);
+        let filter = TextPrefilter::new("Parser", true);
 
         assert!(filter.symbol_matches("RustParser", "Parser", false));
         assert!(!filter.symbol_matches("rustparser", "Parser", false));
