@@ -26,6 +26,32 @@ pub fn heading_leaf(name: &str) -> &str {
     name.rsplit(" > ").next().unwrap_or(name)
 }
 
+pub fn section_name_matches(name: &str, section: &str) -> bool {
+    let section = section.trim();
+    if section.is_empty() {
+        return false;
+    }
+
+    name == section
+        || heading_leaf(name) == section
+        || normalized_section_key(name) == normalized_section_key(section)
+        || normalized_section_key(heading_leaf(name)) == normalized_section_key(section)
+}
+
+pub fn symbol_name_in_section(name: &str, section: &str) -> bool {
+    let mut prefix = String::new();
+    for part in name.split(" > ") {
+        if !prefix.is_empty() {
+            prefix.push_str(" > ");
+        }
+        prefix.push_str(part);
+        if section_name_matches(&prefix, section) || section_name_matches(part, section) {
+            return true;
+        }
+    }
+    false
+}
+
 fn normalized_section_key(value: &str) -> String {
     let mut normalized = String::new();
     let mut pending_space = false;
@@ -123,15 +149,11 @@ pub fn select_section_heading(symbols: &[Symbol], section: &str) -> Result<usize
         return resolve_section_matches(symbols, section, leaf_matches);
     }
 
-    let section_key = normalized_section_key(section);
     let normalized_matches: Vec<usize> = symbols
         .iter()
         .enumerate()
         .filter(|(_, s)| s.symbol_type == SymbolType::Heading)
-        .filter(|(_, s)| {
-            normalized_section_key(heading_leaf(&s.name)) == section_key
-                || normalized_section_key(&s.name) == section_key
-        })
+        .filter(|(_, s)| section_name_matches(&s.name, section))
         .map(|(i, _)| i)
         .collect();
 
@@ -240,5 +262,17 @@ mod tests {
 
         assert_eq!(select_section_heading(&syms, "Project Maps")?, 1);
         Ok(())
+    }
+
+    #[test]
+    fn test_symbol_name_in_section_matches_descendants() {
+        assert!(symbol_name_in_section(
+            "Root > 🗺️ Project Maps > [code: bash]",
+            "Project Maps"
+        ));
+        assert!(!symbol_name_in_section(
+            "Root > Quick Start > [code: bash]",
+            "Project Maps"
+        ));
     }
 }

@@ -2357,7 +2357,7 @@ fn cmd_query(
     limit: Option<usize>,
     cache_dir: Option<&Path>,
 ) -> Result<()> {
-    use fast_search::{GrepFilter, PrefilterStopReason};
+    use fast_search::{PrefilterStopReason, TextPrefilter};
     use models::SymbolType;
 
     let symbol = pipe::read_symbol_arg(symbol)?;
@@ -2438,7 +2438,7 @@ fn cmd_query(
             corpus.total_bytes as f64 / 1_048_576.0
         );
 
-        let filter = GrepFilter::new(&symbol, false);
+        let filter = TextPrefilter::new(&symbol, false);
         let cache_available = !no_cache
             && !rebuild_cache
             && cache::CacheManager::exists(&path, &ext_list, cache_dir).unwrap_or(false);
@@ -2493,18 +2493,7 @@ fn cmd_query(
             }
 
             if let Some(ref sec) = section {
-                let sec = sec.trim();
-                if !sec.is_empty() {
-                    let sec_prefix = format!("{} > ", sec);
-                    owned_symbols.retain(|s| {
-                        s.file_path
-                            .extension()
-                            .and_then(|e| e.to_str())
-                            .map(|e| e.eq_ignore_ascii_case("md"))
-                            .unwrap_or(false)
-                            && (s.name == sec || s.name.starts_with(&sec_prefix))
-                    });
-                }
+                retain_markdown_section_symbols_owned(&mut owned_symbols, sec);
             }
 
             if should_rank_query_results(search_all) {
@@ -2567,18 +2556,7 @@ fn cmd_query(
                 }
 
                 if let Some(ref sec) = section {
-                    let sec = sec.trim();
-                    if !sec.is_empty() {
-                        let sec_prefix = format!("{} > ", sec);
-                        owned_symbols.retain(|s| {
-                            s.file_path
-                                .extension()
-                                .and_then(|e| e.to_str())
-                                .map(|e| e.eq_ignore_ascii_case("md"))
-                                .unwrap_or(false)
-                                && (s.name == sec || s.name.starts_with(&sec_prefix))
-                        });
-                    }
+                    retain_markdown_section_symbols_owned(&mut owned_symbols, sec);
                 }
 
                 if should_rank_query_results(search_all) {
@@ -2662,18 +2640,7 @@ fn cmd_query(
         }
 
         if let Some(ref sec) = section {
-            let sec = sec.trim();
-            if !sec.is_empty() {
-                let sec_prefix = format!("{} > ", sec);
-                symbols.retain(|s| {
-                    s.file_path
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .map(|e| e.eq_ignore_ascii_case("md"))
-                        .unwrap_or(false)
-                        && (s.name == sec || s.name.starts_with(&sec_prefix))
-                });
-            }
+            retain_markdown_section_symbols(&mut symbols, sec);
         }
 
         if should_rank_query_results(search_all) {
@@ -2730,18 +2697,7 @@ fn cmd_query(
 
         // Markdown section scoping (qualified name prefix)
         if let Some(ref sec) = section {
-            let sec = sec.trim();
-            if !sec.is_empty() {
-                let sec_prefix = format!("{} > ", sec);
-                symbols.retain(|s| {
-                    s.file_path
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .map(|e| e.eq_ignore_ascii_case("md"))
-                        .unwrap_or(false)
-                        && (s.name == sec || s.name.starts_with(&sec_prefix))
-                });
-            }
+            retain_markdown_section_symbols(&mut symbols, sec);
         }
 
         if should_rank_query_results(search_all) {
@@ -2785,6 +2741,34 @@ fn dedup_symbols_owned(symbols: &mut Vec<Symbol>) {
         let key = (s.name.clone(), s.line_start, s.file_path.clone());
         seen.insert(key)
     });
+}
+
+fn retain_markdown_section_symbols_owned(symbols: &mut Vec<Symbol>, section: &str) {
+    let section = section.trim();
+    if section.is_empty() {
+        return;
+    }
+
+    symbols.retain(|s| markdown_symbol_in_section(s, section));
+}
+
+fn retain_markdown_section_symbols(symbols: &mut Vec<&Symbol>, section: &str) {
+    let section = section.trim();
+    if section.is_empty() {
+        return;
+    }
+
+    symbols.retain(|s| markdown_symbol_in_section(s, section));
+}
+
+fn markdown_symbol_in_section(symbol: &Symbol, section: &str) -> bool {
+    symbol
+        .file_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("md"))
+        .unwrap_or(false)
+        && inspect_md::symbol_name_in_section(&symbol.name, section)
 }
 
 fn search_index_symbols<'a>(
@@ -4715,6 +4699,32 @@ mod query_planner_tests {
         rank_symbol_refs(&mut symbols);
 
         assert_eq!(symbols[0].name, "build_index");
+    }
+
+    #[test]
+    fn markdown_section_filter_matches_decorated_headings() {
+        let base = Symbol {
+            name: "Root > 🗺️ Project Maps".to_string(),
+            symbol_type: models::SymbolType::Heading,
+            signature: None,
+            docstring: None,
+            line_start: 1,
+            line_end: 1,
+            parent_id: None,
+            file_path: PathBuf::from("README.md"),
+            is_exported: false,
+        };
+        let other = Symbol {
+            name: "Root > Quick Start".to_string(),
+            line_start: 10,
+            ..base.clone()
+        };
+        let mut symbols = vec![base, other];
+
+        retain_markdown_section_symbols_owned(&mut symbols, "Project Maps");
+
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].name, "Root > 🗺️ Project Maps");
     }
 
     #[test]
