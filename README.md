@@ -34,7 +34,7 @@ For large codebases, CodeMapper automatically plans fast searches with a ripgrep
 - **Tree-sitter Parsing**: Accurate AST-based symbol extraction
 - **Multi-language**: Python, JavaScript, TypeScript, Rust, Java, Go, C, Swift, Ruby, Markdown
 - **Parallel Processing**: Uses rayon for concurrent file parsing
-- **Fuzzy Search**: Case-insensitive matching by default; use `cm grep` or `cm query --grep` for symbol substrings
+- **Fuzzy Search**: Case-insensitive matching by default; use `cm query --grep` for symbol substrings or `cm query --text` for raw text
 - **Call Graph Analysis**: callers, callees, trace, tests, entrypoints
 - **Git Integration**: diff, since, blame, history commands
 - **Type Analysis**: types, implements, schema commands
@@ -141,12 +141,12 @@ Fuzzy matching is **enabled by default** for more forgiving searches:
 # Default: fuzzy/case-insensitive
 cm query auth                    # Matches authenticate, Authorization, etc.
 
-# Grep-style symbol substring search
-cm grep Parser                   # Case-sensitive symbol search
-cm query Parser --grep           # Same search through query
+# Symbol substring search
+cm query Parser --grep           # Case-sensitive symbol search
 
 # Raw text search
-cm grep --text 'TODO|FIXME' .    # rg -n style line output
+cm query --text 'TODO|FIXME' .   # Bounded rg -n style line output
+cm query --text -i todo .        # Case-insensitive raw text search
 ```
 
 ## 📊 Output Formats
@@ -250,7 +250,7 @@ cm since <last_release> --breaking # Breaking changes?
 - **parser/**: Language-specific parsers using tree-sitter
 - **indexer.rs**: File walking, hashing, parallel processing
 - **callgraph.rs**: Call graph analysis (callers, callees, trace)
-- **fast_search.rs**: Text prefiltering and raw grep-style search
+- **fast_search.rs**: Text prefiltering and bounded raw text search
 - **cache.rs**: Smart caching with incremental updates
 - **output.rs**: Three output formatters
 - **main.rs**: CLI interface using clap
@@ -283,8 +283,8 @@ The indexer automatically skips:
 
 ```
 --grep               Case-sensitive symbol substring search
---text               Raw rg-style text search for cm grep
---limit 0            Return all results (query/grep default to 50 results; map defaults to 100 lines)
+--text               Raw text line search through query
+--limit 0            Return all results (query default is 50 results; map defaults to 100 lines)
 --format <format>    Output: ai (default), human (tables), default (markdown)
 --show-body          Include actual code (not just signatures)
 --exports-only       Public symbols only (pub, export, etc.)
