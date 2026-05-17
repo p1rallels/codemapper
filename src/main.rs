@@ -203,9 +203,9 @@ CACHING:
 
 SEARCH MODES:
   Fuzzy   → cm query myclass          (DEFAULT: case-insensitive, flexible)
-  Grep    → cm query MyClass --grep   (case-sensitive + text prefilter)
-  Grep    → cm grep MyClass           (case-sensitive symbol search, rg-style muscle memory)
-  Multi   → cm query 'foo|bar|baz'   (OR search, matches any term)
+  Symbol  → cm query MyClass --grep   (case-sensitive symbol substring search)
+  Text    → cm query --text 'TODO'    (bounded raw text line search)
+  Multi   → cm query 'foo|bar|baz'    (OR search, matches any term)
 
 LANGUAGES SUPPORTED:
   ✓ Python       → Functions, classes, methods, imports
@@ -230,7 +230,8 @@ GIT REQUIREMENTS:
 
 COMMON FLAGS
 
---grep               → Strict grep-backed matching (default query mode is fuzzy)
+--grep               → Case-sensitive symbol substring matching (default query mode is fuzzy)
+--text               → Raw text line search through query
 --format <format>    → Output style: ai (default), human (tables), default (markdown)
 --show-body          → Include actual code (not just signatures)
 --exports-only       → Public symbols only (functions with export, pub, etc.)
@@ -465,14 +466,14 @@ TYPICAL WORKFLOW:
         rebuild_cache: bool,
     },
 
-    /// [SEARCH] Find symbols by name - the main workhorse for code exploration
+    /// [SEARCH] Find symbols or bounded raw text - the main workhorse for code exploration
     #[command(
-        about = "Search symbols quickly; fuzzy by default, grep-style with --grep",
-        long_about = "SEARCH SYMBOLS
+        about = "Search code quickly; fuzzy symbols by default, raw text with --text",
+        long_about = "SEARCH CODE
   cm query auth              fuzzy symbol search (default)
   cm query Parser            finds parser-ish symbols, first 50 results by default
   cm query Parser --grep     case-sensitive symbol substring search
-  cm grep Parser             same symbol path, grep-shaped alias
+  cm query --text 'TODO'     bounded raw text line search
   cm query 'parse|index'     OR search
   cm query Parser | cm inspect -
 
@@ -490,105 +491,31 @@ PERFORMANCE
   cm query auth
   cm query Parser ./src
   cm query Parser --grep
-  cm grep Parser
+  cm query --text 'TODO|FIXME' .
+  cm query --text -i todo .
   cm query 'parse|index|cache'
   cm query CodeIndex --show-body
   cm query Parser --limit 0
   cm query Parser | cm inspect -")]
     Query {
-        /// Symbol name to search for (supports 'foo|bar|baz' OR syntax, '-' reads stdin)
+        /// Symbol or text to search for (supports 'foo|bar|baz' OR syntax, '-' reads stdin)
+        #[arg(allow_hyphen_values = true)]
         symbol: String,
 
         /// Directory path to search in
         #[arg(default_value = ".")]
         path: PathBuf,
 
-        /// Case-sensitive symbol substring search, like cm grep
-        #[arg(long = "grep", default_value_t = false)]
+        /// Case-sensitive symbol substring search
+        #[arg(long = "grep", default_value_t = false, conflicts_with = "text")]
         grep: bool,
 
-        /// Filter by symbol type: 'function', 'class', 'module', 'method', 'enum', 'static', 'heading', 'code_block', 'endpoint'
-        #[arg(long)]
-        r#type: Option<String>,
-
-        /// Context level: 'minimal' (signatures only) or 'full' (includes docstrings)
-        #[arg(long, default_value = "minimal")]
-        context: String,
-
-        /// Show the actual code implementation in results
-        #[arg(long, default_value = "false")]
-        show_body: bool,
-
-        /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,rb,md')
-        #[arg(
-            long,
-            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md"
-        )]
-        extensions: String,
-
-        /// Disable cache (always reindex)
-        #[arg(long, default_value_t = false)]
-        no_cache: bool,
-
-        /// Force rebuild cache (invalidate and reindex)
-        #[arg(long, default_value_t = false)]
-        rebuild_cache: bool,
-
-        /// Show anonymous/lambda functions (default: filtered out)
-        #[arg(long, default_value_t = false)]
-        full: bool,
-
-        /// Show only exported/public symbols (functions/classes with export keyword, pub visibility, etc.)
-        #[arg(long, default_value_t = false)]
-        exports_only: bool,
-
-        /// Markdown only: scope results to a heading path (e.g. "Orders" or "Orders > Order Strategy")
-        #[arg(long)]
-        section: Option<String>,
-
-        /// Maximum number of results to return (default: 50, use --limit 0 for all)
-        #[arg(long)]
-        limit: Option<usize>,
-    },
-
-    /// [SEARCH] Grep-style symbol search, or raw rg-style text search with --text
-    #[command(
-        alias = "g",
-        about = "Grep-style search: symbol substrings by default, raw text with --text",
-        long_about = "GREP-SHAPED SEARCH
-  cm grep Parser                 case-sensitive symbol substring search
-  cm grep 'parse|index'          OR symbol search
-  cm grep --text 'todo|blocked'  raw rg -n style text search
-  cm grep --text -i todo         case-insensitive raw text search
-
-PIPELINES
-  cm grep Parser | cm inspect -
-  cm grep 'parse|index' | cm callers -
-  cm grep --text 'todo|blocked' ."
-    )]
-    #[command(after_help = "EXAMPLES:
-  cm grep Parser                         # Symbol substring search
-  cm grep 'parse|index' ./src            # OR symbol search in src
-  cm grep --text 'todo|blocked' .        # rg -n style text search
-  cm grep --text -i 'todo|blocked' .     # case-insensitive text search
-  cm grep CodeIndex --show-body          # Show implementation when small enough
-  cm grep Parser | cm inspect -          # Inspect files from results
-  cm grep parse | cm callers -           # Find callers of matched symbols")]
-    Grep {
-        /// Pattern to search for (symbol OR syntax by default, raw regex with --text, '-' reads stdin)
-        #[arg(allow_hyphen_values = true)]
-        pattern: String,
-
-        /// Directory path to search in
-        #[arg(default_value = ".")]
-        path: PathBuf,
-
-        /// Search raw text like rg -n instead of AST-validated symbols
-        #[arg(long, default_value_t = false)]
+        /// Search raw text lines instead of AST-validated symbols
+        #[arg(long, default_value_t = false, conflicts_with = "grep")]
         text: bool,
 
         /// Case-insensitive text search (only applies with --text)
-        #[arg(short = 'i', long, default_value_t = false)]
+        #[arg(short = 'i', long, default_value_t = false, requires = "text")]
         ignore_case: bool,
 
         /// Filter by symbol type: 'function', 'class', 'module', 'method', 'enum', 'static', 'heading', 'code_block', 'endpoint'
@@ -1831,39 +1758,6 @@ fn run_cli() -> Result<()> {
             symbol,
             path,
             grep,
-            r#type,
-            context,
-            show_body,
-            extensions,
-            no_cache,
-            rebuild_cache,
-            full,
-            exports_only,
-            section,
-            limit,
-        } => {
-            cmd_query(
-                symbol,
-                path,
-                context,
-                !grep,
-                grep,
-                show_body,
-                r#type,
-                section,
-                extensions,
-                no_cache,
-                rebuild_cache,
-                !full,
-                exports_only,
-                format,
-                limit,
-                cache_dir,
-            )?;
-        }
-        Commands::Grep {
-            pattern,
-            path,
             text,
             ignore_case,
             r#type,
@@ -1878,14 +1772,14 @@ fn run_cli() -> Result<()> {
             limit,
         } => {
             if text {
-                cmd_grep_text(pattern, path, extensions, ignore_case, limit)?;
+                cmd_query_text(symbol, path, extensions, ignore_case, limit)?;
             } else {
                 cmd_query(
-                    pattern,
+                    symbol,
                     path,
                     context,
-                    false,
-                    true,
+                    !grep,
+                    grep,
                     show_body,
                     r#type,
                     section,
@@ -2479,7 +2373,7 @@ fn cmd_map(options: MapOptions<'_>) -> Result<()> {
     Ok(())
 }
 
-fn cmd_grep_text(
+fn cmd_query_text(
     pattern: String,
     path: PathBuf,
     extensions: String,
@@ -2490,14 +2384,15 @@ fn cmd_grep_text(
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
     let extensions_vec: Vec<String> = ext_list.iter().map(|s| s.to_string()).collect();
     let filter = fast_search::GrepFilter::new(&pattern, !ignore_case, extensions_vec);
+    let output_limit = effective_query_limit(limit);
 
     let mut printed = 0usize;
     for root in pipe::read_path_arg(path)? {
-        let remaining = limit.map(|limit| limit.saturating_sub(printed));
+        let remaining = output_limit.map(|limit| limit.saturating_sub(printed));
         for hit in filter.search_text(&root, remaining)? {
             println!("{}:{}:{}", hit.path.display(), hit.line_number, hit.line);
             printed += 1;
-            if limit.map(|limit| printed >= limit).unwrap_or(false) {
+            if output_limit.map(|limit| printed >= limit).unwrap_or(false) {
                 return Ok(());
             }
         }
@@ -4935,32 +4830,31 @@ mod query_planner_tests {
     }
 
     #[test]
-    fn grep_accepts_flag_shaped_patterns_without_breaking_flags() {
-        let cli = Cli::try_parse_from(["cm", "grep", "--text", "--exact", "README.md"])
-            .expect("grep should accept flag-shaped patterns");
+    fn query_text_accepts_flag_shaped_patterns_without_breaking_flags() {
+        let cli = Cli::try_parse_from(["cm", "query", "--text", "--exact", "README.md"])
+            .expect("query --text should accept flag-shaped patterns");
         match cli.command {
-            Commands::Grep {
-                pattern,
-                path,
-                text,
-                ..
+            Commands::Query {
+                symbol, path, text, ..
             } => {
-                assert_eq!(pattern, "--exact");
+                assert_eq!(symbol, "--exact");
                 assert_eq!(path, PathBuf::from("README.md"));
                 assert!(text);
             }
-            _ => panic!("expected grep command"),
+            _ => panic!("expected query command"),
         }
 
-        let cli = Cli::try_parse_from(["cm", "grep", "--limit", "5", "Parser"])
-            .expect("grep should still parse flags before the pattern");
+        let cli = Cli::try_parse_from(["cm", "query", "--limit", "5", "Parser"])
+            .expect("query should still parse flags before the pattern");
         match cli.command {
-            Commands::Grep { pattern, limit, .. } => {
-                assert_eq!(pattern, "Parser");
+            Commands::Query { symbol, limit, .. } => {
+                assert_eq!(symbol, "Parser");
                 assert_eq!(limit, Some(5));
             }
-            _ => panic!("expected grep command"),
+            _ => panic!("expected query command"),
         }
+
+        assert!(Cli::try_parse_from(["cm", "grep", "Parser"]).is_err());
     }
 
     #[test]

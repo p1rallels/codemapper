@@ -988,3 +988,4 @@ m-e8bf,remove fast flag,delete query --fast flag and stale fast help/docs,closed
 m-e67d,audit after map fast cleanup,cm-led audit pass after map simplification and fast flag removal,closed,0,pi,pi,pi,2026-05-16T20:41:58.400Z,2026-05-16T20:45:28.980Z,,
 m-217a,replace inspect level with heading flags,"remove inspect --level, add markdown --h1..--h6 flags, update docs/tests",closed,0,pi,pi,pi,2026-05-16T23:45:18.397Z,2026-05-16T23:49:51.245Z,,
 m-1985,audit inspect heading flags,run cm-led audit after replacing inspect --level with --h1..--h6,closed,0,pi,pi,pi,2026-05-16T23:55:05.265Z,2026-05-16T23:58:12.827Z,,
+m-c90a,remove cm grep command,"delete top-level grep command, docs/tests/help, and route raw text search through query",closed,0,pi,pi,pi,2026-05-17T01:52:52.689Z,2026-05-17T01:57:43.875Z,,
