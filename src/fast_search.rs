@@ -1,23 +1,14 @@
-use ::ignore::WalkBuilder;
 use anyhow::{Context, Result};
 use grep::regex::RegexMatcher;
 use grep::searcher::{BinaryDetection, Searcher, SearcherBuilder, Sink, SinkMatch};
 use rayon::prelude::*;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use crate::ignore;
-use crate::indexer::{detect_language, index_file, matches_extension_filter};
+use crate::indexer::{detect_language, index_file};
 use crate::models::Symbol;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TextMatch {
-    pub path: PathBuf,
-    pub line_number: u64,
-    pub line: String,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PrefilterStopReason {
@@ -37,19 +28,12 @@ pub struct PrefilterResult {
 pub struct GrepFilter {
     pattern: String,
     case_sensitive: bool,
-    extensions: Vec<String>,
 }
 
 /// Collects file paths that match the grep pattern
 struct CandidateCollector {
     files: Vec<PathBuf>,
     current_path: Option<PathBuf>,
-}
-
-struct TextMatchCollector {
-    matches: Vec<TextMatch>,
-    current_path: Option<PathBuf>,
-    limit: Option<usize>,
 }
 
 impl CandidateCollector {
@@ -78,48 +62,6 @@ impl Sink for CandidateCollector {
     }
 }
 
-impl TextMatchCollector {
-    fn new(limit: Option<usize>) -> Self {
-        Self {
-            matches: Vec::new(),
-            current_path: None,
-            limit,
-        }
-    }
-
-    fn set_path(&mut self, path: PathBuf) {
-        self.current_path = Some(path);
-    }
-
-    fn is_done(&self) -> bool {
-        self.limit
-            .map(|limit| self.matches.len() >= limit)
-            .unwrap_or(false)
-    }
-}
-
-impl Sink for TextMatchCollector {
-    type Error = std::io::Error;
-
-    fn matched(&mut self, _searcher: &Searcher, mat: &SinkMatch) -> Result<bool, Self::Error> {
-        if self.is_done() {
-            return Ok(false);
-        }
-
-        if let Some(path) = self.current_path.clone() {
-            self.matches.push(TextMatch {
-                path,
-                line_number: mat.line_number().unwrap_or(0),
-                line: String::from_utf8_lossy(mat.bytes())
-                    .trim_end_matches(&['\r', '\n'][..])
-                    .to_string(),
-            });
-        }
-
-        Ok(!self.is_done())
-    }
-}
-
 fn prefilter_chunk_size() -> usize {
     (rayon::current_num_threads() * 8).clamp(32, 256)
 }
@@ -132,11 +74,10 @@ fn deadline_expired(deadline: Option<Instant>) -> bool {
 
 impl GrepFilter {
     /// Create a new GrepFilter
-    pub fn new(pattern: &str, case_sensitive: bool, extensions: Vec<String>) -> Self {
+    pub fn new(pattern: &str, case_sensitive: bool) -> Self {
         Self {
             pattern: pattern.to_string(),
             case_sensitive,
-            extensions,
         }
     }
 
@@ -249,69 +190,6 @@ impl GrepFilter {
         }
     }
 
-    /// Check if file extension matches our filter
-    fn matches_extension(&self, path: &Path) -> bool {
-        matches_extension_filter(path, &self.extensions)
-    }
-
-    pub fn search_text(&self, root: &Path, limit: Option<usize>) -> Result<Vec<TextMatch>> {
-        let pattern = if self.case_sensitive {
-            self.pattern.clone()
-        } else {
-            format!("(?i){}", self.pattern)
-        };
-        let matcher = RegexMatcher::new(&pattern).context("Failed to create regex matcher")?;
-        let mut collector = TextMatchCollector::new(limit);
-        let mut searcher = SearcherBuilder::new()
-            .binary_detection(BinaryDetection::quit(b'\x00'))
-            .line_number(true)
-            .build();
-
-        if root.is_file() {
-            if self.matches_extension(root) {
-                collector.set_path(root.to_path_buf());
-                let _ = searcher.search_path(&matcher, root, &mut collector);
-            }
-            return Ok(collector.matches);
-        }
-
-        let walker = WalkBuilder::new(root)
-            .hidden(false)
-            .git_ignore(true)
-            .git_global(false)
-            .git_exclude(false)
-            .filter_entry(|e| {
-                if e.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
-                    let name = e.file_name().to_string_lossy();
-                    !ignore::is_ignored_dir(&name)
-                } else {
-                    true
-                }
-            })
-            .build();
-
-        for entry in walker {
-            if collector.is_done() {
-                break;
-            }
-
-            let entry = entry.context("Failed to read directory entry")?;
-            if !entry.file_type().map(|ft| ft.is_file()).unwrap_or(false) {
-                continue;
-            }
-
-            let path = entry.path();
-            if !self.matches_extension(path) {
-                continue;
-            }
-
-            collector.set_path(path.to_path_buf());
-            let _ = searcher.search_path(&matcher, path, &mut collector);
-        }
-
-        Ok(collector.matches)
-    }
-
     /// Stage 2: AST validation of candidate files
     /// Parse only candidate files and extract matching symbols
     pub fn validate(
@@ -369,27 +247,9 @@ mod tests {
 
     #[test]
     fn test_grep_filter_creation() {
-        let filter = GrepFilter::new("test", true, vec!["rs".to_string()]);
+        let filter = GrepFilter::new("test", true);
         assert_eq!(filter.pattern, "test");
         assert!(filter.case_sensitive);
-        assert_eq!(filter.extensions.len(), 1);
-    }
-
-    #[test]
-    fn test_matches_extension() {
-        let filter = GrepFilter::new("test", true, vec!["rs".to_string(), "py".to_string()]);
-
-        let path_rs = Path::new("test.rs");
-        let path_py = Path::new("test.py");
-        let path_js = Path::new("test.js");
-        let path_gemfile = Path::new("Gemfile");
-
-        assert!(filter.matches_extension(path_rs));
-        assert!(filter.matches_extension(path_py));
-        assert!(!filter.matches_extension(path_js));
-
-        let ruby_filter = GrepFilter::new("test", true, vec!["gemfile".to_string()]);
-        assert!(ruby_filter.matches_extension(path_gemfile));
     }
 
     #[test]
@@ -398,7 +258,7 @@ mod tests {
         fs::write(temp.path().join("first.rs"), "fn Needle() {}\n").unwrap();
         fs::write(temp.path().join("second.rs"), "fn Needle() {}\n").unwrap();
 
-        let filter = GrepFilter::new("Needle", true, vec!["rs".to_string()]);
+        let filter = GrepFilter::new("Needle", true);
         let paths = vec![temp.path().join("first.rs"), temp.path().join("second.rs")];
         let result = filter
             .prefilter_paths_with_budget(&paths, Some(1), None)
@@ -413,7 +273,7 @@ mod tests {
         fs::write(temp.path().join("first.rs"), "fn Needle() {}\n").unwrap();
         fs::write(temp.path().join("second.rs"), "fn Needle() {}\n").unwrap();
 
-        let filter = GrepFilter::new("Needle", true, vec!["rs".to_string()]);
+        let filter = GrepFilter::new("Needle", true);
         let paths = vec![temp.path().join("first.rs"), temp.path().join("second.rs")];
         let result = filter
             .prefilter_paths_with_budget(&paths, Some(1), None)
@@ -428,7 +288,7 @@ mod tests {
         let temp = tempfile::TempDir::new().unwrap();
         fs::write(temp.path().join("first.rs"), "fn Needle() {}\n").unwrap();
 
-        let filter = GrepFilter::new("Needle", true, vec!["rs".to_string()]);
+        let filter = GrepFilter::new("Needle", true);
         let paths = vec![temp.path().join("first.rs")];
         let result = filter
             .prefilter_paths_with_budget(&paths, Some(1), Some(Duration::from_millis(0)))
@@ -439,42 +299,10 @@ mod tests {
     }
 
     #[test]
-    fn test_symbol_matches_exact_mode_uses_case_sensitive_substrings() {
-        let filter = GrepFilter::new("Parser", true, vec!["rs".to_string()]);
+    fn test_symbol_matches_case_sensitive_substrings() {
+        let filter = GrepFilter::new("Parser", true);
 
         assert!(filter.symbol_matches("RustParser", "Parser", false));
         assert!(!filter.symbol_matches("rustparser", "Parser", false));
-    }
-
-    #[test]
-    fn test_search_text_returns_rg_style_lines() {
-        let temp = tempfile::TempDir::new().unwrap();
-        let first = temp.path().join("first.rs");
-        let second = temp.path().join("second.rs");
-        fs::write(&first, "fn main() {}\n// todo: fix\n").unwrap();
-        fs::write(&second, "// future work\nfn done() {}\n").unwrap();
-
-        let filter = GrepFilter::new("todo|future", true, vec!["rs".to_string()]);
-        let matches = filter.search_text(temp.path(), None).unwrap();
-
-        assert_eq!(matches.len(), 2);
-        assert!(matches
-            .iter()
-            .any(|m| m.path == first && m.line_number == 2 && m.line == "// todo: fix"));
-        assert!(matches
-            .iter()
-            .any(|m| m.path == second && m.line_number == 1 && m.line == "// future work"));
-    }
-
-    #[test]
-    fn test_search_text_respects_limit() {
-        let temp = tempfile::TempDir::new().unwrap();
-        let path = temp.path().join("test.rs");
-        fs::write(&path, "// todo one\n// todo two\n").unwrap();
-
-        let filter = GrepFilter::new("todo", true, vec!["rs".to_string()]);
-        let matches = filter.search_text(temp.path(), Some(1)).unwrap();
-
-        assert_eq!(matches.len(), 1);
     }
 }

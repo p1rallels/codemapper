@@ -7,7 +7,6 @@ use std::path::{Path, PathBuf};
 pub fn cmd_impact(
     symbol: String,
     path: PathBuf,
-    exact: bool,
     include_docs: bool,
     limit: Option<usize>,
     all: bool,
@@ -24,11 +23,7 @@ pub fn cmd_impact(
     let original_symbol = symbol;
     let symbol = normalize_qualified_name(&original_symbol);
 
-    let raw_matches = if exact {
-        index.query_symbol(&symbol)
-    } else {
-        index.fuzzy_search(&symbol)
-    };
+    let raw_matches = index.fuzzy_search(&symbol);
 
     let matches: Vec<_> = raw_matches
         .into_iter()
@@ -58,8 +53,8 @@ pub fn cmd_impact(
 
     let formatter = OutputFormatter::new(format);
 
-    let mut callers = callgraph::find_callers(&index, &original_symbol, !exact)?;
-    let mut tests = callgraph::find_tests(&index, &original_symbol, !exact)?;
+    let mut callers = callgraph::find_callers(&index, &original_symbol, true)?;
+    let mut tests = callgraph::find_tests(&index, &original_symbol, true)?;
 
     // reduce self/noise by default: drop entries where caller == target
     callers.retain(|c| c.caller_name != target.name);
@@ -74,7 +69,7 @@ pub fn cmd_impact(
 
     let mut out = String::new();
 
-    if !exact && matches.len() > 1 {
+    if matches.len() > 1 {
         out.push_str(&format!("[MATCHES:{}]\n", matches.len()));
         for (i, s) in matches.iter().take(5).enumerate() {
             out.push_str(&format!(

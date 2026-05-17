@@ -202,10 +202,10 @@ CACHING:
   Flags: --no-cache (skip), --rebuild-cache (force rebuild)
 
 SEARCH MODES:
-  Fuzzy   → cm query myclass          (DEFAULT: case-insensitive, flexible)
-  Symbol  → cm query MyClass --grep   (case-sensitive symbol substring search)
-  Text    → cm query --text 'TODO'    (bounded raw text line search)
+  Symbols → cm query myclass          (DEFAULT: case-insensitive, flexible)
+  Types   → cm query functions        (broad symbol-type search)
   Multi   → cm query 'foo|bar|baz'    (OR search, matches any term)
+  Text    → use grep/rg for raw variables, TODO, FIXME, and HACK
 
 LANGUAGES SUPPORTED:
   ✓ Python       → Functions, classes, methods, imports
@@ -230,8 +230,6 @@ GIT REQUIREMENTS:
 
 COMMON FLAGS
 
---grep               → Case-sensitive symbol substring matching (default query mode is fuzzy)
---text               → Raw text line search through query
 --format <format>    → Output style: ai (default), human (tables), default (markdown)
 --show-body          → Include actual code (not just signatures)
 --exports-only       → Public symbols only (functions with export, pub, etc.)
@@ -466,14 +464,12 @@ TYPICAL WORKFLOW:
         rebuild_cache: bool,
     },
 
-    /// [SEARCH] Find symbols or bounded raw text - the main workhorse for code exploration
+    /// [SEARCH] Find symbols - the main workhorse for code exploration
     #[command(
-        about = "Search code quickly; fuzzy symbols by default, raw text with --text",
-        long_about = "SEARCH CODE
+        about = "Search symbols quickly; fuzzy by default",
+        long_about = "SEARCH SYMBOLS
   cm query auth              fuzzy symbol search (default)
   cm query Parser            finds parser-ish symbols, first 50 results by default
-  cm query Parser --grep     case-sensitive symbol substring search
-  cm query --text 'TODO'     bounded raw text line search
   cm query 'parse|index'     OR search
   cm query Parser | cm inspect -
 
@@ -485,38 +481,25 @@ OUTPUT
 
 PERFORMANCE
   just run the query. cm auto-selects text prefilter, bounded first-page search, or cache/full index.
-  use --no-cache only for troubleshooting, --rebuild-cache only when you intentionally want a fresh cache."
+  use --no-cache only for troubleshooting, --rebuild-cache only when you intentionally want a fresh cache.
+
+TEXT SEARCH
+  use grep/rg for raw variables, TODO, FIXME, HACK, and literal strings."
     )]
     #[command(after_help = "EXAMPLES:
   cm query auth
   cm query Parser ./src
-  cm query Parser --grep
-  cm query --text 'TODO|FIXME' .
-  cm query --text -i todo .
   cm query 'parse|index|cache'
   cm query CodeIndex --show-body
   cm query Parser --limit 0
   cm query Parser | cm inspect -")]
     Query {
-        /// Symbol or text to search for (supports 'foo|bar|baz' OR syntax, '-' reads stdin)
-        #[arg(allow_hyphen_values = true)]
+        /// Symbol name to search for (supports 'foo|bar|baz' OR syntax, '-' reads stdin)
         symbol: String,
 
         /// Directory path to search in
         #[arg(default_value = ".")]
         path: PathBuf,
-
-        /// Case-sensitive symbol substring search
-        #[arg(long = "grep", default_value_t = false, conflicts_with = "text")]
-        grep: bool,
-
-        /// Search raw text lines instead of AST-validated symbols
-        #[arg(long, default_value_t = false, conflicts_with = "grep")]
-        text: bool,
-
-        /// Case-insensitive text search (only applies with --text)
-        #[arg(short = 'i', long, default_value_t = false, requires = "text")]
-        ignore_case: bool,
 
         /// Filter by symbol type: 'function', 'class', 'module', 'method', 'enum', 'static', 'heading', 'code_block', 'endpoint'
         #[arg(long)]
@@ -1221,7 +1204,7 @@ TIP: Run this after changing a function signature"
     )]
     #[command(after_help = "EXAMPLES:
   cm impact symbols_by_type               # quick: counts + top callsites/tests
-  cm impact parse_file ./src --grep       # restrict scope + symbol substring match
+  cm impact parse_file ./src              # restrict scope
   cm impact auth . --format ai            # token-efficient output
   cm impact output --include-docs         # allow matching headings/code blocks
   cm impact big_function --all            # print full lists (no truncation)")]
@@ -1232,10 +1215,6 @@ TIP: Run this after changing a function signature"
         /// Directory path to search in
         #[arg(default_value = ".")]
         path: PathBuf,
-
-        /// Use grep-style symbol substring matching (default is fuzzy)
-        #[arg(long = "grep", default_value_t = false)]
-        grep: bool,
 
         /// Include markdown headings/code blocks as candidates (default: code symbols only)
         #[arg(long, default_value_t = false)]
@@ -1757,9 +1736,6 @@ fn run_cli() -> Result<()> {
         Commands::Query {
             symbol,
             path,
-            grep,
-            text,
-            ignore_case,
             r#type,
             context,
             show_body,
@@ -1771,28 +1747,22 @@ fn run_cli() -> Result<()> {
             section,
             limit,
         } => {
-            if text {
-                cmd_query_text(symbol, path, extensions, ignore_case, limit)?;
-            } else {
-                cmd_query(
-                    symbol,
-                    path,
-                    context,
-                    !grep,
-                    grep,
-                    show_body,
-                    r#type,
-                    section,
-                    extensions,
-                    no_cache,
-                    rebuild_cache,
-                    !full,
-                    exports_only,
-                    format,
-                    limit,
-                    cache_dir,
-                )?;
-            }
+            cmd_query(
+                symbol,
+                path,
+                context,
+                show_body,
+                r#type,
+                section,
+                extensions,
+                no_cache,
+                rebuild_cache,
+                !full,
+                exports_only,
+                format,
+                limit,
+                cache_dir,
+            )?;
         }
         Commands::Inspect {
             file_path,
@@ -1957,7 +1927,6 @@ fn run_cli() -> Result<()> {
         Commands::Impact {
             symbol,
             path,
-            grep,
             include_docs,
             limit,
             all,
@@ -1968,7 +1937,6 @@ fn run_cli() -> Result<()> {
             impact::cmd_impact(
                 symbol,
                 path,
-                grep,
                 include_docs,
                 limit,
                 all,
@@ -2373,40 +2341,10 @@ fn cmd_map(options: MapOptions<'_>) -> Result<()> {
     Ok(())
 }
 
-fn cmd_query_text(
-    pattern: String,
-    path: PathBuf,
-    extensions: String,
-    ignore_case: bool,
-    limit: Option<usize>,
-) -> Result<()> {
-    let pattern = pipe::read_symbol_arg(pattern)?;
-    let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
-    let extensions_vec: Vec<String> = ext_list.iter().map(|s| s.to_string()).collect();
-    let filter = fast_search::GrepFilter::new(&pattern, !ignore_case, extensions_vec);
-    let output_limit = effective_query_limit(limit);
-
-    let mut printed = 0usize;
-    for root in pipe::read_path_arg(path)? {
-        let remaining = output_limit.map(|limit| limit.saturating_sub(printed));
-        for hit in filter.search_text(&root, remaining)? {
-            println!("{}:{}:{}", hit.path.display(), hit.line_number, hit.line);
-            printed += 1;
-            if output_limit.map(|limit| printed >= limit).unwrap_or(false) {
-                return Ok(());
-            }
-        }
-    }
-
-    Ok(())
-}
-
 fn cmd_query(
     symbol: String,
     path: PathBuf,
     context: String,
-    fuzzy: bool,
-    grep_mode: bool,
     show_body: bool,
     symbol_type_filter: Option<String>,
     section: Option<String>,
@@ -2490,26 +2428,17 @@ fn cmd_query(
     let corpus = inspect_indexable_corpus(&path, &ext_list)?;
     let output_limit = effective_query_limit(limit);
     let force_normal_mode = std::env::var_os("CM_FORCE_NORMAL").is_some();
-    let use_prefilter = !force_normal_mode && !search_all && should_prefilter(grep_mode, &corpus);
+    let use_prefilter = !force_normal_mode && !search_all && should_prefilter(&corpus);
 
     if use_prefilter {
-        if grep_mode {
-            planner_eprintln!(
-                "{} Grep mode enabled ({} files)",
-                "→".cyan(),
-                corpus.file_count
-            );
-        } else {
-            planner_eprintln!(
-                "{} Text prefilter auto-enabled ({} files, {:.1} MB)",
-                "→".cyan(),
-                corpus.file_count,
-                corpus.total_bytes as f64 / 1_048_576.0
-            );
-        }
+        planner_eprintln!(
+            "{} Text prefilter auto-enabled ({} files, {:.1} MB)",
+            "→".cyan(),
+            corpus.file_count,
+            corpus.total_bytes as f64 / 1_048_576.0
+        );
 
-        let extensions_vec: Vec<String> = ext_list.iter().map(|s| s.to_string()).collect();
-        let filter = GrepFilter::new(&symbol, !fuzzy, extensions_vec);
+        let filter = GrepFilter::new(&symbol, false);
         let cache_available = !no_cache
             && !rebuild_cache
             && cache::CacheManager::exists(&path, &ext_list, cache_dir).unwrap_or(false);
@@ -2536,7 +2465,7 @@ fn cmd_query(
                 candidate_count
             );
 
-            let mut owned_symbols = filter.validate(prefilter.candidates, &symbol, fuzzy)?;
+            let mut owned_symbols = filter.validate(prefilter.candidates, &symbol, true)?;
 
             if let Some(ref filter_type) = type_filter {
                 owned_symbols.retain(|s| s.symbol_type == *filter_type);
@@ -2578,7 +2507,7 @@ fn cmd_query(
                 }
             }
 
-            if should_rank_query_results(search_all, grep_mode) {
+            if should_rank_query_results(search_all) {
                 rank_owned_symbols(&mut owned_symbols);
             }
 
@@ -2623,7 +2552,7 @@ fn cmd_query(
                 );
 
                 let mut owned_symbols =
-                    filter.validate(prefilter.candidates.clone(), &symbol, fuzzy)?;
+                    filter.validate(prefilter.candidates.clone(), &symbol, true)?;
 
                 if let Some(ref filter_type) = type_filter {
                     owned_symbols.retain(|s| s.symbol_type == *filter_type);
@@ -2652,7 +2581,7 @@ fn cmd_query(
                     }
                 }
 
-                if should_rank_query_results(search_all, grep_mode) {
+                if should_rank_query_results(search_all) {
                     rank_owned_symbols(&mut owned_symbols);
                 }
 
@@ -2708,7 +2637,7 @@ fn cmd_query(
         }
 
         let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
-        let mut symbols = search_index_symbols(&index, &symbol, search_all, fuzzy, grep_mode);
+        let mut symbols = search_index_symbols(&index, &symbol, search_all);
 
         if let Some(ref filter_type) = type_filter {
             symbols.retain(|s| s.symbol_type == *filter_type);
@@ -2747,7 +2676,7 @@ fn cmd_query(
             }
         }
 
-        if should_rank_query_results(search_all, grep_mode) {
+        if should_rank_query_results(search_all) {
             rank_symbol_refs(&mut symbols);
         }
 
@@ -2771,7 +2700,7 @@ fn cmd_query(
     } else {
         // Normal mode for small codebases with cache
         let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
-        let mut symbols = search_index_symbols(&index, &symbol, search_all, fuzzy, grep_mode);
+        let mut symbols = search_index_symbols(&index, &symbol, search_all);
 
         // Apply type filter if specified
         if let Some(ref filter_type) = type_filter {
@@ -2815,7 +2744,7 @@ fn cmd_query(
             }
         }
 
-        if should_rank_query_results(search_all, grep_mode) {
+        if should_rank_query_results(search_all) {
             rank_symbol_refs(&mut symbols);
         }
 
@@ -2862,32 +2791,12 @@ fn search_index_symbols<'a>(
     index: &'a index::CodeIndex,
     symbol: &str,
     search_all: bool,
-    fuzzy: bool,
-    grep_mode: bool,
 ) -> Vec<&'a Symbol> {
     if search_all {
         index.all_symbols()
-    } else if grep_mode {
-        index
-            .all_symbols()
-            .into_iter()
-            .filter(|candidate| symbol_name_matches_grep(&candidate.name, symbol))
-            .collect()
-    } else if fuzzy {
-        index.fuzzy_search(symbol)
     } else {
-        index.query_symbol(symbol)
+        index.fuzzy_search(symbol)
     }
-}
-
-fn symbol_name_matches_grep(name: &str, query: &str) -> bool {
-    let terms: Vec<&str> = query
-        .split('|')
-        .map(str::trim)
-        .filter(|term| !term.is_empty())
-        .collect();
-    let terms = if terms.is_empty() { vec![query] } else { terms };
-    terms.iter().any(|term| name.contains(*term))
 }
 
 fn rank_symbol_refs(symbols: &mut [&Symbol]) {
@@ -2898,8 +2807,8 @@ fn rank_owned_symbols(symbols: &mut [Symbol]) {
     symbols.sort_by_key(symbol_rank_key);
 }
 
-fn should_rank_query_results(search_all: bool, grep_mode: bool) -> bool {
-    search_all || grep_mode
+fn should_rank_query_results(search_all: bool) -> bool {
+    search_all
 }
 
 fn symbol_rank_key(symbol: &Symbol) -> (u8, String, usize, String) {
@@ -2942,9 +2851,8 @@ fn inspect_indexable_corpus(path: &Path, extensions: &[&str]) -> Result<SearchCo
     Ok(stats)
 }
 
-fn should_prefilter(grep_mode: bool, corpus: &SearchCorpusStats) -> bool {
-    grep_mode
-        || corpus.file_count >= FAST_MODE_MIN_FILES
+fn should_prefilter(corpus: &SearchCorpusStats) -> bool {
+    corpus.file_count >= FAST_MODE_MIN_FILES
         || corpus.total_bytes >= FAST_MODE_MIN_TOTAL_BYTES
         || corpus.max_file_bytes >= FAST_MODE_MIN_FILE_BYTES
 }
@@ -4601,42 +4509,30 @@ mod query_planner_tests {
 
     #[test]
     fn prefilter_uses_file_count_and_corpus_weight() {
-        assert!(should_prefilter(
-            false,
-            &SearchCorpusStats {
-                file_count: FAST_MODE_MIN_FILES,
-                total_bytes: 1,
-                max_file_bytes: 1,
-                files: Vec::new(),
-            },
-        ));
-        assert!(should_prefilter(
-            false,
-            &SearchCorpusStats {
-                file_count: 1,
-                total_bytes: FAST_MODE_MIN_TOTAL_BYTES,
-                max_file_bytes: 1,
-                files: Vec::new(),
-            },
-        ));
-        assert!(should_prefilter(
-            true,
-            &SearchCorpusStats {
-                file_count: 10,
-                total_bytes: 1024,
-                max_file_bytes: 512,
-                files: Vec::new(),
-            },
-        ));
-        assert!(!should_prefilter(
-            false,
-            &SearchCorpusStats {
-                file_count: 10,
-                total_bytes: 1024,
-                max_file_bytes: 512,
-                files: Vec::new(),
-            },
-        ));
+        assert!(should_prefilter(&SearchCorpusStats {
+            file_count: FAST_MODE_MIN_FILES,
+            total_bytes: 1,
+            max_file_bytes: 1,
+            files: Vec::new(),
+        }));
+        assert!(should_prefilter(&SearchCorpusStats {
+            file_count: 1,
+            total_bytes: FAST_MODE_MIN_TOTAL_BYTES,
+            max_file_bytes: 1,
+            files: Vec::new(),
+        }));
+        assert!(should_prefilter(&SearchCorpusStats {
+            file_count: 10,
+            total_bytes: 1024,
+            max_file_bytes: FAST_MODE_MIN_FILE_BYTES,
+            files: Vec::new(),
+        }));
+        assert!(!should_prefilter(&SearchCorpusStats {
+            file_count: 10,
+            total_bytes: 1024,
+            max_file_bytes: 512,
+            files: Vec::new(),
+        }));
     }
 
     #[test]
@@ -4791,17 +4687,9 @@ mod query_planner_tests {
     }
 
     #[test]
-    fn grep_symbol_matching_uses_case_sensitive_substrings() {
-        assert!(symbol_name_matches_grep("RustParser", "Parser"));
-        assert!(symbol_name_matches_grep("RustParser", "Parser|Indexer"));
-        assert!(!symbol_name_matches_grep("rustparser", "Parser"));
-    }
-
-    #[test]
-    fn ranking_is_limited_to_broad_or_grep_queries() {
-        assert!(should_rank_query_results(true, false));
-        assert!(should_rank_query_results(false, true));
-        assert!(!should_rank_query_results(false, false));
+    fn ranking_is_limited_to_broad_type_queries() {
+        assert!(should_rank_query_results(true));
+        assert!(!should_rank_query_results(false));
     }
 
     #[test]
@@ -4830,22 +4718,9 @@ mod query_planner_tests {
     }
 
     #[test]
-    fn query_text_accepts_flag_shaped_patterns_without_breaking_flags() {
-        let cli = Cli::try_parse_from(["cm", "query", "--text", "--exact", "README.md"])
-            .expect("query --text should accept flag-shaped patterns");
-        match cli.command {
-            Commands::Query {
-                symbol, path, text, ..
-            } => {
-                assert_eq!(symbol, "--exact");
-                assert_eq!(path, PathBuf::from("README.md"));
-                assert!(text);
-            }
-            _ => panic!("expected query command"),
-        }
-
+    fn text_and_grep_search_flags_are_removed() {
         let cli = Cli::try_parse_from(["cm", "query", "--limit", "5", "Parser"])
-            .expect("query should still parse flags before the pattern");
+            .expect("query should parse normal flags before the symbol");
         match cli.command {
             Commands::Query { symbol, limit, .. } => {
                 assert_eq!(symbol, "Parser");
@@ -4854,6 +4729,10 @@ mod query_planner_tests {
             _ => panic!("expected query command"),
         }
 
+        assert!(Cli::try_parse_from(["cm", "query", "Parser", "--grep"]).is_err());
+        assert!(Cli::try_parse_from(["cm", "query", "--text", "Parser"]).is_err());
+        assert!(Cli::try_parse_from(["cm", "query", "-i", "Parser"]).is_err());
+        assert!(Cli::try_parse_from(["cm", "impact", "Parser", "--grep"]).is_err());
         assert!(Cli::try_parse_from(["cm", "grep", "Parser"]).is_err());
         assert!(Cli::try_parse_from(["cm", "g", "Parser"]).is_err());
     }

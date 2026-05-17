@@ -34,7 +34,7 @@ For large codebases, CodeMapper automatically plans fast searches with a ripgrep
 - **Tree-sitter Parsing**: Accurate AST-based symbol extraction
 - **Multi-language**: Python, JavaScript, TypeScript, Rust, Java, Go, C, Swift, Ruby, Markdown
 - **Parallel Processing**: Uses rayon for concurrent file parsing
-- **Fuzzy Search**: Case-insensitive matching by default; use `cm query --grep` for symbol substrings or `cm query --text` for raw text
+- **Fuzzy Search**: Case-insensitive symbol matching by default; use grep/rg for raw variables, TODO, FIXME, HACK, and literal strings
 - **Call Graph Analysis**: callers, callees, trace, tests, entrypoints
 - **Git Integration**: diff, since, blame, history commands
 - **Type Analysis**: types, implements, schema commands
@@ -141,12 +141,8 @@ Fuzzy matching is **enabled by default** for more forgiving searches:
 # Default: fuzzy/case-insensitive
 cm query auth                    # Matches authenticate, Authorization, etc.
 
-# Symbol substring search
-cm query Parser --grep           # Case-sensitive symbol search
-
-# Raw text search
-cm query --text 'TODO|FIXME' .   # Bounded rg -n style line output
-cm query --text -i todo .        # Case-insensitive raw text search
+# Raw text search belongs to grep/rg
+rg 'TODO|FIXME' .                # Variables, literals, TODO, FIXME, HACK
 ```
 
 ## 📊 Output Formats
@@ -282,8 +278,6 @@ The indexer automatically skips:
 ## 🛠️ Common Flags
 
 ```
---grep               Case-sensitive symbol substring search
---text               Raw text line search through query
 --limit 0            Return all results (query default is 50 results; map defaults to 100 lines)
 --format <format>    Output: ai (default), human (tables), default (markdown)
 --show-body          Include actual code (not just signatures)
