@@ -489,6 +489,7 @@ TEXT SEARCH
     #[command(after_help = "EXAMPLES:
   cm query auth
   cm query Parser ./src
+  cm query Parser ./src/parser/mod.rs
   cm query 'parse|index|cache'
   cm query CodeIndex --show-body
   cm query Parser --limit 0
@@ -497,7 +498,7 @@ TEXT SEARCH
         /// Symbol name to search for (supports 'foo|bar|baz' OR syntax, '-' reads stdin)
         symbol: String,
 
-        /// Directory path to search in
+        /// Directory or file path to search in
         #[arg(default_value = ".")]
         path: PathBuf,
 
@@ -2081,6 +2082,19 @@ fn try_load_or_rebuild(
     cache_dir: Option<&Path>,
 ) -> Result<index::CodeIndex> {
     use cache::CacheManager;
+
+    if path.is_file() {
+        let start = Instant::now();
+        let index = indexer::index_directory(path, extensions)?;
+        let elapsed_ms = start.elapsed().as_millis();
+        eprintln!(
+            "{} Indexed ({} file, {}ms)",
+            "✓".green(),
+            index.total_files().to_string().bold(),
+            elapsed_ms
+        );
+        return Ok(index);
+    }
 
     // Skip cache if flags set
     if no_cache || rebuild_cache {
@@ -4724,6 +4738,16 @@ mod query_planner_tests {
 
         assert_eq!(symbols.len(), 1);
         assert_eq!(symbols[0].name, "Root > 🗺️ Project Maps");
+    }
+
+    #[test]
+    fn query_accepts_file_scope() {
+        let cli = Cli::try_parse_from(["cm", "query", "cmd_query", "src/main.rs"])
+            .expect("query should accept a file path scope");
+        match cli.command {
+            Commands::Query { path, .. } => assert_eq!(path, PathBuf::from("src/main.rs")),
+            _ => panic!("expected query command"),
+        }
     }
 
     #[test]

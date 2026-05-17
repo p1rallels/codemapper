@@ -93,6 +93,75 @@ impl RustParser {
         false
     }
 
+    fn process_modules(
+        &self,
+        tree_root: Node,
+        source: &str,
+        file_path: &Path,
+    ) -> Result<Vec<Symbol>> {
+        let mut symbols = Vec::new();
+
+        let language = tree_sitter_rust::LANGUAGE.into();
+        let query = Query::new(
+            &language,
+            r#"
+            (mod_item
+                name: (identifier) @module.name) @module.def
+            "#,
+        )
+        .context("Failed to create Rust module query")?;
+
+        let mut cursor = QueryCursor::new();
+        let mut matches = cursor.matches(&query, tree_root, source.as_bytes());
+
+        while let Some(match_) = matches.next() {
+            let captures = match_.captures;
+
+            let mut module_name = None;
+            let mut module_node = None;
+
+            for capture in captures {
+                let capture_name = query
+                    .capture_names()
+                    .get(capture.index as usize)
+                    .map(|s| s.as_ref());
+
+                match capture_name {
+                    Some("module.name") => {
+                        module_name = capture
+                            .node
+                            .utf8_text(source.as_bytes())
+                            .ok()
+                            .map(|s| s.to_string());
+                    }
+                    Some("module.def") => {
+                        module_node = Some(capture.node);
+                    }
+                    _ => {}
+                }
+            }
+
+            if let (Some(name), Some(node)) = (module_name, module_node) {
+                let line_start = node.start_position().row + 1;
+                let line_end = node.end_position().row + 1;
+
+                symbols.push(Symbol {
+                    name,
+                    symbol_type: SymbolType::Module,
+                    signature: self.extract_text(node, source),
+                    docstring: self.extract_docstring(node, source),
+                    line_start,
+                    line_end,
+                    parent_id: None,
+                    file_path: file_path.to_path_buf(),
+                    is_exported: has_pub_visibility(node, source),
+                });
+            }
+        }
+
+        Ok(symbols)
+    }
+
     fn process_structs(
         &self,
         tree_root: Node,
@@ -603,6 +672,9 @@ impl ParserTrait for RustParser {
         let root = tree.root_node();
         let mut result = ParseResult::new();
 
+        let modules = self.process_modules(root, content, file_path)?;
+        result.symbols.extend(modules);
+
         let structs = self.process_structs(root, content, file_path)?;
         result.symbols.extend(structs);
 
@@ -626,6 +698,29 @@ impl ParserTrait for RustParser {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_parse_modules() -> Result<()> {
+        let parser = RustParser::new()?;
+        let source = r#"
+mod private_module;
+pub mod public_module;
+"#;
+        let result = parser.parse(source, Path::new("main.rs"))?;
+        let modules: Vec<_> = result
+            .symbols
+            .iter()
+            .filter(|symbol| symbol.symbol_type == SymbolType::Module)
+            .collect();
+
+        assert_eq!(modules.len(), 2);
+        assert_eq!(modules[0].name, "private_module");
+        assert_eq!(modules[0].signature.as_deref(), Some("mod private_module;"));
+        assert!(!modules[0].is_exported);
+        assert_eq!(modules[1].name, "public_module");
+        assert!(modules[1].is_exported);
+        Ok(())
+    }
 
     #[test]
     fn test_parse_simple_function() -> Result<()> {

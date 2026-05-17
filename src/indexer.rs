@@ -159,6 +159,22 @@ pub fn index_file(
 }
 
 pub fn discover_indexable_files(path: &Path, extensions: &[&str]) -> Result<Vec<PathBuf>> {
+    if !path.exists() {
+        anyhow::bail!("Path does not exist: {}", path.display());
+    }
+
+    if path.is_file() {
+        if matches_extension_filter(path, extensions) && detect_language(path) != Language::Unknown
+        {
+            return Ok(vec![path.to_path_buf()]);
+        }
+        return Ok(Vec::new());
+    }
+
+    if !path.is_dir() {
+        anyhow::bail!("Path is not a file or directory: {}", path.display());
+    }
+
     let walker = WalkBuilder::new(path)
         .hidden(false)
         .git_ignore(true)
@@ -193,11 +209,11 @@ pub fn index_directory_with_progress(
     progress: Option<ProgressBar>,
 ) -> Result<CodeIndex> {
     if !path.exists() {
-        anyhow::bail!("Directory does not exist: {}", path.display());
+        anyhow::bail!("Path does not exist: {}", path.display());
     }
 
-    if !path.is_dir() {
-        anyhow::bail!("Path is not a directory: {}", path.display());
+    if !path.is_file() && !path.is_dir() {
+        anyhow::bail!("Path is not a file or directory: {}", path.display());
     }
 
     let entries = discover_indexable_files(path, extensions)?;
@@ -285,6 +301,20 @@ mod tests {
         assert!(matches_extension_filter(Path::new("Gemfile"), &["Gemfile"]));
         assert!(matches_extension_filter(Path::new("Gemfile"), &["gemfile"]));
         assert!(!matches_extension_filter(Path::new("Gemfile"), &["rb"]));
+    }
+
+    #[test]
+    fn test_index_file_path_scope() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let file = temp.path().join("scope.rs");
+        fs::write(&file, "fn scoped_symbol() {}\n").unwrap();
+
+        let index = index_directory(&file, &["rs"]).unwrap();
+        let symbols = index.fuzzy_search("scoped_symbol");
+
+        assert_eq!(index.total_files(), 1);
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].file_path, file);
     }
 
     #[test]
