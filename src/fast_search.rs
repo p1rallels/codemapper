@@ -27,7 +27,6 @@ pub struct PrefilterResult {
 /// Fast text search using ripgrep-style grep for prefiltering candidate files
 pub struct TextPrefilter {
     pattern: String,
-    case_sensitive: bool,
 }
 
 /// Collects file paths that match the text pattern
@@ -74,10 +73,9 @@ fn deadline_expired(deadline: Option<Instant>) -> bool {
 
 impl TextPrefilter {
     /// Create a new TextPrefilter
-    pub fn new(pattern: &str, case_sensitive: bool) -> Self {
+    pub fn new(pattern: &str) -> Self {
         Self {
             pattern: pattern.to_string(),
-            case_sensitive,
         }
     }
 
@@ -177,14 +175,7 @@ impl TextPrefilter {
             .collect();
         if terms.len() > 1 {
             let escaped: Vec<String> = terms.iter().map(|t| regex::escape(t)).collect();
-            let alternation = escaped.join("|");
-            if self.case_sensitive {
-                alternation
-            } else {
-                format!("(?i){}", alternation)
-            }
-        } else if self.case_sensitive {
-            self.pattern.clone()
+            format!("(?i){}", escaped.join("|"))
         } else {
             format!("(?i){}", regex::escape(&self.pattern))
         }
@@ -192,12 +183,7 @@ impl TextPrefilter {
 
     /// Stage 2: AST validation of candidate files
     /// Parse only candidate files and extract matching symbols
-    pub fn validate(
-        &self,
-        candidates: Vec<PathBuf>,
-        query: &str,
-        fuzzy: bool,
-    ) -> Result<Vec<Symbol>> {
+    pub fn validate(&self, candidates: Vec<PathBuf>, query: &str) -> Result<Vec<Symbol>> {
         let symbol_batches: Vec<Vec<Symbol>> = candidates
             .par_iter()
             .map(|path| {
@@ -215,7 +201,7 @@ impl TextPrefilter {
                 file_info
                     .symbols
                     .into_iter()
-                    .filter(|symbol| self.symbol_matches(&symbol.name, query, fuzzy))
+                    .filter(|symbol| self.symbol_matches(&symbol.name, query))
                     .collect()
             })
             .collect();
@@ -224,20 +210,18 @@ impl TextPrefilter {
     }
 
     /// Check if a symbol name matches the query (supports | OR syntax)
-    fn symbol_matches(&self, name: &str, query: &str, fuzzy: bool) -> bool {
+    fn symbol_matches(&self, name: &str, query: &str) -> bool {
         let terms: Vec<&str> = query
             .split('|')
             .map(|t| t.trim())
             .filter(|t| !t.is_empty())
             .collect();
         let terms = if terms.is_empty() { vec![query] } else { terms };
-        terms.iter().any(|term| {
-            if fuzzy {
-                name.to_lowercase().contains(&term.to_lowercase())
-            } else {
-                name.contains(*term)
-            }
-        })
+        let name_lower = name.to_lowercase();
+
+        terms
+            .iter()
+            .any(|term| name_lower.contains(&term.to_lowercase()))
     }
 }
 
@@ -247,9 +231,8 @@ mod tests {
 
     #[test]
     fn test_text_prefilter_creation() {
-        let filter = TextPrefilter::new("test", true);
+        let filter = TextPrefilter::new("test");
         assert_eq!(filter.pattern, "test");
-        assert!(filter.case_sensitive);
     }
 
     #[test]
@@ -258,7 +241,7 @@ mod tests {
         fs::write(temp.path().join("first.rs"), "fn Needle() {}\n").unwrap();
         fs::write(temp.path().join("second.rs"), "fn Needle() {}\n").unwrap();
 
-        let filter = TextPrefilter::new("Needle", true);
+        let filter = TextPrefilter::new("Needle");
         let paths = vec![temp.path().join("first.rs"), temp.path().join("second.rs")];
         let result = filter
             .prefilter_paths_with_budget(&paths, Some(1), None)
@@ -273,7 +256,7 @@ mod tests {
         fs::write(temp.path().join("first.rs"), "fn Needle() {}\n").unwrap();
         fs::write(temp.path().join("second.rs"), "fn Needle() {}\n").unwrap();
 
-        let filter = TextPrefilter::new("Needle", true);
+        let filter = TextPrefilter::new("Needle");
         let paths = vec![temp.path().join("first.rs"), temp.path().join("second.rs")];
         let result = filter
             .prefilter_paths_with_budget(&paths, Some(1), None)
@@ -288,7 +271,7 @@ mod tests {
         let temp = tempfile::TempDir::new().unwrap();
         fs::write(temp.path().join("first.rs"), "fn Needle() {}\n").unwrap();
 
-        let filter = TextPrefilter::new("Needle", true);
+        let filter = TextPrefilter::new("Needle");
         let paths = vec![temp.path().join("first.rs")];
         let result = filter
             .prefilter_paths_with_budget(&paths, Some(1), Some(Duration::from_millis(0)))
@@ -299,10 +282,10 @@ mod tests {
     }
 
     #[test]
-    fn test_symbol_matches_case_sensitive_substrings() {
-        let filter = TextPrefilter::new("Parser", true);
+    fn test_symbol_matches_case_insensitive_substrings() {
+        let filter = TextPrefilter::new("Parser");
 
-        assert!(filter.symbol_matches("RustParser", "Parser", false));
-        assert!(!filter.symbol_matches("rustparser", "Parser", false));
+        assert!(filter.symbol_matches("RustParser", "Parser"));
+        assert!(filter.symbol_matches("rustparser", "Parser"));
     }
 }
