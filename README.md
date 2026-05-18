@@ -70,6 +70,7 @@ cm inspect ./src/auth.py             # All symbols in a file
 cm callers process_payment           # Who calls this?
 cm callees process_payment           # What does it call?
 cm trace main process_payment        # Call path from A to B
+cm why main process_payment          # Evidence for each trace edge
 
 # 5. Git analysis
 cm diff main                         # Changes vs main branch
@@ -96,6 +97,7 @@ cm blame authenticate ./auth.py      # Who last touched it?
 | `callers` | WHO calls this function? (reverse dependencies) |
 | `callees` | What DOES this function call? (forward dependencies) |
 | `trace` | CALL PATH from A → B (shortest route) |
+| `why` | Evidence behind a call path (callsites + targets) |
 | `entrypoints` | Public APIs with no internal callers |
 | `tests` | Which tests call this symbol? |
 | `untested` | Find symbols not called by any test |

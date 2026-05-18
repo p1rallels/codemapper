@@ -1,6 +1,7 @@
 use crate::blame::{BlameResult, HistoryEntry};
 use crate::callgraph::{
     CallInfo, EntrypointCategory, EntrypointInfo, TestDep, TestInfo, TracePath, UntestedInfo,
+    WhyPath,
 };
 use crate::diff::{ChangeType, DiffResult, SymbolDiff};
 use crate::implements::Implementation;
@@ -2389,6 +2390,131 @@ impl OutputFormatter {
                 step.file_path,
                 step.line
             ));
+        }
+
+        output
+    }
+
+    pub fn format_why(&self, why: &WhyPath, from: &str, to: &str) -> String {
+        match self.format {
+            OutputFormat::Default => self.format_why_default(why, from, to),
+            OutputFormat::Human => self.format_why_human(why, from, to),
+            OutputFormat::AI => self.format_why_ai(why, from, to),
+        }
+    }
+
+    fn format_why_default(&self, why: &WhyPath, from: &str, to: &str) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("# Why: {} → {}\n\n", from, to));
+
+        if !why.found {
+            output.push_str("No explainable call path found between these symbols.\n");
+            return output;
+        }
+
+        output.push_str(&format!("**Path length**: {} step(s)\n\n", why.steps.len()));
+        output.push_str("## Evidence\n\n");
+
+        for (i, edge) in why.edges.iter().enumerate() {
+            output.push_str(&format!(
+                "{}. `{}` calls `{}`\n",
+                i + 1,
+                edge.from.symbol_name,
+                edge.to.symbol_name
+            ));
+            output.push_str(&format!(
+                "   - Callsite: {}:{}\n",
+                edge.file_path, edge.call_line
+            ));
+            output.push_str(&format!("   - AST call: `{}`\n", edge.call_name));
+            output.push_str(&format!(
+                "   - Target: {}:{}\n",
+                edge.to.file_path, edge.to.line
+            ));
+            if !edge.context.is_empty() {
+                output.push_str(&format!("   - Source: `{}`\n", edge.context));
+            }
+            output.push('\n');
+        }
+
+        output
+    }
+
+    fn format_why_human(&self, why: &WhyPath, from: &str, to: &str) -> String {
+        let mut output = String::new();
+        output.push_str(&format!(
+            "{} {} {} {}\n\n",
+            "Why:".green(),
+            from.bold(),
+            "→".cyan(),
+            to.bold()
+        ));
+
+        if !why.found {
+            output.push_str(&format!(
+                "{} No explainable call path found between these symbols.\n",
+                "✗".yellow()
+            ));
+            return output;
+        }
+
+        let mut table = Table::new();
+        table
+            .load_preset(UTF8_FULL)
+            .apply_modifier(UTF8_ROUND_CORNERS)
+            .set_header(vec!["Edge", "Call", "Callsite", "Target", "Source"]);
+
+        for edge in &why.edges {
+            let source = if edge.context.len() > 60 {
+                format!("{}...", &edge.context[..57])
+            } else {
+                edge.context.clone()
+            };
+            table.add_row(vec![
+                format!("{} → {}", edge.from.symbol_name, edge.to.symbol_name),
+                edge.call_name.clone(),
+                format!("{}:{}", edge.file_path, edge.call_line),
+                format!("{}:{}", edge.to.file_path, edge.to.line),
+                source,
+            ]);
+        }
+
+        output.push_str(&format!("{}\n", table));
+        output
+    }
+
+    fn format_why_ai(&self, why: &WhyPath, from: &str, to: &str) -> String {
+        let mut output = String::new();
+        output.push_str(&format!("[WHY:{}->{}]\n", from, to));
+
+        if !why.found {
+            output.push_str("FOUND:false\n");
+            return output;
+        }
+
+        output.push_str(&format!("FOUND:true EDGES:{}\n", why.edges.len()));
+        let names: Vec<&str> = why.steps.iter().map(|s| s.symbol_name.as_str()).collect();
+        output.push_str(&format!("PATH:{}\n", names.join("|")));
+
+        for edge in &why.edges {
+            output.push_str(&format!(
+                "EDGE:{}|{}|{}:{}->{}|{}|{}:{}|call:{}|at:{}:{}",
+                edge.from.symbol_name,
+                map_symbol_type_short(edge.from.symbol_type),
+                edge.from.file_path,
+                edge.from.line,
+                edge.to.symbol_name,
+                map_symbol_type_short(edge.to.symbol_type),
+                edge.to.file_path,
+                edge.to.line,
+                edge.call_name,
+                edge.file_path,
+                edge.call_line
+            ));
+            if !edge.context.is_empty() {
+                output.push_str(&format!("|src:{}", edge.context));
+            }
+            output.push('\n');
         }
 
         output

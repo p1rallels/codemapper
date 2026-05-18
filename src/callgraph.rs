@@ -31,6 +31,33 @@ impl TracePath {
 }
 
 #[derive(Debug, Clone)]
+pub struct WhyEdge {
+    pub from: TraceStep,
+    pub to: TraceStep,
+    pub call_name: String,
+    pub call_line: usize,
+    pub file_path: String,
+    pub context: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct WhyPath {
+    pub steps: Vec<TraceStep>,
+    pub edges: Vec<WhyEdge>,
+    pub found: bool,
+}
+
+impl WhyPath {
+    pub fn not_found() -> Self {
+        Self {
+            steps: Vec::new(),
+            edges: Vec::new(),
+            found: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct TestInfo {
     pub test_name: String,
     pub test_type: SymbolType,
@@ -1580,6 +1607,35 @@ fn categorize_entrypoint(name: &str, symbol_type: SymbolType) -> EntrypointCateg
 
 const MAX_TRACE_DEPTH: usize = 10;
 
+pub fn explain_path(index: &CodeIndex, from: &str, to: &str, fuzzy: bool) -> Result<WhyPath> {
+    let trace = trace_path(index, from, to, fuzzy)?;
+
+    if !trace.found || trace.steps.len() < 2 {
+        return Ok(WhyPath::not_found());
+    }
+
+    let mut edges = Vec::new();
+
+    for pair in trace.steps.windows(2) {
+        let from_step = &pair[0];
+        let to_step = &pair[1];
+        let Some(source_symbol) = find_symbol_for_trace_step(index, from_step) else {
+            return Ok(WhyPath::not_found());
+        };
+        let Some(edge) = find_edge_evidence(index, source_symbol, from_step, to_step)? else {
+            return Ok(WhyPath::not_found());
+        };
+
+        edges.push(edge);
+    }
+
+    Ok(WhyPath {
+        steps: trace.steps,
+        edges,
+        found: true,
+    })
+}
+
 pub fn trace_path(index: &CodeIndex, from: &str, to: &str, fuzzy: bool) -> Result<TracePath> {
     let source_symbols = if fuzzy {
         index.fuzzy_search(from)
@@ -1684,6 +1740,78 @@ pub fn trace_path(index: &CodeIndex, from: &str, to: &str, fuzzy: bool) -> Resul
     Ok(TracePath::not_found())
 }
 
+fn find_symbol_for_trace_step<'a>(index: &'a CodeIndex, step: &TraceStep) -> Option<&'a Symbol> {
+    index
+        .query_symbol(&step.symbol_name)
+        .into_iter()
+        .find(|symbol| trace_step_matches_symbol(step, symbol))
+        .or_else(|| {
+            index
+                .get_file_symbols(Path::new(&step.file_path))
+                .into_iter()
+                .find(|symbol| trace_step_matches_symbol(step, symbol))
+        })
+}
+
+fn trace_step_matches_symbol(step: &TraceStep, symbol: &Symbol) -> bool {
+    symbol.name == step.symbol_name
+        && symbol.file_path.display().to_string() == step.file_path
+        && symbol.line_start == step.line
+}
+
+fn call_resolves_to_step(index: &CodeIndex, call_name: &str, target: &TraceStep) -> bool {
+    let resolved = index.query_symbol(call_name);
+
+    if resolved.is_empty() {
+        return normalize_qualified_name(call_name).eq_ignore_ascii_case(&target.symbol_name);
+    }
+
+    resolved
+        .into_iter()
+        .any(|symbol| trace_step_matches_symbol(target, symbol))
+}
+
+fn find_edge_evidence(
+    index: &CodeIndex,
+    symbol: &Symbol,
+    from_step: &TraceStep,
+    to_step: &TraceStep,
+) -> Result<Option<WhyEdge>> {
+    let content = match fs::read_to_string(&symbol.file_path) {
+        Ok(c) => c,
+        Err(_) => return Ok(None),
+    };
+
+    let lines: Vec<&str> = content.lines().collect();
+    let start_idx = symbol.line_start.saturating_sub(1);
+    let end_idx = symbol.line_end.min(lines.len());
+
+    if start_idx >= lines.len() {
+        return Ok(None);
+    }
+
+    let symbol_body: String = lines[start_idx..end_idx].join("\n");
+    let language = Language::from_path(&symbol.file_path);
+    let calls = extract_calls_from_source(&symbol_body, language)?;
+
+    for (call_name, relative_line, context) in calls {
+        if call_resolves_to_step(index, &call_name, to_step) {
+            return Ok(Some(WhyEdge {
+                from: from_step.clone(),
+                to: to_step.clone(),
+                call_name,
+                call_line: symbol
+                    .line_start
+                    .saturating_add(relative_line.saturating_sub(1)),
+                file_path: symbol.file_path.display().to_string(),
+                context: context.trim().to_string(),
+            }));
+        }
+    }
+
+    Ok(None)
+}
+
 fn find_callees_for_symbol(index: &CodeIndex, symbol: &Symbol) -> Result<Vec<CallInfo>> {
     let content = match fs::read_to_string(&symbol.file_path) {
         Ok(c) => c,
@@ -1757,6 +1885,29 @@ fn main() {
         assert!(names.contains(&"bar"));
         assert!(names.contains(&"method"));
         assert!(names.contains(&"println"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_explain_path_includes_callsite_evidence() -> Result<()> {
+        let temp = tempfile::TempDir::new()?;
+        let file = temp.path().join("flow.rs");
+        fs::write(
+            &file,
+            "fn start() {\n    middle();\n}\nfn middle() {\n    end();\n}\nfn end() {}\n",
+        )?;
+        let index = crate::indexer::index_directory(temp.path(), &["rs"])?;
+
+        let why = explain_path(&index, "start", "end", false)?;
+
+        assert!(why.found);
+        assert_eq!(why.steps.len(), 3);
+        assert_eq!(why.edges.len(), 2);
+        assert_eq!(why.edges[0].call_name, "middle");
+        assert_eq!(why.edges[0].call_line, 2);
+        assert!(why.edges[0].context.contains("middle();"));
+        assert_eq!(why.edges[1].call_name, "end");
+        assert_eq!(why.edges[1].call_line, 5);
         Ok(())
     }
 
