@@ -1193,6 +1193,61 @@ WHEN TO USE:
         rebuild_cache: bool,
     },
 
+    /// [ANALYSIS] Explain the evidence behind a call path
+    #[command(
+        about = "Explain why symbol A reaches symbol B with callsite evidence",
+        long_about = "USE CASE: Verify the evidence behind a trace
+  • Finds the shortest call path from A to B
+  • Shows the exact callsite for each edge
+  • Helps debug surprising call graph results
+
+OUTPUT:
+  • Path from source to target
+  • For each edge: source symbol, target symbol, AST call name, file:line, and source line
+
+TIP: Use trace for a compact path; use why when you want proof"
+    )]
+    #[command(after_help = "EXAMPLES:
+  cm why main parse_file                    # Explain why main reaches parse_file
+  cm why authenticate validate --fuzzy     # Fuzzy match both symbols
+  cm why handler response ./src            # Explain within a specific path
+  cm why cmd_query try_load_or_rebuild --format human  # Pretty table
+
+TYPICAL WORKFLOW:
+  1. Find symbols: cm query func_a
+  2. Trace path: cm trace func_a func_b
+  3. Explain evidence: cm why func_a func_b")]
+    Why {
+        /// Source symbol name (start of the path)
+        from: String,
+
+        /// Target symbol name (end of the path)
+        to: String,
+
+        /// Directory path to search in
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Enable fuzzy matching for symbol names
+        #[arg(long, default_value = "false")]
+        fuzzy: bool,
+
+        /// Comma-separated file extensions to include
+        #[arg(
+            long,
+            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md"
+        )]
+        extensions: String,
+
+        /// Disable cache (always reindex)
+        #[arg(long, default_value_t = false)]
+        no_cache: bool,
+
+        /// Force rebuild cache
+        #[arg(long, default_value_t = false)]
+        rebuild_cache: bool,
+    },
+
     /// [ANALYSIS] Quick breakage report for a symbol (definition + callers + tests)
     #[command(
         about = "Quick breakage report for a symbol (definition + callers + tests)",
@@ -1924,6 +1979,27 @@ fn run_cli() -> Result<()> {
                 format,
                 cache_dir,
             )?;
+        }
+        Commands::Why {
+            from,
+            to,
+            path,
+            fuzzy,
+            extensions,
+            no_cache,
+            rebuild_cache,
+        } => {
+            cmd_why(WhyOptions {
+                from,
+                to,
+                path,
+                fuzzy,
+                extensions,
+                no_cache,
+                rebuild_cache,
+                format,
+                cache_dir,
+            })?;
         }
         Commands::Impact {
             symbol,
@@ -4128,6 +4204,67 @@ fn cmd_trace(
     Ok(())
 }
 
+struct WhyOptions<'a> {
+    from: String,
+    to: String,
+    path: PathBuf,
+    fuzzy: bool,
+    extensions: String,
+    no_cache: bool,
+    rebuild_cache: bool,
+    format: OutputFormat,
+    cache_dir: Option<&'a Path>,
+}
+
+fn cmd_why(options: WhyOptions<'_>) -> Result<()> {
+    let from = pipe::read_symbol_arg(options.from)?;
+    let to = pipe::read_symbol_arg(options.to)?;
+    let ext_list: Vec<&str> = options.extensions.split(',').map(|s| s.trim()).collect();
+    let index = try_load_or_rebuild(
+        &options.path,
+        &ext_list,
+        options.no_cache,
+        options.rebuild_cache,
+        options.cache_dir,
+    )?;
+
+    let match_type = if options.fuzzy { " (fuzzy)" } else { "" };
+    eprintln!(
+        "{} Explaining call path from '{}' to '{}'{}...",
+        "→".cyan(),
+        from.bold(),
+        to.bold(),
+        match_type
+    );
+
+    let start = Instant::now();
+    let why = callgraph::explain_path(&index, &from, &to, options.fuzzy)?;
+    let elapsed_ms = start.elapsed().as_millis();
+
+    if !why.found {
+        println!(
+            "{} No explainable call path found from '{}' to '{}'",
+            "✗".yellow(),
+            from.bold(),
+            to.bold()
+        );
+        return Ok(());
+    }
+
+    eprintln!(
+        "{} Explained path with {} edge(s) in {}ms\n",
+        "✓".green(),
+        why.edges.len().to_string().bold(),
+        elapsed_ms.to_string().bold()
+    );
+
+    let formatter = OutputFormatter::new(options.format);
+    let output = formatter.format_why(&why, &from, &to);
+    println!("{}", output);
+
+    Ok(())
+}
+
 fn cmd_test_deps(
     test_file: PathBuf,
     path: PathBuf,
@@ -4747,6 +4884,27 @@ mod query_planner_tests {
         match cli.command {
             Commands::Query { path, .. } => assert_eq!(path, PathBuf::from("src/main.rs")),
             _ => panic!("expected query command"),
+        }
+    }
+
+    #[test]
+    fn why_accepts_cli_args() {
+        let cli = Cli::try_parse_from(["cm", "why", "start", "end", "src", "--fuzzy"])
+            .expect("why should parse source, target, path, and fuzzy flag");
+        match cli.command {
+            Commands::Why {
+                from,
+                to,
+                path,
+                fuzzy,
+                ..
+            } => {
+                assert_eq!(from, "start");
+                assert_eq!(to, "end");
+                assert_eq!(path, PathBuf::from("src"));
+                assert!(fuzzy);
+            }
+            _ => panic!("expected why command"),
         }
     }
 
