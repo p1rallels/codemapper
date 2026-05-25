@@ -238,7 +238,7 @@ COMMON FLAGS
 --context full       → Include docstrings and metadata
 --no-cache           → Skip cache, always reindex (troubleshooting)
 --rebuild-cache      → Force cache rebuild
---extensions py,rs   → Comma-separated file types to include (swift and ruby included by default)
+--extensions py,rs   → Comma-separated file types to include (swift, ruby, and elixir included by default)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -246,7 +246,7 @@ TROUBLESHOOTING
 
 NO SYMBOLS FOUND?
   ✓ Fuzzy matching by default (matches more)
-  ✓ Check --extensions py,js,ts (default: py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md) — swift and ruby are INCLUDED by default
+  ✓ Check --extensions py,js,ts (default: py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,ex,exs,md) — swift, ruby, and elixir are INCLUDED by default
   ✓ Verify file encoding is UTF-8
   ✓ Run: cm stats . (to see what's indexed)
 
@@ -395,10 +395,10 @@ TYPICAL WORKFLOW:
         #[arg(default_value = ".")]
         path: PathBuf,
 
-        /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,rb,md')
+        /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,rb,ex,md')
         #[arg(
             long,
-            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md"
+            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,ex,exs,md"
         )]
         extensions: String,
 
@@ -448,10 +448,10 @@ TYPICAL WORKFLOW:
         #[arg(long)]
         limit: Option<usize>,
 
-        /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,rb,md')
+        /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,rb,ex,md')
         #[arg(
             long,
-            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md"
+            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,ex,exs,md"
         )]
         extensions: String,
 
@@ -514,10 +514,10 @@ TEXT SEARCH
         #[arg(long, default_value = "false")]
         show_body: bool,
 
-        /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,rb,md')
+        /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,rb,ex,md')
         #[arg(
             long,
-            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md"
+            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,ex,exs,md"
         )]
         extensions: String,
 
@@ -681,10 +681,10 @@ WHEN TO USE:
         #[arg(long, default_value = "imports")]
         direction: String,
 
-        /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,rb,md')
+        /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,rb,ex,md')
         #[arg(
             long,
-            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md"
+            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,ex,exs,md"
         )]
         extensions: String,
 
@@ -727,10 +727,10 @@ NOTE: For normal usage, use 'cm stats' or 'cm map' instead")]
         #[arg(default_value = ".")]
         path: PathBuf,
 
-        /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,rb,md')
+        /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,rb,ex,md')
         #[arg(
             long,
-            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md"
+            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,ex,exs,md"
         )]
         extensions: String,
     },
@@ -779,10 +779,10 @@ WHEN TO USE:
         #[arg(default_value = ".")]
         path: PathBuf,
 
-        /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,rb,md')
+        /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,rb,ex,md')
         #[arg(
             long,
-            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md"
+            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,ex,exs,md"
         )]
         extensions: String,
 
@@ -832,7 +832,7 @@ TYPICAL WORKFLOW:
         /// Comma-separated file extensions to include
         #[arg(
             long,
-            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md"
+            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,ex,exs,md"
         )]
         extensions: String,
 
@@ -888,7 +888,7 @@ TYPICAL WORKFLOW:
         /// Comma-separated file extensions to include
         #[arg(
             long,
-            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md"
+            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,ex,exs,md"
         )]
         extensions: String,
 
@@ -947,7 +947,7 @@ TYPICAL WORKFLOW:
         /// Comma-separated file extensions to include
         #[arg(
             long,
-            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md"
+            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,ex,exs,md"
         )]
         extensions: String,
 
@@ -996,7 +996,7 @@ TYPICAL WORKFLOW:
         /// Comma-separated file extensions to include
         #[arg(
             long,
-            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md"
+            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,ex,exs,md"
         )]
         extensions: String,
 
@@ -1055,10 +1055,10 @@ WHEN TO USE:
         #[arg(default_value = ".")]
         path: PathBuf,
 
-        /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,rb,md')
+        /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,rb,ex,md')
         #[arg(
             long,
-            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md"
+            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,ex,exs,md"
         )]
         extensions: String,
 
@@ -1114,7 +1114,7 @@ WHEN TO USE:
         /// Comma-separated file extensions to include
         #[arg(
             long,
-            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md"
+            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,ex,exs,md"
         )]
         extensions: String,
 
@@ -1180,7 +1180,7 @@ WHEN TO USE:
         /// Comma-separated file extensions to include
         #[arg(
             long,
-            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md"
+            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,ex,exs,md"
         )]
         extensions: String,
 
@@ -1235,7 +1235,7 @@ TYPICAL WORKFLOW:
         /// Comma-separated file extensions to include
         #[arg(
             long,
-            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md"
+            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,ex,exs,md"
         )]
         extensions: String,
 
@@ -1287,7 +1287,7 @@ TIP: Run this after changing a function signature"
         /// Comma-separated file extensions to include
         #[arg(
             long,
-            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md"
+            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,ex,exs,md"
         )]
         extensions: String,
 
@@ -1335,7 +1335,7 @@ TYPICAL WORKFLOW:
         /// Comma-separated file extensions to include
         #[arg(
             long,
-            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md"
+            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,ex,exs,md"
         )]
         extensions: String,
 
@@ -1464,7 +1464,7 @@ WHEN TO USE:
         /// Comma-separated file extensions to include
         #[arg(
             long,
-            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md"
+            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,ex,exs,md"
         )]
         extensions: String,
 
@@ -1534,7 +1534,7 @@ WHEN TO USE:
         /// Comma-separated file extensions to include
         #[arg(
             long,
-            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md"
+            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,ex,exs,md"
         )]
         extensions: String,
 
@@ -1594,7 +1594,7 @@ WHEN TO USE:
         /// Comma-separated file extensions to include
         #[arg(
             long,
-            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md"
+            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,ex,exs,md"
         )]
         extensions: String,
 
@@ -1655,7 +1655,7 @@ TYPICAL WORKFLOW:
         /// Comma-separated file extensions to include
         #[arg(
             long,
-            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md"
+            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,ex,exs,md"
         )]
         extensions: String,
 
@@ -1706,7 +1706,7 @@ TYPICAL WORKFLOW:
         /// Comma-separated file extensions to include
         #[arg(
             long,
-            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,md"
+            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,ex,exs,md"
         )]
         extensions: String,
 

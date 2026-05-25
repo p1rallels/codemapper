@@ -1,4 +1,5 @@
 pub mod c;
+pub mod elixir;
 pub mod go;
 pub mod java;
 pub mod javascript;

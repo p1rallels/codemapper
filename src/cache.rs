@@ -11,7 +11,7 @@ use std::time::SystemTime;
 
 const CACHE_DIR_NAME: &str = ".codemapper";
 const CACHE_SUBDIR: &str = "cache";
-const CACHE_VERSION: &str = "1.8";
+const CACHE_VERSION: &str = "1.9";
 
 #[derive(Debug)]
 pub enum ValidationResult {

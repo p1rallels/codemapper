@@ -32,7 +32,7 @@ For large codebases, CodeMapper automatically plans fast searches with a ripgrep
 - **Smart Caching**: Auto-enabled for projects ≥300ms to parse; small projects stay fast with no `.codemapper/` clutter
 - **Automatic Search Planning**: Text prefilter planning with 10-100x speedups on large searches
 - **Tree-sitter Parsing**: Accurate AST-based symbol extraction
-- **Multi-language**: Python, JavaScript, TypeScript, Rust, Java, Go, C, Swift, Ruby, Markdown
+- **Multi-language**: Python, JavaScript, TypeScript, Rust, Java, Go, C, Swift, Ruby, Elixir, Markdown
 - **Parallel Processing**: Uses rayon for concurrent file parsing
 - **Fuzzy Search**: Case-insensitive symbol matching by default; use grep/rg for raw variables, TODO, FIXME, HACK, and literal strings
 - **Call Graph Analysis**: callers, callees, trace, tests, entrypoints
@@ -240,6 +240,7 @@ cm since <last_release> --breaking # Breaking changes?
 | Go | .go | Functions, structs, methods, interfaces |
 | C | .c, .h | Functions, structs, includes |
 | Ruby | .rb, .rbi, .rake, .gemspec, .ru, Gemfile, Rakefile | Classes, modules, methods, generated attr/delegate/Rails DSL methods, mixins, callback refs, constants, requires |
+| Elixir | .ex, .exs | Modules, protocols, functions, macros, tests, aliases/imports/uses |
 | Markdown | .md | Headings, code blocks |
 
 ## 🏗️ Architecture
@@ -292,7 +293,7 @@ The indexer automatically skips:
 --context full       Include docstrings and metadata
 --no-cache           Skip cache, always reindex
 --rebuild-cache      Force cache rebuild
---extensions py,rs   Comma-separated file types (swift and ruby included by default)
+--extensions py,rs   Comma-separated file types (swift, ruby, and elixir included by default)
 --cache-dir <path>   Override cache location
 ```
 
