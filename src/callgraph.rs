@@ -126,7 +126,15 @@ pub fn find_callers(index: &CodeIndex, symbol_name: &str, fuzzy: bool) -> Result
         let calls = extract_calls_from_file(&content, &file_info.path, file_info.language)?;
 
         for (call_name, line, context) in calls {
-            if call_matches_symbol(raw, &call_name, &context, fuzzy) {
+            let direct_match = call_matches_symbol(raw, &call_name, &context, fuzzy);
+            let genserver_match = (file_info.language == Language::Elixir)
+                .then(|| elixir_genserver_callback_name(&call_name, &context))
+                .flatten()
+                .is_some_and(|callback_name| {
+                    call_matches_symbol(raw, callback_name, &context, fuzzy)
+                });
+
+            if direct_match || genserver_match {
                 let key = format!("{}:{}", file_info.path.display(), line);
                 if seen.contains(&key) {
                     continue;
@@ -191,6 +199,19 @@ pub fn find_callees(index: &CodeIndex, symbol_name: &str, fuzzy: bool) -> Result
         let calls = extract_calls_from_source(&symbol_body, language)?;
 
         for (call_name, relative_line, context) in calls {
+            if language == Language::Elixir
+                && push_elixir_genserver_callback_callees(
+                    index,
+                    symbol,
+                    &call_name,
+                    &context,
+                    &mut all_callees,
+                    &mut global_seen,
+                )
+            {
+                continue;
+            }
+
             let dedup_key = format!(
                 "{}:{}:{}",
                 symbol.file_path.display(),
@@ -334,6 +355,58 @@ fn extract_calls_from_source(
     }
 }
 
+fn is_elixir_module_definition_macro(name: &str) -> bool {
+    matches!(name, "defmodule" | "defprotocol" | "defimpl")
+}
+
+fn is_elixir_function_definition_macro(name: &str) -> bool {
+    matches!(
+        name,
+        "def"
+            | "defp"
+            | "defdelegate"
+            | "defguard"
+            | "defguardp"
+            | "defmacro"
+            | "defmacrop"
+            | "defn"
+            | "defnp"
+    )
+}
+
+fn elixir_node_text(node: tree_sitter::Node, source: &str) -> String {
+    node.utf8_text(source.as_bytes())
+        .unwrap_or_default()
+        .to_string()
+}
+
+fn is_elixir_definition_head(node: tree_sitter::Node, source: &str) -> bool {
+    let mut current = node;
+
+    while let Some(parent) = current.parent() {
+        if matches!(parent.kind(), "keywords" | "do_block") {
+            return false;
+        }
+
+        if parent.kind() == "arguments" {
+            if let Some(call) = parent.parent() {
+                if call.kind() == "call" {
+                    let target = call
+                        .child_by_field_name("target")
+                        .map(|target| elixir_node_text(target, source))
+                        .unwrap_or_default();
+                    return is_elixir_function_definition_macro(&target)
+                        || is_elixir_module_definition_macro(&target);
+                }
+            }
+        }
+
+        current = parent;
+    }
+
+    false
+}
+
 fn is_elixir_special_form(name: &str) -> bool {
     matches!(
         name,
@@ -433,11 +506,11 @@ fn extract_elixir_calls(content: &str) -> Result<Vec<(String, usize, String)>> {
                 continue;
             }
 
-            let name = capture
-                .node
-                .utf8_text(content.as_bytes())
-                .unwrap_or_default()
-                .to_string();
+            if is_elixir_definition_head(capture.node, content) {
+                continue;
+            }
+
+            let name = elixir_node_text(capture.node, content);
 
             if is_elixir_special_form(&name) {
                 continue;
@@ -1894,6 +1967,22 @@ fn trace_step_matches_symbol(step: &TraceStep, symbol: &Symbol) -> bool {
         && symbol.line_start == step.line
 }
 
+fn compact_code_text(text: &str) -> String {
+    text.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
+fn elixir_genserver_callback_name(call_name: &str, context: &str) -> Option<&'static str> {
+    let compact = compact_code_text(context);
+
+    match call_name {
+        "call" if compact.contains("GenServer.call(") => Some("handle_call"),
+        "cast" if compact.contains("GenServer.cast(") => Some("handle_cast"),
+        "start" if compact.contains("GenServer.start(") => Some("init"),
+        "start_link" if compact.contains("GenServer.start_link(") => Some("init"),
+        _ => None,
+    }
+}
+
 fn call_resolves_to_step(index: &CodeIndex, call_name: &str, target: &TraceStep) -> bool {
     let resolved = index.query_symbol(call_name);
 
@@ -1930,6 +2019,25 @@ fn find_edge_evidence(
     let calls = extract_calls_from_source(&symbol_body, language)?;
 
     for (call_name, relative_line, context) in calls {
+        if language == Language::Elixir {
+            if let Some(callback_name) = elixir_genserver_callback_name(&call_name, &context) {
+                if callback_name == to_step.symbol_name
+                    && symbol.file_path.display().to_string() == to_step.file_path
+                {
+                    return Ok(Some(WhyEdge {
+                        from: from_step.clone(),
+                        to: to_step.clone(),
+                        call_name: format!("GenServer.{} -> {}", call_name, callback_name),
+                        call_line: symbol
+                            .line_start
+                            .saturating_add(relative_line.saturating_sub(1)),
+                        file_path: symbol.file_path.display().to_string(),
+                        context: context.trim().to_string(),
+                    }));
+                }
+            }
+        }
+
         if call_resolves_to_step(index, &call_name, to_step) {
             return Ok(Some(WhyEdge {
                 from: from_step.clone(),
@@ -1945,6 +2053,43 @@ fn find_edge_evidence(
     }
 
     Ok(None)
+}
+
+fn push_elixir_genserver_callback_callees(
+    index: &CodeIndex,
+    symbol: &Symbol,
+    call_name: &str,
+    context: &str,
+    callees: &mut Vec<CallInfo>,
+    seen: &mut HashSet<String>,
+) -> bool {
+    let Some(callback_name) = elixir_genserver_callback_name(call_name, context) else {
+        return false;
+    };
+
+    index
+        .get_file_symbols(&symbol.file_path)
+        .into_iter()
+        .filter(|target| target.name == callback_name)
+        .for_each(|target| {
+            let key = format!(
+                "{}:{}:{}",
+                target.name,
+                target.file_path.display(),
+                target.line_start
+            );
+            if seen.insert(key) {
+                callees.push(CallInfo {
+                    caller_name: target.name.clone(),
+                    caller_type: target.symbol_type,
+                    file_path: target.file_path.display().to_string(),
+                    line: target.line_start,
+                    context: target.signature.clone().unwrap_or_default(),
+                });
+            }
+        });
+
+    true
 }
 
 fn find_callees_for_symbol(index: &CodeIndex, symbol: &Symbol) -> Result<Vec<CallInfo>> {
@@ -1971,6 +2116,19 @@ fn find_callees_for_symbol(index: &CodeIndex, symbol: &Symbol) -> Result<Vec<Cal
     let mut seen = HashSet::new();
 
     for (call_name, relative_line, context) in calls {
+        if language == Language::Elixir
+            && push_elixir_genserver_callback_callees(
+                index,
+                symbol,
+                &call_name,
+                &context,
+                &mut callees,
+                &mut seen,
+            )
+        {
+            continue;
+        }
+
         if seen.contains(&call_name) {
             continue;
         }
@@ -2054,14 +2212,51 @@ defmodule Demo do
     normalize(user)
     user.name |> String.trim()
   end
+
+  def one_line(user), do: normalize(user)
 end
 "#;
         let calls = extract_elixir_calls(source)?;
         let names: Vec<&str> = calls.iter().map(|(n, _, _)| n.as_str()).collect();
         assert!(names.contains(&"normalize"));
         assert!(names.contains(&"trim"));
+        assert!(!names.contains(&"Demo"));
+        assert!(!names.contains(&"run"));
+        assert!(!names.contains(&"one_line"));
         assert!(!names.contains(&"defmodule"));
         assert!(!names.contains(&"def"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_trace_elixir_genserver_call_to_callback() -> Result<()> {
+        let temp = tempfile::TempDir::new()?;
+        let file = temp.path().join("demo.ex");
+        fs::write(
+            &file,
+            "defmodule Demo do\n  def emit(event), do: call({:emit, event})\n  defp call(message) do\n    GenServer.call(__MODULE__, message)\n  end\n  def handle_call({:emit, event}, _from, state) do\n    dispatch_all(state, event)\n  end\n  defp dispatch_all(state, event), do: {:ok, event, state}\nend\n",
+        )?;
+        let index = crate::indexer::index_directory(temp.path(), &["ex"])?;
+
+        let trace = trace_path(&index, "emit", "dispatch_all", false)?;
+        let why = explain_path(&index, "emit", "dispatch_all", false)?;
+        let callees = find_callees(&index, "call", false)?;
+        let callers = find_callers(&index, "handle_call", false)?;
+        let names: Vec<&str> = trace
+            .steps
+            .iter()
+            .map(|step| step.symbol_name.as_str())
+            .collect();
+
+        assert!(trace.found);
+        assert_eq!(names, vec!["emit", "call", "handle_call", "dispatch_all"]);
+        assert!(why.found);
+        assert_eq!(why.edges.len(), 3);
+        assert_eq!(why.edges[1].call_name, "GenServer.call -> handle_call");
+        assert!(callees
+            .iter()
+            .any(|callee| callee.caller_name == "handle_call"));
+        assert!(callers.iter().any(|caller| caller.caller_name == "call"));
         Ok(())
     }
 
