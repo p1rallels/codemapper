@@ -329,8 +329,132 @@ fn extract_calls_from_source(
         Language::C => extract_c_calls(content),
         Language::Swift => extract_swift_calls(content),
         Language::Ruby => extract_ruby_calls(content),
+        Language::Elixir => extract_elixir_calls(content),
         _ => Ok(Vec::new()),
     }
+}
+
+fn is_elixir_special_form(name: &str) -> bool {
+    matches!(
+        name,
+        "alias"
+            | "case"
+            | "cond"
+            | "def"
+            | "defdelegate"
+            | "defexception"
+            | "defguard"
+            | "defguardp"
+            | "defimpl"
+            | "defmacro"
+            | "defmacrop"
+            | "defmodule"
+            | "defoverridable"
+            | "defp"
+            | "defprotocol"
+            | "defstruct"
+            | "for"
+            | "if"
+            | "import"
+            | "quote"
+            | "raise"
+            | "receive"
+            | "require"
+            | "reraise"
+            | "super"
+            | "throw"
+            | "try"
+            | "unless"
+            | "unquote"
+            | "unquote_splicing"
+            | "use"
+            | "with"
+    )
+}
+
+fn extract_elixir_calls(content: &str) -> Result<Vec<(String, usize, String)>> {
+    let mut parser = Parser::new();
+    let language = tree_sitter_elixir::LANGUAGE.into();
+    parser
+        .set_language(&language)
+        .context("Failed to set Elixir language")?;
+
+    let tree = match parser.parse(content, None) {
+        Some(t) => t,
+        None => return Ok(Vec::new()),
+    };
+
+    let query = Query::new(
+        &language,
+        r#"
+        (call
+            target: (identifier) @call.name) @call.expr
+        (call
+            target: (dot
+                right: (identifier) @call.method)) @call.method_expr
+        (binary_operator
+            operator: "|>"
+            right: (identifier) @pipe.name) @pipe.expr
+        (binary_operator
+            operator: "|>"
+            right: (call
+                target: (identifier) @pipe.call)) @pipe.call_expr
+        (binary_operator
+            operator: "|>"
+            right: (call
+                target: (dot
+                    right: (identifier) @pipe.method))) @pipe.method_expr
+        "#,
+    )
+    .context("Failed to create Elixir call query")?;
+
+    let mut cursor = QueryCursor::new();
+    let mut matches = cursor.matches(&query, tree.root_node(), content.as_bytes());
+    let mut calls = Vec::new();
+    let mut seen_lines = HashSet::new();
+
+    while let Some(match_) = matches.next() {
+        for capture in match_.captures {
+            let capture_name = query
+                .capture_names()
+                .get(capture.index as usize)
+                .map(|s| s.as_ref());
+
+            let is_name = matches!(
+                capture_name,
+                Some("call.name")
+                    | Some("call.method")
+                    | Some("pipe.name")
+                    | Some("pipe.call")
+                    | Some("pipe.method")
+            );
+
+            if !is_name {
+                continue;
+            }
+
+            let name = capture
+                .node
+                .utf8_text(content.as_bytes())
+                .unwrap_or_default()
+                .to_string();
+
+            if is_elixir_special_form(&name) {
+                continue;
+            }
+
+            let line = capture.node.start_position().row + 1;
+            if seen_lines.contains(&(name.clone(), line)) {
+                continue;
+            }
+            seen_lines.insert((name.clone(), line));
+
+            let context = content.lines().nth(line - 1).unwrap_or("").to_string();
+            calls.push((name, line, context));
+        }
+    }
+
+    Ok(calls)
 }
 
 fn extract_rust_calls(content: &str) -> Result<Vec<(String, usize, String)>> {
@@ -1148,6 +1272,11 @@ pub fn is_test_file(path: &Path, language: Language) -> bool {
                 || path_str.contains("/spec/")
                 || path_str.contains("\\spec\\")
         }
+        Language::Elixir => {
+            file_name.ends_with("_test.exs")
+                || path_str.contains("/test/")
+                || path_str.contains("\\test\\")
+        }
         _ => false,
     }
 }
@@ -1266,6 +1395,7 @@ pub fn is_test_symbol(symbol: &Symbol, content: &str, language: Language) -> boo
             name.starts_with("test") || name.starts_with("Test")
         }
         Language::Ruby => name.starts_with("test_") || name.starts_with("test"),
+        Language::Elixir => name.starts_with("test ") || name.starts_with("test_"),
         _ => false,
     }
 }
@@ -1541,6 +1671,7 @@ fn is_symbol_exported(symbol: &Symbol, content: &str, language: Language) -> boo
             .unwrap_or(false),
         Language::Java => definition_line.contains("public "),
         Language::C => !name.starts_with('_'),
+        Language::Elixir => symbol.is_exported,
         _ => true,
     }
 }
@@ -1606,6 +1737,10 @@ fn categorize_entrypoint(name: &str, symbol_type: SymbolType) -> EntrypointCateg
 }
 
 const MAX_TRACE_DEPTH: usize = 10;
+
+fn trace_visit_key(file_path: &str, symbol_name: &str, line: usize) -> String {
+    format!("{}:{}:{}", file_path, symbol_name.to_lowercase(), line)
+}
 
 pub fn explain_path(index: &CodeIndex, from: &str, to: &str, fuzzy: bool) -> Result<WhyPath> {
     let trace = trace_path(index, from, to, fuzzy)?;
@@ -1674,10 +1809,10 @@ pub fn trace_path(index: &CodeIndex, from: &str, to: &str, fuzzy: bool) -> Resul
             line: source.line_start,
         };
 
-        let visit_key = format!(
-            "{}:{}",
-            source.file_path.display(),
-            source.name.to_lowercase()
+        let visit_key = trace_visit_key(
+            &source.file_path.display().to_string(),
+            &source.name,
+            source.line_start,
         );
         if !visited.contains(&visit_key) {
             visited.insert(visit_key);
@@ -1719,7 +1854,7 @@ pub fn trace_path(index: &CodeIndex, from: &str, to: &str, fuzzy: bool) -> Resul
                 });
             }
 
-            let visit_key = format!("{}:{}", callee.file_path, callee_lower);
+            let visit_key = trace_visit_key(&callee.file_path, &callee_lower, callee.line);
             if !visited.contains(&visit_key) {
                 visited.insert(visit_key);
 
@@ -1908,6 +2043,44 @@ fn main() {
         assert!(why.edges[0].context.contains("middle();"));
         assert_eq!(why.edges[1].call_name, "end");
         assert_eq!(why.edges[1].call_line, 5);
+        Ok(())
+    }
+
+    #[test]
+    fn test_extract_elixir_calls() -> Result<()> {
+        let source = r#"
+defmodule Demo do
+  def run(user) do
+    normalize(user)
+    user.name |> String.trim()
+  end
+end
+"#;
+        let calls = extract_elixir_calls(source)?;
+        let names: Vec<&str> = calls.iter().map(|(n, _, _)| n.as_str()).collect();
+        assert!(names.contains(&"normalize"));
+        assert!(names.contains(&"trim"));
+        assert!(!names.contains(&"defmodule"));
+        assert!(!names.contains(&"def"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_trace_elixir_overloaded_function_clauses() -> Result<()> {
+        let temp = tempfile::TempDir::new()?;
+        let file = temp.path().join("demo.ex");
+        fs::write(
+            &file,
+            "defmodule Demo do\n  def run(:noop), do: :ok\n  def run(value) do\n    finish(value)\n  end\n  defp finish(value), do: value\nend\n",
+        )?;
+        let index = crate::indexer::index_directory(temp.path(), &["ex"])?;
+
+        let trace = trace_path(&index, "run", "finish", false)?;
+
+        assert!(trace.found);
+        assert_eq!(trace.steps.len(), 2);
+        assert_eq!(trace.steps[0].line, 3);
+        assert_eq!(trace.steps[1].symbol_name, "finish");
         Ok(())
     }
 

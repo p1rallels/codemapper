@@ -1,7 +1,7 @@
 use crate::index::CodeIndex;
 use crate::models::{FileInfo, Language};
 use crate::parser::{
-    c::CParser, go::GoParser, java::JavaParser, javascript::JavaScriptParser,
+    c::CParser, elixir::ElixirParser, go::GoParser, java::JavaParser, javascript::JavaScriptParser,
     markdown::MarkdownParser, python::PythonParser, ruby::RubyParser, rust::RustParser,
     swift::SwiftParser, typescript::TypeScriptParser, Parser,
 };
@@ -138,6 +138,14 @@ pub fn index_file(
         }
         Language::Ruby => {
             if let Ok(parser) = RubyParser::new() {
+                if let Ok(parsed) = parser.parse(content, path) {
+                    file_info.symbols = parsed.symbols;
+                    file_info.dependencies = parsed.dependencies;
+                }
+            }
+        }
+        Language::Elixir => {
+            if let Ok(parser) = ElixirParser::new() {
                 if let Ok(parsed) = parser.parse(content, path) {
                     file_info.symbols = parsed.symbols;
                     file_info.dependencies = parsed.dependencies;
@@ -291,6 +299,8 @@ mod tests {
         assert_eq!(detect_language(Path::new("test.rb")), Language::Ruby);
         assert_eq!(detect_language(Path::new("test.rbi")), Language::Ruby);
         assert_eq!(detect_language(Path::new("Rakefile")), Language::Ruby);
+        assert_eq!(detect_language(Path::new("test.ex")), Language::Elixir);
+        assert_eq!(detect_language(Path::new("test.exs")), Language::Elixir);
         assert_eq!(detect_language(Path::new("test.txt")), Language::Unknown);
     }
 

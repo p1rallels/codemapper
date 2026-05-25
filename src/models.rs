@@ -12,6 +12,7 @@ pub enum Language {
     C,
     Swift,
     Markdown,
+    Elixir,
     Unknown,
     Ruby,
 }
@@ -28,6 +29,7 @@ impl Language {
             "c" | "h" => Language::C,
             "swift" => Language::Swift,
             "rb" | "rbi" | "rake" | "gemspec" | "ru" => Language::Ruby,
+            "ex" | "exs" => Language::Elixir,
             "md" => Language::Markdown,
             _ => Language::Unknown,
         }
@@ -69,6 +71,7 @@ impl Language {
             Language::C => "c",
             Language::Swift => "swift",
             Language::Ruby => "ruby",
+            Language::Elixir => "elixir",
             Language::Markdown => "markdown",
             Language::Unknown => "unknown",
         }
