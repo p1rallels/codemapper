@@ -2590,6 +2590,7 @@ fn cmd_query(
                 rank_owned_symbols(&mut owned_symbols);
             }
 
+            let total_count = owned_symbols.len();
             if let Some(n) = output_limit {
                 owned_symbols.truncate(n);
             }
@@ -2598,7 +2599,12 @@ fn cmd_query(
                 let show_context = context.to_lowercase() == "full";
                 let formatter = OutputFormatter::new(format);
                 let symbol_refs: Vec<&Symbol> = owned_symbols.iter().collect();
-                let output = formatter.format_query(symbol_refs, show_context, show_body);
+                let output = formatter.format_query_with_total(
+                    symbol_refs,
+                    Some(total_count),
+                    show_context,
+                    show_body,
+                );
                 println!("{}", output);
                 return Ok(());
             }
@@ -2658,7 +2664,12 @@ fn cmd_query(
                         let show_context = context.to_lowercase() == "full";
                         let formatter = OutputFormatter::new(format);
                         let symbol_refs: Vec<&Symbol> = owned_symbols.iter().collect();
-                        let output = formatter.format_query(symbol_refs, show_context, show_body);
+                        let output = formatter.format_query_with_total(
+                            symbol_refs,
+                            None,
+                            show_context,
+                            show_body,
+                        );
                         println!("{}", output);
                         return Ok(());
                     }
@@ -2736,6 +2747,7 @@ fn cmd_query(
             rank_symbol_refs(&mut symbols);
         }
 
+        let total_count = symbols.len();
         if let Some(n) = output_limit {
             symbols.truncate(n);
         }
@@ -2751,7 +2763,8 @@ fn cmd_query(
 
         let show_context = context.to_lowercase() == "full";
         let formatter = OutputFormatter::new(format);
-        let output = formatter.format_query(symbols, show_context, show_body);
+        let output =
+            formatter.format_query_with_total(symbols, Some(total_count), show_context, show_body);
         println!("{}", output);
     } else {
         // Normal mode for small codebases with cache
@@ -2793,7 +2806,7 @@ fn cmd_query(
             rank_symbol_refs(&mut symbols);
         }
 
-        // Apply limit if specified
+        let total_count = symbols.len();
         if let Some(n) = output_limit {
             symbols.truncate(n);
         }
@@ -2809,7 +2822,8 @@ fn cmd_query(
 
         let show_context = context.to_lowercase() == "full";
         let formatter = OutputFormatter::new(format);
-        let output = formatter.format_query(symbols, show_context, show_body);
+        let output =
+            formatter.format_query_with_total(symbols, Some(total_count), show_context, show_body);
         println!("{}", output);
     }
 

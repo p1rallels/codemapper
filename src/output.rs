@@ -150,6 +150,53 @@ fn truncation_warning(shown_lines: usize, total_lines: usize) -> String {
     )
 }
 
+fn query_is_truncated(shown_count: usize, total_count: Option<usize>) -> bool {
+    total_count.is_none_or(|total| shown_count < total)
+}
+
+fn format_query_count_default(shown_count: usize, total_count: Option<usize>) -> String {
+    match total_count {
+        Some(total) if shown_count < total => format!(
+            "Found {} of {} symbols (use --limit 0 for all results)",
+            shown_count, total
+        ),
+        Some(_) => format!("Found {} symbols", shown_count),
+        None => format!(
+            "Found {} symbols (total unknown; use --limit 0 for all results)",
+            shown_count
+        ),
+    }
+}
+
+fn format_query_count_human(shown_count: usize, total_count: Option<usize>) -> String {
+    match total_count {
+        Some(total) if shown_count < total => format!(
+            "{} of {} symbols (use --limit 0 for all results)",
+            shown_count, total
+        ),
+        Some(_) => format!("{} symbols", shown_count),
+        None => format!(
+            "{} symbols (total unknown; use --limit 0 for all results)",
+            shown_count
+        ),
+    }
+}
+
+fn format_query_count_ai(shown_count: usize, total_count: Option<usize>) -> String {
+    let total = total_count
+        .map(|total| total.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    if query_is_truncated(shown_count, total_count) {
+        format!(
+            "[RESULTS:{}] [TOTAL:{}] [TRUNCATED:use --limit 0 for all results]",
+            shown_count, total
+        )
+    } else {
+        format!("[RESULTS:{}]", shown_count)
+    }
+}
+
 /// Read specific lines from a file (1-indexed line numbers)
 fn map_symbol_type_short(symbol_type: SymbolType) -> &'static str {
     match symbol_type {
@@ -344,21 +391,38 @@ impl OutputFormatter {
     }
 
     pub fn format_query(&self, symbols: Vec<&Symbol>, context: bool, show_body: bool) -> String {
+        let total_count = Some(symbols.len());
+        self.format_query_with_total(symbols, total_count, context, show_body)
+    }
+
+    pub fn format_query_with_total(
+        &self,
+        symbols: Vec<&Symbol>,
+        total_count: Option<usize>,
+        context: bool,
+        show_body: bool,
+    ) -> String {
         match self.format {
-            OutputFormat::Default => self.format_query_default(symbols, context, show_body),
-            OutputFormat::Human => self.format_query_human(symbols, context, show_body),
-            OutputFormat::AI => self.format_query_ai(symbols, context, show_body),
+            OutputFormat::Default => {
+                self.format_query_default(symbols, total_count, context, show_body)
+            }
+            OutputFormat::Human => {
+                self.format_query_human(symbols, total_count, context, show_body)
+            }
+            OutputFormat::AI => self.format_query_ai(symbols, total_count, context, show_body),
         }
     }
 
     fn format_query_default(
         &self,
         symbols: Vec<&Symbol>,
+        total_count: Option<usize>,
         context: bool,
         show_body: bool,
     ) -> String {
         let mut output = String::new();
-        output.push_str(&format!("Found {} symbols\n\n", symbols.len()));
+        output.push_str(&format_query_count_default(symbols.len(), total_count));
+        output.push_str("\n\n");
 
         for symbol in symbols {
             let export_marker = if symbol.is_exported {
@@ -433,12 +497,18 @@ impl OutputFormatter {
         output
     }
 
-    fn format_query_human(&self, symbols: Vec<&Symbol>, context: bool, show_body: bool) -> String {
+    fn format_query_human(
+        &self,
+        symbols: Vec<&Symbol>,
+        total_count: Option<usize>,
+        context: bool,
+        show_body: bool,
+    ) -> String {
         let mut output = String::new();
         output.push_str(&format!(
             "{} {}\n\n",
             "Found".green(),
-            format!("{} symbols", symbols.len()).bold()
+            format_query_count_human(symbols.len(), total_count).bold()
         ));
 
         let mut table = Table::new();
@@ -530,9 +600,16 @@ impl OutputFormatter {
         output
     }
 
-    fn format_query_ai(&self, symbols: Vec<&Symbol>, context: bool, show_body: bool) -> String {
+    fn format_query_ai(
+        &self,
+        symbols: Vec<&Symbol>,
+        total_count: Option<usize>,
+        context: bool,
+        show_body: bool,
+    ) -> String {
         let mut output = String::new();
-        output.push_str(&format!("[RESULTS:{}]\n", symbols.len()));
+        output.push_str(&format_query_count_ai(symbols.len(), total_count));
+        output.push('\n');
 
         for symbol in symbols {
             let export_tag = if symbol.is_exported { "|exp" } else { "" };
@@ -3050,6 +3127,34 @@ mod tests {
             file_path: path,
             is_exported: false,
         }
+    }
+
+    #[test]
+    fn query_ai_header_shows_total_when_limited() {
+        let symbol = test_symbol(PathBuf::from("src/main.rs"), 1);
+        let output = OutputFormatter::new(OutputFormat::AI).format_query_with_total(
+            vec![&symbol],
+            Some(12),
+            false,
+            false,
+        );
+
+        assert!(
+            output.starts_with("[RESULTS:1] [TOTAL:12] [TRUNCATED:use --limit 0 for all results]")
+        );
+    }
+
+    #[test]
+    fn query_ai_header_preserves_compact_header_when_not_limited() {
+        let symbol = test_symbol(PathBuf::from("src/main.rs"), 1);
+        let output = OutputFormatter::new(OutputFormat::AI).format_query_with_total(
+            vec![&symbol],
+            Some(1),
+            false,
+            false,
+        );
+
+        assert!(output.starts_with("[RESULTS:1]\n"));
     }
 
     #[test]
