@@ -220,7 +220,7 @@ cm since <last_release> --breaking # Breaking changes?
 | Language | Extensions | Extracts |
 |----------|------------|----------|
 | Python | .py | Functions, classes, methods, imports |
-| JavaScript | .js, .jsx | Functions, classes, methods, imports |
+| JavaScript | .js, .jsx, .mjs, .cjs | Functions, classes, methods, imports |
 | TypeScript | .ts, .tsx | Functions, classes, methods, interfaces, types, enums |
 | Rust | .rs | Functions, structs, impl blocks, traits, enums |
 | Java | .java | Classes, interfaces, methods, enums, javadoc |

@@ -20,7 +20,7 @@ impl Language {
     pub fn from_extension(ext: &str) -> Self {
         match ext.to_ascii_lowercase().as_str() {
             "py" => Language::Python,
-            "js" | "jsx" => Language::JavaScript,
+            "js" | "jsx" | "mjs" | "cjs" => Language::JavaScript,
             "ts" | "tsx" => Language::TypeScript,
             "rs" => Language::Rust,
             "java" => Language::Java,
