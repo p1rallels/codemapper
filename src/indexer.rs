@@ -272,6 +272,8 @@ mod tests {
     fn test_detect_language() {
         assert_eq!(detect_language(Path::new("test.py")), Language::Python);
         assert_eq!(detect_language(Path::new("test.js")), Language::JavaScript);
+        assert_eq!(detect_language(Path::new("test.mjs")), Language::JavaScript);
+        assert_eq!(detect_language(Path::new("test.cjs")), Language::JavaScript);
         assert_eq!(detect_language(Path::new("test.ts")), Language::TypeScript);
         assert_eq!(detect_language(Path::new("test.rs")), Language::Rust);
         assert_eq!(detect_language(Path::new("test.swift")), Language::Swift);
@@ -285,6 +287,8 @@ mod tests {
     fn test_matches_extension_filter() {
         assert!(matches_extension_filter(Path::new("test.rb"), &["rb"]));
         assert!(matches_extension_filter(Path::new("test.rbi"), &["rbi"]));
+        assert!(matches_extension_filter(Path::new("test.mjs"), &["mjs"]));
+        assert!(matches_extension_filter(Path::new("test.cjs"), &["cjs"]));
         assert!(matches_extension_filter(Path::new("Gemfile"), &["Gemfile"]));
         assert!(matches_extension_filter(Path::new("Gemfile"), &["gemfile"]));
         assert!(!matches_extension_filter(Path::new("Gemfile"), &["rb"]));
