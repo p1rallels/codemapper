@@ -869,6 +869,28 @@ mod tests {
     }
 
     #[test]
+    fn go_struct_fields_do_not_export_implements_edges() -> Result<()> {
+        let dir = tempdir()?;
+        fs::write(
+            dir.path().join("main.go"),
+            "package main\n\nimport \"sync\"\n\ntype runner struct {\n    logsMu sync.Mutex\n}\n\ntype ord struct {\n    result string\n}\n",
+        )?;
+
+        let index = indexer::index_directory(dir.path(), &["go"])?;
+        let graph = build(
+            &index,
+            ExportOptions {
+                root_path: dir.path(),
+                include_generated_at: false,
+                cm_version: "test",
+            },
+        )?;
+
+        assert!(graph.edges.implements.is_empty());
+        Ok(())
+    }
+
+    #[test]
     fn stable_symbol_ids_do_not_depend_on_file_add_order() -> Result<()> {
         let dir = tempdir()?;
         let a_path = dir.path().join("a.py");

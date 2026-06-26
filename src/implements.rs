@@ -416,7 +416,7 @@ pub fn find_all_implementations(
                 find_ts_implementations(&content, "", true, "")
             }
             Language::Java => find_java_implementations(&content, "", true, ""),
-            Language::Go => find_go_implementations(&content, "", true, ""),
+            Language::Go => Vec::new(),
             Language::Ruby => find_ruby_implementations(&content, "", true, ""),
             _ => Vec::new(),
         };
