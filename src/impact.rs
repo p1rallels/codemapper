@@ -4,18 +4,32 @@ use crate::output::{OutputFormat, OutputFormatter};
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
-pub fn cmd_impact(
-    symbol: String,
-    path: PathBuf,
-    include_docs: bool,
-    limit: Option<usize>,
-    all: bool,
-    extensions: String,
-    no_cache: bool,
-    rebuild_cache: bool,
-    format: OutputFormat,
-    cache_dir: Option<&Path>,
-) -> Result<()> {
+pub struct ImpactOptions<'a> {
+    pub symbol: String,
+    pub path: PathBuf,
+    pub include_docs: bool,
+    pub limit: Option<usize>,
+    pub all: bool,
+    pub extensions: String,
+    pub no_cache: bool,
+    pub rebuild_cache: bool,
+    pub format: OutputFormat,
+    pub cache_dir: Option<&'a Path>,
+}
+
+pub fn cmd_impact(options: ImpactOptions<'_>) -> Result<()> {
+    let ImpactOptions {
+        symbol,
+        path,
+        include_docs,
+        limit,
+        all,
+        extensions,
+        no_cache,
+        rebuild_cache,
+        format,
+        cache_dir,
+    } = options;
     let symbol = crate::pipe::read_symbol_arg(symbol)?;
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
     let index = crate::try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;

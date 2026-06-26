@@ -142,7 +142,7 @@ impl CodeIndex {
         self.file_symbols = new_file_symbols;
     }
 
-    pub fn query_symbol(&self, name: &str) -> Vec<&Symbol> {
+    pub fn query_symbol_indices(&self, name: &str) -> Vec<usize> {
         let terms: Vec<&str> = name
             .split('|')
             .map(|t| t.trim())
@@ -152,25 +152,23 @@ impl CodeIndex {
             let mut seen = std::collections::HashSet::new();
             terms
                 .iter()
-                .flat_map(|term| {
-                    self.symbol_index
-                        .get(*term)
-                        .map(|indices| {
-                            indices
-                                .iter()
-                                .map(|&idx| &self.symbols[idx])
-                                .collect::<Vec<_>>()
-                        })
-                        .unwrap_or_default()
+                .flat_map(|term| self.symbol_index.get(*term).cloned().unwrap_or_default())
+                .filter(|idx| {
+                    self.symbols.get(*idx).is_some_and(|s| {
+                        seen.insert((s.name.clone(), s.line_start, s.file_path.clone()))
+                    })
                 })
-                .filter(|s| seen.insert((s.name.clone(), s.line_start, s.file_path.clone())))
                 .collect()
         } else {
-            self.symbol_index
-                .get(name)
-                .map(|indices| indices.iter().map(|&idx| &self.symbols[idx]).collect())
-                .unwrap_or_default()
+            self.symbol_index.get(name).cloned().unwrap_or_default()
         }
+    }
+
+    pub fn query_symbol(&self, name: &str) -> Vec<&Symbol> {
+        self.query_symbol_indices(name)
+            .iter()
+            .filter_map(|&idx| self.symbols.get(idx))
+            .collect()
     }
 
     pub fn fuzzy_search(&self, pattern: &str) -> Vec<&Symbol> {
@@ -247,6 +245,14 @@ impl CodeIndex {
     /// Get all symbols (for use with type filtering)
     pub fn all_symbols(&self) -> Vec<&Symbol> {
         self.symbols.iter().collect()
+    }
+
+    pub fn all_symbols_with_indices(&self) -> impl Iterator<Item = (usize, &Symbol)> {
+        self.symbols.iter().enumerate()
+    }
+
+    pub fn symbol_at(&self, index: usize) -> Option<&Symbol> {
+        self.symbols.get(index)
     }
 }
 

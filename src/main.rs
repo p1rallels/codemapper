@@ -4,6 +4,7 @@ mod callgraph;
 mod diff;
 mod fast_search;
 mod git;
+mod graph_export;
 mod ignore;
 mod impact;
 mod implements;
@@ -447,6 +448,50 @@ TYPICAL WORKFLOW:
         /// Maximum output lines to return (default: 100, use --limit 0 for all)
         #[arg(long)]
         limit: Option<usize>,
+
+        /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,rb,ex,md')
+        #[arg(
+            long,
+            default_value = "py,js,ts,jsx,tsx,rs,java,go,c,h,swift,rb,rbi,rake,gemspec,ru,gemfile,rakefile,capfile,guardfile,thorfile,podfile,fastfile,appraisals,dangerfile,ex,exs,md"
+        )]
+        extensions: String,
+
+        /// Disable cache (always reindex)
+        #[arg(long, default_value_t = false)]
+        no_cache: bool,
+
+        /// Force rebuild cache (invalidate and reindex)
+        #[arg(long, default_value_t = false)]
+        rebuild_cache: bool,
+    },
+
+    /// [EXPORT] Emit a deterministic structured JSON graph for external visualizers
+    #[command(
+        about = "Export code structure as deterministic JSON graph data",
+        long_about = "EXPORT GRAPH
+  cm export --json .        emit one structured JSON document for code visualization
+
+SCOPE
+  cm extracts files, symbols, imports, approximate calls, and implementation edges.
+  Layout, rendering, editor features, import post-resolution, and caching belong to downstream tools."
+    )]
+    #[command(after_help = "EXAMPLES:
+  cm export --json .
+  cm export --json ./src --no-cache
+  cm export . --format json
+  cm export --json . --include-generated-at")]
+    Export {
+        /// Directory or file path to export
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Emit JSON graph output
+        #[arg(long, default_value_t = false)]
+        json: bool,
+
+        /// Include a real generated_at timestamp (default is null for deterministic exports)
+        #[arg(long, default_value_t = false)]
+        include_generated_at: bool,
 
         /// Comma-separated file extensions to include (e.g., 'py,js,rs,go,c,h,rb,ex,md')
         #[arg(
@@ -1753,15 +1798,43 @@ fn main() -> Result<()> {
 
 fn run_cli() -> Result<()> {
     let cli = Cli::parse();
+    let raw_format = cli.format;
+    let cache_dir_owned = cli.cache_dir;
+    let cache_dir = cache_dir_owned.as_deref();
+    let command = cli.command;
 
-    let format = OutputFormat::from_str(&cli.format).unwrap_or_else(|err| {
+    if matches!(&command, Commands::Export { .. }) {
+        match command {
+            Commands::Export {
+                path,
+                json,
+                include_generated_at,
+                extensions,
+                no_cache,
+                rebuild_cache,
+            } => {
+                cmd_export(ExportCommandOptions {
+                    path,
+                    json,
+                    include_generated_at,
+                    extensions,
+                    no_cache,
+                    rebuild_cache,
+                    raw_format: &raw_format,
+                    cache_dir,
+                })?;
+                return Ok(());
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    let format = OutputFormat::from_str(&raw_format).unwrap_or_else(|err| {
         eprintln!("{}", err);
         std::process::exit(1);
     });
 
-    let cache_dir = cli.cache_dir.as_deref();
-
-    match cli.command {
+    match command {
         Commands::Stats {
             path,
             extensions,
@@ -1789,6 +1862,7 @@ fn run_cli() -> Result<()> {
                 cache_dir,
             })?;
         }
+        Commands::Export { .. } => unreachable!("export is handled before output format parsing"),
         Commands::Query {
             symbol,
             path,
@@ -1803,22 +1877,22 @@ fn run_cli() -> Result<()> {
             section,
             limit,
         } => {
-            cmd_query(
+            cmd_query(QueryOptions {
                 symbol,
                 path,
                 context,
                 show_body,
-                r#type,
+                symbol_type_filter: r#type,
                 section,
                 extensions,
                 no_cache,
                 rebuild_cache,
-                !full,
+                skip_anonymous: !full,
                 exports_only,
                 format,
                 limit,
                 cache_dir,
-            )?;
+            })?;
         }
         Commands::Inspect {
             file_path,
@@ -1852,7 +1926,7 @@ fn run_cli() -> Result<()> {
             no_cache,
             rebuild_cache,
         } => {
-            cmd_deps(
+            cmd_deps(DepsOptions {
                 target,
                 path,
                 direction,
@@ -1861,7 +1935,7 @@ fn run_cli() -> Result<()> {
                 rebuild_cache,
                 format,
                 cache_dir,
-            )?;
+            })?;
         }
         Commands::Index { path, extensions } => {
             cmd_index(path, extensions)?;
@@ -1883,7 +1957,7 @@ fn run_cli() -> Result<()> {
             rebuild_cache,
             limit,
         } => {
-            cmd_callers(
+            cmd_callers(CallersOptions {
                 symbol,
                 path,
                 fuzzy,
@@ -1893,7 +1967,7 @@ fn run_cli() -> Result<()> {
                 limit,
                 format,
                 cache_dir,
-            )?;
+            })?;
         }
         Commands::Callees {
             symbol,
@@ -1904,7 +1978,7 @@ fn run_cli() -> Result<()> {
             rebuild_cache,
             limit,
         } => {
-            cmd_callees(
+            cmd_callees(CalleesOptions {
                 symbol,
                 path,
                 fuzzy,
@@ -1914,7 +1988,7 @@ fn run_cli() -> Result<()> {
                 limit,
                 format,
                 cache_dir,
-            )?;
+            })?;
         }
         Commands::Tests {
             symbol,
@@ -1924,7 +1998,7 @@ fn run_cli() -> Result<()> {
             no_cache,
             rebuild_cache,
         } => {
-            cmd_tests(
+            cmd_tests(TestsOptions {
                 symbol,
                 path,
                 fuzzy,
@@ -1933,7 +2007,7 @@ fn run_cli() -> Result<()> {
                 rebuild_cache,
                 format,
                 cache_dir,
-            )?;
+            })?;
         }
         Commands::Untested {
             path,
@@ -1968,7 +2042,7 @@ fn run_cli() -> Result<()> {
             no_cache,
             rebuild_cache,
         } => {
-            cmd_trace(
+            cmd_trace(TraceOptions {
                 from,
                 to,
                 path,
@@ -1978,7 +2052,7 @@ fn run_cli() -> Result<()> {
                 rebuild_cache,
                 format,
                 cache_dir,
-            )?;
+            })?;
         }
         Commands::Why {
             from,
@@ -2011,7 +2085,7 @@ fn run_cli() -> Result<()> {
             no_cache,
             rebuild_cache,
         } => {
-            impact::cmd_impact(
+            impact::cmd_impact(impact::ImpactOptions {
                 symbol,
                 path,
                 include_docs,
@@ -2022,7 +2096,7 @@ fn run_cli() -> Result<()> {
                 rebuild_cache,
                 format,
                 cache_dir,
-            )?;
+            })?;
         }
         Commands::TestDeps {
             test_file,
@@ -2056,7 +2130,7 @@ fn run_cli() -> Result<()> {
             rebuild_cache,
             trait_only,
         } => {
-            cmd_implements(
+            cmd_implements(ImplementsOptions {
                 interface,
                 path,
                 fuzzy,
@@ -2066,7 +2140,7 @@ fn run_cli() -> Result<()> {
                 trait_only,
                 format,
                 cache_dir,
-            )?;
+            })?;
         }
         Commands::Types {
             symbol,
@@ -2076,7 +2150,7 @@ fn run_cli() -> Result<()> {
             no_cache,
             rebuild_cache,
         } => {
-            cmd_types(
+            cmd_types(TypeCommandOptions {
                 symbol,
                 path,
                 fuzzy,
@@ -2085,7 +2159,7 @@ fn run_cli() -> Result<()> {
                 rebuild_cache,
                 format,
                 cache_dir,
-            )?;
+            })?;
         }
         Commands::Schema {
             symbol,
@@ -2095,7 +2169,7 @@ fn run_cli() -> Result<()> {
             no_cache,
             rebuild_cache,
         } => {
-            cmd_schema(
+            cmd_schema(SchemaCommandOptions {
                 symbol,
                 path,
                 fuzzy,
@@ -2104,7 +2178,7 @@ fn run_cli() -> Result<()> {
                 rebuild_cache,
                 format,
                 cache_dir,
-            )?;
+            })?;
         }
         Commands::Snapshot {
             name,
@@ -2115,7 +2189,7 @@ fn run_cli() -> Result<()> {
             no_cache,
             rebuild_cache,
         } => {
-            cmd_snapshot(
+            cmd_snapshot(SnapshotCommandOptions {
                 name,
                 path,
                 list,
@@ -2125,7 +2199,7 @@ fn run_cli() -> Result<()> {
                 rebuild_cache,
                 format,
                 cache_dir,
-            )?;
+            })?;
         }
         Commands::Compare {
             snapshot,
@@ -2431,7 +2505,7 @@ fn cmd_map(options: MapOptions<'_>) -> Result<()> {
     Ok(())
 }
 
-fn cmd_query(
+struct QueryOptions<'a> {
     symbol: String,
     path: PathBuf,
     context: String,
@@ -2445,8 +2519,26 @@ fn cmd_query(
     exports_only: bool,
     format: OutputFormat,
     limit: Option<usize>,
-    cache_dir: Option<&Path>,
-) -> Result<()> {
+    cache_dir: Option<&'a Path>,
+}
+
+fn cmd_query(options: QueryOptions<'_>) -> Result<()> {
+    let QueryOptions {
+        symbol,
+        path,
+        context,
+        show_body,
+        symbol_type_filter,
+        section,
+        extensions,
+        no_cache,
+        rebuild_cache,
+        skip_anonymous,
+        exports_only,
+        format,
+        limit,
+        cache_dir,
+    } = options;
     use fast_search::{PrefilterStopReason, TextPrefilter};
     use models::SymbolType;
 
@@ -3073,7 +3165,7 @@ fn truncate_output_lines(output: &str, limit: Option<usize>, full_args: &str) ->
     )
 }
 
-fn cmd_deps(
+struct DepsOptions<'a> {
     target: String,
     path: PathBuf,
     direction: String,
@@ -3081,8 +3173,20 @@ fn cmd_deps(
     no_cache: bool,
     rebuild_cache: bool,
     format: OutputFormat,
-    cache_dir: Option<&Path>,
-) -> Result<()> {
+    cache_dir: Option<&'a Path>,
+}
+
+fn cmd_deps(options: DepsOptions<'_>) -> Result<()> {
+    let DepsOptions {
+        target,
+        path,
+        direction,
+        extensions,
+        no_cache,
+        rebuild_cache,
+        format,
+        cache_dir,
+    } = options;
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
     let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
 
@@ -3231,6 +3335,53 @@ fn cmd_deps_symbol(
 
     println!("{}", output);
 
+    Ok(())
+}
+
+struct ExportCommandOptions<'a> {
+    path: PathBuf,
+    json: bool,
+    include_generated_at: bool,
+    extensions: String,
+    no_cache: bool,
+    rebuild_cache: bool,
+    raw_format: &'a str,
+    cache_dir: Option<&'a Path>,
+}
+
+fn cmd_export(options: ExportCommandOptions<'_>) -> Result<()> {
+    let ExportCommandOptions {
+        path,
+        json,
+        include_generated_at,
+        extensions,
+        no_cache,
+        rebuild_cache,
+        raw_format,
+        cache_dir,
+    } = options;
+    let format_is_json = raw_format.eq_ignore_ascii_case("json");
+    if !json && !format_is_json {
+        eprintln!(
+            "{} export currently emits JSON only; use `cm export --json {}` or `cm export {} --format json`",
+            "Error:".red(),
+            path.display(),
+            path.display()
+        );
+        std::process::exit(1);
+    }
+
+    let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
+    let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
+    let output = graph_export::to_json(
+        &index,
+        graph_export::ExportOptions {
+            root_path: &path,
+            include_generated_at,
+            cm_version: env!("CARGO_PKG_VERSION"),
+        },
+    )?;
+    println!("{}", output);
     Ok(())
 }
 
@@ -3842,7 +3993,7 @@ fn qualifier_pattern(name: &str) -> Option<String> {
     None
 }
 
-fn cmd_callers(
+struct CallersOptions<'a> {
     symbol: String,
     path: PathBuf,
     fuzzy: bool,
@@ -3851,8 +4002,21 @@ fn cmd_callers(
     rebuild_cache: bool,
     limit: Option<usize>,
     format: OutputFormat,
-    cache_dir: Option<&Path>,
-) -> Result<()> {
+    cache_dir: Option<&'a Path>,
+}
+
+fn cmd_callers(options: CallersOptions<'_>) -> Result<()> {
+    let CallersOptions {
+        symbol,
+        path,
+        fuzzy,
+        extensions,
+        no_cache,
+        rebuild_cache,
+        limit,
+        format,
+        cache_dir,
+    } = options;
     let symbol = pipe::read_symbol_arg(symbol)?;
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
     let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
@@ -3932,7 +4096,7 @@ fn cmd_callers(
     Ok(())
 }
 
-fn cmd_callees(
+struct CalleesOptions<'a> {
     symbol: String,
     path: PathBuf,
     fuzzy: bool,
@@ -3941,8 +4105,21 @@ fn cmd_callees(
     rebuild_cache: bool,
     limit: Option<usize>,
     format: OutputFormat,
-    cache_dir: Option<&Path>,
-) -> Result<()> {
+    cache_dir: Option<&'a Path>,
+}
+
+fn cmd_callees(options: CalleesOptions<'_>) -> Result<()> {
+    let CalleesOptions {
+        symbol,
+        path,
+        fuzzy,
+        extensions,
+        no_cache,
+        rebuild_cache,
+        limit,
+        format,
+        cache_dir,
+    } = options;
     let symbol = pipe::read_symbol_arg(symbol)?;
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
     let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
@@ -4021,7 +4198,7 @@ fn cmd_callees(
     Ok(())
 }
 
-fn cmd_tests(
+struct TestsOptions<'a> {
     symbol: String,
     path: PathBuf,
     fuzzy: bool,
@@ -4029,8 +4206,20 @@ fn cmd_tests(
     no_cache: bool,
     rebuild_cache: bool,
     format: OutputFormat,
-    cache_dir: Option<&Path>,
-) -> Result<()> {
+    cache_dir: Option<&'a Path>,
+}
+
+fn cmd_tests(options: TestsOptions<'_>) -> Result<()> {
+    let TestsOptions {
+        symbol,
+        path,
+        fuzzy,
+        extensions,
+        no_cache,
+        rebuild_cache,
+        format,
+        cache_dir,
+    } = options;
     let symbol = pipe::read_symbol_arg(symbol)?;
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
     let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
@@ -4165,7 +4354,7 @@ fn cmd_entrypoints(
     Ok(())
 }
 
-fn cmd_trace(
+struct TraceOptions<'a> {
     from: String,
     to: String,
     path: PathBuf,
@@ -4174,8 +4363,21 @@ fn cmd_trace(
     no_cache: bool,
     rebuild_cache: bool,
     format: OutputFormat,
-    cache_dir: Option<&Path>,
-) -> Result<()> {
+    cache_dir: Option<&'a Path>,
+}
+
+fn cmd_trace(options: TraceOptions<'_>) -> Result<()> {
+    let TraceOptions {
+        from,
+        to,
+        path,
+        fuzzy,
+        extensions,
+        no_cache,
+        rebuild_cache,
+        format,
+        cache_dir,
+    } = options;
     let from = pipe::read_symbol_arg(from)?;
     let to = pipe::read_symbol_arg(to)?;
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
@@ -4404,7 +4606,7 @@ fn cmd_history(symbol: String, file: PathBuf, format: OutputFormat) -> Result<()
     Ok(())
 }
 
-fn cmd_implements(
+struct ImplementsOptions<'a> {
     interface: String,
     path: PathBuf,
     fuzzy: bool,
@@ -4413,8 +4615,21 @@ fn cmd_implements(
     rebuild_cache: bool,
     trait_only: bool,
     format: OutputFormat,
-    cache_dir: Option<&Path>,
-) -> Result<()> {
+    cache_dir: Option<&'a Path>,
+}
+
+fn cmd_implements(options: ImplementsOptions<'_>) -> Result<()> {
+    let ImplementsOptions {
+        interface,
+        path,
+        fuzzy,
+        extensions,
+        no_cache,
+        rebuild_cache,
+        trait_only,
+        format,
+        cache_dir,
+    } = options;
     let interface = pipe::read_symbol_arg(interface)?;
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
     let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
@@ -4454,7 +4669,7 @@ fn cmd_implements(
     Ok(())
 }
 
-fn cmd_types(
+struct TypeCommandOptions<'a> {
     symbol: String,
     path: PathBuf,
     fuzzy: bool,
@@ -4462,8 +4677,20 @@ fn cmd_types(
     no_cache: bool,
     rebuild_cache: bool,
     format: OutputFormat,
-    cache_dir: Option<&Path>,
-) -> Result<()> {
+    cache_dir: Option<&'a Path>,
+}
+
+fn cmd_types(options: TypeCommandOptions<'_>) -> Result<()> {
+    let TypeCommandOptions {
+        symbol,
+        path,
+        fuzzy,
+        extensions,
+        no_cache,
+        rebuild_cache,
+        format,
+        cache_dir,
+    } = options;
     let symbol = pipe::read_symbol_arg(symbol)?;
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
     let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
@@ -4499,7 +4726,7 @@ fn cmd_types(
     Ok(())
 }
 
-fn cmd_schema(
+struct SchemaCommandOptions<'a> {
     symbol: String,
     path: PathBuf,
     fuzzy: bool,
@@ -4507,8 +4734,20 @@ fn cmd_schema(
     no_cache: bool,
     rebuild_cache: bool,
     format: OutputFormat,
-    cache_dir: Option<&Path>,
-) -> Result<()> {
+    cache_dir: Option<&'a Path>,
+}
+
+fn cmd_schema(options: SchemaCommandOptions<'_>) -> Result<()> {
+    let SchemaCommandOptions {
+        symbol,
+        path,
+        fuzzy,
+        extensions,
+        no_cache,
+        rebuild_cache,
+        format,
+        cache_dir,
+    } = options;
     let symbol = pipe::read_symbol_arg(symbol)?;
     let ext_list: Vec<&str> = extensions.split(',').map(|s| s.trim()).collect();
     let index = try_load_or_rebuild(&path, &ext_list, no_cache, rebuild_cache, cache_dir)?;
@@ -4550,7 +4789,7 @@ fn cmd_schema(
     Ok(())
 }
 
-fn cmd_snapshot(
+struct SnapshotCommandOptions<'a> {
     name: Option<String>,
     path: PathBuf,
     list: bool,
@@ -4559,8 +4798,21 @@ fn cmd_snapshot(
     no_cache: bool,
     rebuild_cache: bool,
     format: OutputFormat,
-    cache_dir: Option<&Path>,
-) -> Result<()> {
+    cache_dir: Option<&'a Path>,
+}
+
+fn cmd_snapshot(options: SnapshotCommandOptions<'_>) -> Result<()> {
+    let SnapshotCommandOptions {
+        name,
+        path,
+        list,
+        delete,
+        extensions,
+        no_cache,
+        rebuild_cache,
+        format,
+        cache_dir,
+    } = options;
     let abs_path = if path.is_absolute() {
         path.clone()
     } else {

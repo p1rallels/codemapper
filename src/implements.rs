@@ -396,6 +396,73 @@ fn find_java_implementations(
     results
 }
 
+pub fn find_all_implementations(
+    index: &CodeIndex,
+    trait_only: bool,
+) -> Result<Vec<Implementation>> {
+    let mut results = Vec::new();
+    let mut seen = HashSet::new();
+
+    for file in index.files() {
+        let content = fs::read_to_string(&file.path).unwrap_or_default();
+        if content.is_empty() {
+            continue;
+        }
+
+        let file_impls = match file.language {
+            Language::Rust => find_rust_implementations(&content, "", true, ""),
+            Language::Python => find_python_implementations(&content, "", true, ""),
+            Language::TypeScript | Language::JavaScript => {
+                find_ts_implementations(&content, "", true, "")
+            }
+            Language::Java => find_java_implementations(&content, "", true, ""),
+            Language::Go => find_go_implementations(&content, "", true, ""),
+            Language::Ruby => find_ruby_implementations(&content, "", true, ""),
+            _ => Vec::new(),
+        };
+
+        for (implementor, iface, line, kind) in file_impls {
+            if implementor.is_empty() || iface.is_empty() {
+                continue;
+            }
+
+            let is_inherent = implementor == iface;
+            if trait_only && is_inherent {
+                continue;
+            }
+
+            let key = (
+                implementor.clone(),
+                iface.clone(),
+                file.path.clone(),
+                line,
+                kind.as_str().to_string(),
+            );
+            if seen.insert(key) {
+                results.push(Implementation {
+                    implementor_name: implementor,
+                    interface_name: iface,
+                    file_path: file.path.clone(),
+                    line,
+                    kind,
+                    language: file.language,
+                });
+            }
+        }
+    }
+
+    results.sort_by(|a, b| {
+        a.file_path
+            .cmp(&b.file_path)
+            .then_with(|| a.line.cmp(&b.line))
+            .then_with(|| a.interface_name.cmp(&b.interface_name))
+            .then_with(|| a.implementor_name.cmp(&b.implementor_name))
+            .then_with(|| a.kind.as_str().cmp(b.kind.as_str()))
+    });
+
+    Ok(results)
+}
+
 fn find_go_implementations(
     content: &str,
     interface: &str,
@@ -441,7 +508,7 @@ fn find_go_implementations(
 
             // Look for embedded interface (just the interface name on its own line)
             let field = trimmed.split_whitespace().next().unwrap_or("");
-            if matches_interface(field, interface, fuzzy, interface_lower) {
+            if !field.is_empty() && matches_interface(field, interface, fuzzy, interface_lower) {
                 if let Some((ref struct_name, struct_line)) = current_struct {
                     results.push((
                         struct_name.clone(),

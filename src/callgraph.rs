@@ -323,7 +323,7 @@ fn find_enclosing_symbol<'a>(index: &'a CodeIndex, path: &Path, line: usize) -> 
         .min_by_key(|s| s.line_end - s.line_start)
 }
 
-fn extract_calls_from_file(
+pub(crate) fn extract_calls_from_file(
     content: &str,
     path: &Path,
     language: Language,
