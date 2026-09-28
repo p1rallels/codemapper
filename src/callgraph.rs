@@ -196,7 +196,7 @@ pub fn find_callees(index: &CodeIndex, symbol_name: &str, fuzzy: bool) -> Result
 
         let language = Language::from_path(&symbol.file_path);
 
-        let calls = extract_calls_from_source(&symbol_body, language)?;
+        let calls = extract_calls_from_source(&symbol_body, language, &symbol.file_path)?;
 
         for (call_name, relative_line, context) in calls {
             if language == Language::Elixir
@@ -334,17 +334,25 @@ pub(crate) fn extract_calls_from_file(
         return Ok(Vec::new());
     }
 
-    extract_calls_from_source(content, language)
+    extract_calls_from_source(content, language, path)
 }
 
 fn extract_calls_from_source(
     content: &str,
     language: Language,
+    path: &Path,
 ) -> Result<Vec<(String, usize, String)>> {
     match language {
         Language::Rust => extract_rust_calls(content),
         Language::Python => extract_python_calls(content),
-        Language::JavaScript | Language::TypeScript => extract_js_calls(content),
+        Language::JavaScript => extract_ecma_calls(
+            content,
+            crate::parser::ecmascript::Dialect::JavaScript.language(),
+        ),
+        Language::TypeScript => extract_ecma_calls(
+            content,
+            crate::parser::ecmascript::Dialect::typescript(path).language(),
+        ),
         Language::Go => extract_go_calls(content),
         Language::Java => extract_java_calls(content),
         Language::C => extract_c_calls(content),
@@ -753,12 +761,14 @@ fn extract_python_calls(content: &str) -> Result<Vec<(String, usize, String)>> {
     Ok(calls)
 }
 
-fn extract_js_calls(content: &str) -> Result<Vec<(String, usize, String)>> {
+fn extract_ecma_calls(
+    content: &str,
+    language: tree_sitter::Language,
+) -> Result<Vec<(String, usize, String)>> {
     let mut parser = Parser::new();
-    let language = tree_sitter_javascript::LANGUAGE.into();
     parser
         .set_language(&language)
-        .context("Failed to set JavaScript language")?;
+        .context("Failed to set ECMAScript language")?;
 
     let tree = match parser.parse(content, None) {
         Some(t) => t,
@@ -768,11 +778,7 @@ fn extract_js_calls(content: &str) -> Result<Vec<(String, usize, String)>> {
     let query = Query::new(
         &language,
         r#"
-        (call_expression
-            function: (identifier) @call.name) @call.expr
-        (call_expression
-            function: (member_expression
-                property: (property_identifier) @call.method)) @call.method_expr
+        (call_expression function: (_) @call.callee)
         "#,
     )
     .context("Failed to create call query")?;
@@ -780,29 +786,20 @@ fn extract_js_calls(content: &str) -> Result<Vec<(String, usize, String)>> {
     let mut cursor = QueryCursor::new();
     let mut matches = cursor.matches(&query, tree.root_node(), content.as_bytes());
     let mut calls = Vec::new();
-    let mut seen_lines = HashSet::new();
+    let mut seen_ranges = HashSet::new();
 
     while let Some(match_) = matches.next() {
         for capture in match_.captures {
-            let capture_name = query
-                .capture_names()
-                .get(capture.index as usize)
-                .map(|s| s.as_ref());
-
-            let is_name = matches!(capture_name, Some("call.name") | Some("call.method"));
-
-            if is_name {
-                let name = capture
-                    .node
+            if let Some(name_node) = ecma_callee_name(capture.node, true) {
+                let name = name_node
                     .utf8_text(content.as_bytes())
                     .unwrap_or_default()
                     .to_string();
-                let line = capture.node.start_position().row + 1;
+                let line = name_node.start_position().row + 1;
 
-                if seen_lines.contains(&(name.clone(), line)) {
+                if !seen_ranges.insert(capture.node.byte_range()) {
                     continue;
                 }
-                seen_lines.insert((name.clone(), line));
 
                 let context = content.lines().nth(line - 1).unwrap_or("").to_string();
                 calls.push((name, line, context));
@@ -811,6 +808,47 @@ fn extract_js_calls(content: &str) -> Result<Vec<(String, usize, String)>> {
     }
 
     Ok(calls)
+}
+
+/// Unwrap syntax that preserves a callee's name, without attributing a call to
+/// a returned function (factory()()) to the factory a second time.
+fn ecma_callee_name(node: tree_sitter::Node, allow_await: bool) -> Option<tree_sitter::Node> {
+    match node.kind() {
+        "identifier" => Some(node),
+        "member_expression" => node
+            .child_by_field_name("property")
+            .filter(|property| property.kind() == "property_identifier"),
+        "parenthesized_expression"
+        | "non_null_expression"
+        | "as_expression"
+        | "satisfies_expression"
+        | "instantiation_expression" => {
+            let mut cursor = node.walk();
+            let expression = node
+                .named_children(&mut cursor)
+                .find(|child| child.kind() != "comment")?;
+            ecma_callee_name(expression, false)
+        }
+        "type_assertion" => {
+            let mut cursor = node.walk();
+            let expression = node
+                .named_children(&mut cursor)
+                .filter(|child| child.kind() != "comment")
+                .last()?;
+            ecma_callee_name(expression, false)
+        }
+        // The bundled TS grammar represents unparenthesized `await f<T>()`
+        // with an await_expression in the call's function field. Do not unwrap
+        // `(await f)()`: that invokes the awaited value, whose target is unknown.
+        "await_expression" if allow_await => {
+            let mut cursor = node.walk();
+            let expression = node
+                .named_children(&mut cursor)
+                .find(|child| child.kind() != "comment")?;
+            ecma_callee_name(expression, false)
+        }
+        _ => None,
+    }
 }
 
 fn extract_go_calls(content: &str) -> Result<Vec<(String, usize, String)>> {
@@ -1366,7 +1404,7 @@ pub fn find_test_deps(index: &CodeIndex, test_file: &Path) -> Result<Vec<TestDep
 
     let content = fs::read_to_string(test_file).context("Failed to read test file")?;
 
-    let calls = extract_calls_from_source(&content, language)?;
+    let calls = extract_calls_from_source(&content, language, test_file)?;
 
     let mut deps = Vec::new();
     let mut seen = HashSet::new();
@@ -1557,7 +1595,11 @@ pub fn find_untested(index: &CodeIndex) -> Result<Vec<UntestedInfo>> {
                     if start_idx < lines.len() {
                         let symbol_body: String =
                             lines[start_idx..end_idx.min(lines.len())].join("\n");
-                        let calls = extract_calls_from_source(&symbol_body, file_info.language)?;
+                        let calls = extract_calls_from_source(
+                            &symbol_body,
+                            file_info.language,
+                            &file_info.path,
+                        )?;
                         for (call_name, _, _) in calls {
                             tested_symbols.insert(call_name);
                         }
@@ -2016,7 +2058,7 @@ fn find_edge_evidence(
 
     let symbol_body: String = lines[start_idx..end_idx].join("\n");
     let language = Language::from_path(&symbol.file_path);
-    let calls = extract_calls_from_source(&symbol_body, language)?;
+    let calls = extract_calls_from_source(&symbol_body, language, &symbol.file_path)?;
 
     for (call_name, relative_line, context) in calls {
         if language == Language::Elixir {
@@ -2110,7 +2152,7 @@ fn find_callees_for_symbol(index: &CodeIndex, symbol: &Symbol) -> Result<Vec<Cal
 
     let language = Language::from_path(&symbol.file_path);
 
-    let calls = extract_calls_from_source(&symbol_body, language)?;
+    let calls = extract_calls_from_source(&symbol_body, language, &symbol.file_path)?;
 
     let mut callees = Vec::new();
     let mut seen = HashSet::new();
@@ -2352,6 +2394,146 @@ end
         assert!(names.contains(&"check_ready"));
         assert!(names.contains(&"skip_name_validation?"));
         assert!(names.contains(&"CustomValidator"));
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod dialect_call_regressions {
+    use super::*;
+
+    #[test]
+    fn typescript_generic_call_is_extracted() -> Result<()> {
+        let calls = extract_calls_from_source(
+            "function run() { return fetchRows<{id: number}>(); }",
+            Language::TypeScript,
+            Path::new("sample.ts"),
+        )?;
+        assert_eq!(calls.iter().filter(|c| c.0 == "fetchRows").count(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn awaited_typescript_generic_call_is_extracted() -> Result<()> {
+        let calls = extract_calls_from_source(
+            "async function run() { return await fetchRows<Row>(); }",
+            Language::TypeScript,
+            Path::new("sample.ts"),
+        )?;
+        assert_eq!(calls.iter().filter(|c| c.0 == "fetchRows").count(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn tsx_generic_call_is_extracted() -> Result<()> {
+        let calls = extract_calls_from_source(
+            "function Panel() { const rows = fetchRows<Row>(); return <div>{rows}</div>; }",
+            Language::TypeScript,
+            Path::new("sample.tsx"),
+        )?;
+        assert_eq!(calls.iter().filter(|c| c.0 == "fetchRows").count(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn javascript_calls_are_preserved() -> Result<()> {
+        let calls = extract_calls_from_source(
+            "async function run() { return await fetchRows(); }",
+            Language::JavaScript,
+            Path::new("sample.js"),
+        )?;
+        assert_eq!(calls.iter().filter(|c| c.0 == "fetchRows").count(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn typescript_callee_expression_matrix() -> Result<()> {
+        let expressions = [
+            "fetchRows<Row>()",
+            "await fetchRows<Row>()",
+            "client.fetchRows<Row>()",
+            "await client.fetchRows<Row>()",
+            "client?.fetchRows<Row>()",
+            "fetchRows?.<Row>()",
+            "(fetchRows)()",
+            "(/* comment */ fetchRows)()",
+            "fetchRows!<Row>()",
+            "(fetchRows as Handler)()",
+            "(fetchRows satisfies Handler)()",
+            "(<Handler>fetchRows)()",
+            "(fetchRows<Row>)()",
+        ];
+        for extension in ["ts", "tsx"] {
+            for expression in expressions {
+                // Angle-bracket assertions are intentionally TS-only syntax.
+                if extension == "tsx" && expression.starts_with("(<") {
+                    continue;
+                }
+                let source = format!("async function run() {{ return {expression}; }}");
+                let calls = extract_calls_from_source(
+                    &source,
+                    Language::TypeScript,
+                    Path::new(&format!("sample.{extension}")),
+                )?;
+                let names: Vec<_> = calls.iter().map(|call| call.0.as_str()).collect();
+                assert_eq!(names, ["fetchRows"], "{extension}: {expression}");
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn returned_or_dynamic_callees_are_not_attributed_to_inner_identifiers() -> Result<()> {
+        for (expression, expected) in [
+            ("factory()()", vec!["factory"]),
+            ("(await factory())()", vec!["factory"]),
+            ("(await ready)()", vec![]),
+            ("(condition ? left : right)()", vec![]),
+            ("object[key]()", vec![]),
+        ] {
+            let source = format!("async function run() {{ return {expression}; }}");
+            let calls =
+                extract_calls_from_source(&source, Language::TypeScript, Path::new("sample.ts"))?;
+            let names: Vec<_> = calls.iter().map(|call| call.0.as_str()).collect();
+            assert_eq!(names, expected, "{expression}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn distinct_calls_on_one_line_keep_their_own_ranges() -> Result<()> {
+        let calls = extract_calls_from_source(
+            "function run() { fetchRows(); fetchRows(); }",
+            Language::JavaScript,
+            Path::new("sample.js"),
+        )?;
+        assert_eq!(calls.iter().filter(|c| c.0 == "fetchRows").count(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn tsx_dialect_reaches_callers_callees_trace_and_evidence() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("panel.tsx");
+        std::fs::write(
+            &path,
+            concat!(
+                "function fetchRows<T>() { return []; }\n",
+                "export function Panel() { return <div>{fetchRows<Row>()}</div>; }\n",
+            ),
+        )?;
+        let index = crate::indexer::index_directory(dir.path(), &["tsx"])?;
+        let callers = find_callers(&index, "fetchRows", false)?;
+        assert_eq!(callers.len(), 1);
+        assert_eq!(callers[0].line, 2);
+        assert_eq!(callers[0].caller_name, "Panel");
+        let callees = find_callees(&index, "Panel", false)?;
+        assert!(callees.iter().any(|c| c.caller_name == "fetchRows"));
+        assert!(trace_path(&index, "Panel", "fetchRows", false)?.found);
+        let evidence = explain_path(&index, "Panel", "fetchRows", false)?;
+        assert!(evidence.found);
+        assert_eq!(evidence.edges.len(), 1);
+        assert_eq!(evidence.edges[0].call_line, 2);
         Ok(())
     }
 }

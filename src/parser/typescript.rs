@@ -1,3 +1,4 @@
+use super::ecmascript::Dialect;
 use super::{ParseResult, Parser};
 use crate::models::{Dependency, Symbol, SymbolType};
 use anyhow::{Context, Result};
@@ -31,9 +32,9 @@ impl TypeScriptParser {
         Ok(Self)
     }
 
-    fn create_parser() -> Result<TSParser> {
+    fn create_parser(file_path: &Path) -> Result<TSParser> {
         let mut parser = TSParser::new();
-        let language = tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into();
+        let language = Dialect::typescript(file_path).language();
         parser
             .set_language(&language)
             .context("Failed to set TypeScript language")?;
@@ -46,7 +47,7 @@ impl TypeScriptParser {
         source: &str,
         file_path: &Path,
     ) -> Result<Vec<Symbol>> {
-        let language = tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into();
+        let language = tree.language();
         let query = Query::new(
             &language,
             r#"
@@ -245,7 +246,7 @@ impl TypeScriptParser {
         source: &str,
         file_path: &Path,
     ) -> Result<Vec<Symbol>> {
-        let language = tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into();
+        let language = tree.language();
         let query = Query::new(
             &language,
             r#"
@@ -316,7 +317,7 @@ impl TypeScriptParser {
         file_path: &Path,
         class_symbols: &[Symbol],
     ) -> Result<Vec<Symbol>> {
-        let language = tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into();
+        let language = tree.language();
         let query = Query::new(
             &language,
             r#"
@@ -391,7 +392,7 @@ impl TypeScriptParser {
         source: &str,
         file_path: &Path,
     ) -> Result<Vec<Symbol>> {
-        let language = tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into();
+        let language = tree.language();
         let query = Query::new(
             &language,
             r#"
@@ -461,7 +462,7 @@ impl TypeScriptParser {
         source: &str,
         file_path: &Path,
     ) -> Result<Vec<Symbol>> {
-        let language = tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into();
+        let language = tree.language();
         let query = Query::new(
             &language,
             r#"
@@ -531,7 +532,7 @@ impl TypeScriptParser {
         source: &str,
         file_path: &Path,
     ) -> Result<Vec<Symbol>> {
-        let language = tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into();
+        let language = tree.language();
         let query = Query::new(
             &language,
             r#"
@@ -600,7 +601,7 @@ impl TypeScriptParser {
         tree: &tree_sitter::Tree,
         source: &str,
     ) -> Result<Vec<Dependency>> {
-        let language = tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into();
+        let language = tree.language();
         let query = Query::new(
             &language,
             r#"
@@ -696,7 +697,7 @@ impl TypeScriptParser {
 
 impl Parser for TypeScriptParser {
     fn parse(&self, content: &str, file_path: &Path) -> Result<ParseResult> {
-        let mut parser = Self::create_parser()?;
+        let mut parser = Self::create_parser(file_path)?;
         let tree = parser
             .parse(content, None)
             .context("Failed to parse TypeScript content")?;
@@ -1000,6 +1001,33 @@ test('handles empty input', () => {
                 .any(|s| s.name == "test:handles empty input"
                     && s.symbol_type == SymbolType::Function)
         );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod dialect_regressions {
+    use super::*;
+
+    #[test]
+    fn tsx_uses_jsx_grammar_without_recovery_errors() -> Result<()> {
+        let path = Path::new("panel.tsx");
+        let source = "export function Panel() { return <main><span>Hello</span></main>; }";
+        let mut parser = TypeScriptParser::create_parser(path)?;
+        let tree = parser.parse(source, None).unwrap();
+        assert!(!tree.root_node().has_error());
+        let parsed = TypeScriptParser::new()?.parse(source, path)?;
+        assert!(parsed.symbols.iter().any(|s| s.name == "Panel"));
+        Ok(())
+    }
+
+    #[test]
+    fn ts_retains_angle_bracket_assertions() -> Result<()> {
+        let path = Path::new("assertion.ts");
+        let source = "export function coerce(x: unknown) { return <string>x; }";
+        let mut parser = TypeScriptParser::create_parser(path)?;
+        let tree = parser.parse(source, None).unwrap();
+        assert!(!tree.root_node().has_error());
         Ok(())
     }
 }
