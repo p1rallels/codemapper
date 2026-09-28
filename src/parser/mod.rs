@@ -1,4 +1,5 @@
 pub mod c;
+pub(crate) mod ecmascript;
 pub mod elixir;
 pub mod go;
 pub mod java;

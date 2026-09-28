@@ -11,7 +11,8 @@ use std::time::SystemTime;
 
 const CACHE_DIR_NAME: &str = ".codemapper";
 const CACHE_SUBDIR: &str = "cache";
-const CACHE_VERSION: &str = "1.9";
+// 1.10 invalidates symbol indexes built with the non-JSX grammar for TSX.
+const CACHE_VERSION: &str = "1.10";
 
 #[derive(Debug)]
 pub enum ValidationResult {
@@ -511,6 +512,34 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+
+    #[test]
+    fn test_old_parser_cache_is_rejected_and_rebuilt_index_can_be_loaded() {
+        let dir = TempDir::new().unwrap();
+        let cache = TempDir::new().unwrap();
+        let root = dir.path();
+        fs::write(
+            root.join("panel.tsx"),
+            "export function Panel() { return <div />; }",
+        )
+        .unwrap();
+        let index = crate::indexer::index_directory(root, &["tsx"]).unwrap();
+        let mut metadata = CacheManager::save(&index, root, &["tsx"], Some(cache.path())).unwrap();
+        let (_, metadata_path) =
+            CacheManager::get_cache_paths(root, &["tsx"], Some(cache.path())).unwrap();
+        metadata.version = "1.9".to_string();
+        fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+        assert!(CacheManager::load(root, &["tsx"], Some(cache.path()))
+            .unwrap()
+            .is_none());
+
+        CacheManager::save(&index, root, &["tsx"], Some(cache.path())).unwrap();
+        let (loaded, _, changes) = CacheManager::load(root, &["tsx"], Some(cache.path()))
+            .unwrap()
+            .unwrap();
+        assert!(changes.is_empty());
+        assert_eq!(loaded.query_symbol("Panel").len(), 1);
+    }
 
     #[test]
     fn test_compute_cache_key_same_inputs() {
