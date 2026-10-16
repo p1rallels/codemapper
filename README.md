@@ -281,6 +281,8 @@ The indexer automatically skips:
 - `node_modules`, `__pycache__`, `venv`, `.venv`
 - `target`, `dist`, `build`, `.cache`
 
+Paths the repo's git ignores are skipped too: `.gitignore` and `.ignore` files, and `.git/info/exclude` (the global `core.excludesFile` isn't read).
+
 ## 🛠️ Common Flags
 
 ```

@@ -187,7 +187,7 @@ pub fn discover_indexable_files(path: &Path, extensions: &[&str]) -> Result<Vec<
         .hidden(false)
         .git_ignore(true)
         .git_global(false)
-        .git_exclude(false)
+        .git_exclude(true)
         .filter_entry(|e| {
             if e.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
                 let name = e.file_name().to_string_lossy();
@@ -325,6 +325,78 @@ mod tests {
         assert_eq!(index.total_files(), 1);
         assert_eq!(symbols.len(), 1);
         assert_eq!(symbols[0].file_path, file);
+    }
+
+    fn write_tree(root: &Path, files: &[&str]) {
+        files.iter().for_each(|rel| {
+            let path = root.join(rel);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, "fn f() {}\n").unwrap();
+        });
+    }
+
+    fn discovered(root: &Path, start: &str) -> Vec<String> {
+        let mut found: Vec<String> = discover_indexable_files(&root.join(start), &["rs"])
+            .unwrap()
+            .iter()
+            .map(|path| {
+                path.strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        found.sort();
+        found
+    }
+
+    fn repo_with_excluded_fork() -> tempfile::TempDir {
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = temp.path();
+        write_tree(
+            root,
+            &[
+                "src/kept.rs",
+                "pkg/lib.rs",
+                "pkg/gen/out.rs",
+                ".forks/1/src/kept.rs",
+            ],
+        );
+        [root.join(".git/info"), root.join(".forks/1/.git/info")]
+            .iter()
+            .for_each(|info| {
+                fs::create_dir_all(info).unwrap();
+                fs::write(info.join("exclude"), "/.forks/\n/pkg/gen/\n").unwrap();
+            });
+        temp
+    }
+
+    #[test]
+    fn test_discover_respects_git_info_exclude() {
+        let temp = repo_with_excluded_fork();
+
+        assert_eq!(discovered(temp.path(), ""), ["pkg/lib.rs", "src/kept.rs"]);
+    }
+
+    #[test]
+    fn test_discover_applies_repo_exclude_below_the_root() {
+        let temp = repo_with_excluded_fork();
+
+        assert_eq!(discovered(temp.path(), "pkg"), ["pkg/lib.rs"]);
+    }
+
+    #[test]
+    fn test_discover_inside_an_excluded_nested_repo() {
+        let temp = repo_with_excluded_fork();
+
+        assert_eq!(
+            discovered(temp.path(), ".forks/1"),
+            [".forks/1/src/kept.rs"]
+        );
+        assert_eq!(
+            discovered(temp.path(), ".forks/1/src"),
+            [".forks/1/src/kept.rs"]
+        );
     }
 
     #[test]

@@ -585,4 +585,30 @@ mod tests {
             .file_metadata
             .contains_key(&root.join("ignored.rs")));
     }
+
+    #[test]
+    fn test_validate_drops_files_newly_excluded_by_git_info_exclude() {
+        let temp = TempDir::new().unwrap();
+        let cache_dir = TempDir::new().unwrap();
+        let root = temp.path();
+
+        fs::create_dir_all(root.join(".git/info")).unwrap();
+        fs::create_dir_all(root.join(".forks/1")).unwrap();
+        fs::write(root.join("kept.rs"), "fn kept() {}\n").unwrap();
+        fs::write(root.join(".forks/1/kept.rs"), "fn kept() {}\n").unwrap();
+
+        let index = crate::indexer::index_directory(root, &["rs"]).unwrap();
+        let metadata = CacheManager::save(&index, root, &["rs"], Some(cache_dir.path())).unwrap();
+        assert_eq!(metadata.file_metadata.len(), 2);
+
+        fs::write(root.join(".git/info/exclude"), "/.forks/\n").unwrap();
+
+        let changes = match CacheManager::validate_with_hashes(&metadata, root).unwrap() {
+            ValidationResult::NeedsUpdate(changes) => changes,
+            other => panic!("expected an incremental update, got {other:?}"),
+        };
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].path, root.join(".forks/1/kept.rs"));
+        assert_eq!(changes[0].kind, FileChangeKind::Deleted);
+    }
 }
