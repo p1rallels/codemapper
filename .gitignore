@@ -30,3 +30,6 @@ ANNALS/
 
 # tests
 tlaplus/
+
+# marbles task tracker
+.marbles/
